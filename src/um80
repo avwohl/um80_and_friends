@@ -120,6 +120,11 @@ class Assembler:
         self.listing_lines = []
         self.source_lines = []
 
+        # Include file handling
+        self.include_stack = []  # Stack of (filename, line_num) for nested includes
+        self.base_path = None  # Base path for resolving relative includes
+        self.include_paths = []  # Additional search paths for includes
+
     @property
     def loc(self):
         """Current location counter."""
@@ -306,6 +311,14 @@ class Assembler:
 
         # Handle unary operators first
         upper = expr.upper()
+
+        # NUL operator - returns true (0FFFFh) if argument is null/empty
+        if upper.startswith('NUL '):
+            arg = expr[4:].strip()
+            if not arg or arg == '<>' or arg == "''":
+                return (0xFFFF, ADDR_ABSOLUTE, False, None)
+            return (0, ADDR_ABSOLUTE, False, None)
+
         if upper.startswith('HIGH '):
             val, seg, ext, name = self.parse_expression(expr[5:], allow_undefined)
             return ((val >> 8) & 0xFF, ADDR_ABSOLUTE, ext, name)
@@ -315,6 +328,25 @@ class Assembler:
         if upper.startswith('NOT '):
             val, seg, ext, name = self.parse_expression(expr[4:], allow_undefined)
             return ((~val) & 0xFFFF, ADDR_ABSOLUTE, False, None)
+
+        # TYPE operator - returns byte describing expression characteristics
+        # Lower 2 bits: mode (0=abs, 1=prog rel, 2=data rel, 3=common rel)
+        # Bit 5 (20H): defined
+        # Bit 7 (80H): external
+        if upper.startswith('TYPE '):
+            arg = expr[5:].strip()
+            # Check if it's a valid symbol
+            if re.match(r'^[A-Za-z_@?][A-Za-z0-9_@?$.]*$', arg):
+                sym = self.symbols.get(arg.upper())
+                if sym:
+                    result = sym.seg_type & 0x03  # Mode bits
+                    if sym.defined:
+                        result |= 0x20
+                    if sym.external:
+                        result |= 0x80
+                    return (result, ADDR_ABSOLUTE, False, None)
+            # If not a symbol or not found, return 0
+            return (0, ADDR_ABSOLUTE, False, None)
 
         # Handle unary minus at start (but not subtraction)
         if expr.startswith('-') and len(expr) > 1:
@@ -459,11 +491,16 @@ class Assembler:
 
         # Try as simple symbol
         if re.match(r'^[$A-Za-z_@?][A-Za-z0-9_@?$.]*$', expr):
-            # Check if it's a register (not a symbol)
             upper = expr.upper()
+
+            # Check if it's a register (not a symbol)
             if upper in REGS or upper in REGPAIRS or upper in REGPAIRS_PUSHPOP:
                 self.error(f"Register '{expr}' used as value")
                 return (0, ADDR_ABSOLUTE, False, None)
+
+            # Check if it's an opcode (usable as one-byte operand per M80 manual p.2-4)
+            if upper in OPCODE_VALUES:
+                return (OPCODE_VALUES[upper], ADDR_ABSOLUTE, False, None)
 
             sym = self.lookup_symbol(expr)
             if sym.external:
@@ -946,19 +983,19 @@ class Assembler:
             self.define_symbol(label, val, seg)
             return True
 
-        # SET - like EQU but redefinable
-        if operator == 'SET':
+        # SET/DEFL - like EQU but redefinable
+        if operator == 'SET' or operator == 'DEFL':
             if not label:
-                self.error("SET requires a label")
+                self.error(f"{operator} requires a label")
                 return True
             if len(ops) != 1:
-                self.error("SET requires one operand")
+                self.error(f"{operator} requires one operand")
                 return True
             val, seg, ext, name = self.parse_expression(ops[0], allow_undefined=(self.pass_num == 1))
             if ext:
-                self.error("Cannot use external in SET")
+                self.error(f"Cannot use external in {operator}")
                 return True
-            # SET allows redefinition
+            # SET/DEFL allows redefinition
             sym = self.lookup_symbol(label)
             sym.value = val
             sym.seg_type = seg
@@ -1090,8 +1127,8 @@ class Assembler:
         if operator in ('TITLE', 'SUBTTL'):
             return True
 
-        # PAGE - new page in listing (ignore for now)
-        if operator == 'PAGE':
+        # PAGE/*EJECT - new page in listing (ignore for now)
+        if operator == 'PAGE' or operator == '*EJECT':
             return True
 
         # .LIST/.XLIST - listing control
@@ -1224,6 +1261,73 @@ class Assembler:
             self.cond_stack.append(operator)
             return True
 
+        # IFB - true if argument is blank
+        if operator == 'IFB':
+            if self.cond_false_depth > 0:
+                self.cond_false_depth += 1
+            else:
+                # Argument must be in angle brackets
+                arg = ops[0].strip() if ops else ''
+                if arg.startswith('<') and arg.endswith('>'):
+                    arg = arg[1:-1]
+                if arg.strip():  # Not blank
+                    self.cond_false_depth = 1
+            self.cond_stack.append(operator)
+            return True
+
+        # IFNB - true if argument is not blank
+        if operator == 'IFNB':
+            if self.cond_false_depth > 0:
+                self.cond_false_depth += 1
+            else:
+                arg = ops[0].strip() if ops else ''
+                if arg.startswith('<') and arg.endswith('>'):
+                    arg = arg[1:-1]
+                if not arg.strip():  # Is blank
+                    self.cond_false_depth = 1
+            self.cond_stack.append(operator)
+            return True
+
+        # IFIDN - true if two arguments are identical
+        if operator == 'IFIDN':
+            if self.cond_false_depth > 0:
+                self.cond_false_depth += 1
+            else:
+                if len(ops) >= 2:
+                    arg1 = ops[0].strip()
+                    arg2 = ops[1].strip()
+                    # Strip angle brackets if present
+                    if arg1.startswith('<') and arg1.endswith('>'):
+                        arg1 = arg1[1:-1]
+                    if arg2.startswith('<') and arg2.endswith('>'):
+                        arg2 = arg2[1:-1]
+                    if arg1.upper() != arg2.upper():
+                        self.cond_false_depth = 1
+                else:
+                    self.cond_false_depth = 1
+            self.cond_stack.append(operator)
+            return True
+
+        # IFDIF - true if two arguments are different
+        if operator == 'IFDIF':
+            if self.cond_false_depth > 0:
+                self.cond_false_depth += 1
+            else:
+                if len(ops) >= 2:
+                    arg1 = ops[0].strip()
+                    arg2 = ops[1].strip()
+                    # Strip angle brackets if present
+                    if arg1.startswith('<') and arg1.endswith('>'):
+                        arg1 = arg1[1:-1]
+                    if arg2.startswith('<') and arg2.endswith('>'):
+                        arg2 = arg2[1:-1]
+                    if arg1.upper() == arg2.upper():
+                        self.cond_false_depth = 1
+                else:
+                    pass  # No args means they're different (empty vs empty? treat as true)
+            self.cond_stack.append(operator)
+            return True
+
         if operator == 'ELSE':
             if not self.cond_stack:
                 self.error("ELSE without IF")
@@ -1234,19 +1338,54 @@ class Assembler:
                 self.cond_false_depth = 1
             return True
 
-        if operator == 'ENDIF':
+        if operator == 'ENDIF' or operator == 'ENDC':
             if not self.cond_stack:
-                self.error("ENDIF without IF")
+                self.error(f"{operator} without IF")
                 return True
             self.cond_stack.pop()
             if self.cond_false_depth > 0:
                 self.cond_false_depth -= 1
             return True
 
-        # INCLUDE
+        # COND - Z80 alias for IFT (true if expression is not 0)
+        if operator == 'COND':
+            if self.cond_false_depth > 0:
+                self.cond_false_depth += 1
+            else:
+                val, _, _, _ = self.parse_expression(ops[0] if ops else '0')
+                if val == 0:
+                    self.cond_false_depth = 1
+            self.cond_stack.append(operator)
+            return True
+
+        # INCLUDE/$INCLUDE/MACLIB - include source file
         if operator in ('INCLUDE', '$INCLUDE', 'MACLIB'):
-            # Will be handled by caller
-            return False
+            if not ops:
+                self.error(f"{operator} requires a filename")
+                return True
+            filename = ops[0].strip()
+            # Remove quotes if present
+            if (filename.startswith("'") and filename.endswith("'")) or \
+               (filename.startswith('"') and filename.endswith('"')):
+                filename = filename[1:-1]
+            # Remove angle brackets if present
+            if filename.startswith('<') and filename.endswith('>'):
+                filename = filename[1:-1]
+
+            # Try to find the include file
+            include_path = self.find_include_file(filename)
+            if include_path is None:
+                self.error(f"Cannot find include file: {filename}")
+                return True
+
+            # Check for infinite recursion
+            if len(self.include_stack) > 10:
+                self.error("Include nesting too deep")
+                return True
+
+            # Process the include file
+            self.process_include_file(include_path)
+            return True
 
         # MACRO definition - starts collecting
         if operator == 'MACRO':
@@ -1327,14 +1466,33 @@ class Assembler:
 
         # If collecting macro definition, handle specially
         if self.collecting_macro is not None:
+            # Strip ;; comments (not preserved in macro expansion)
+            line_for_macro = line
+            dbl_semi_pos = line_for_macro.find(';;')
+            if dbl_semi_pos >= 0:
+                # Make sure it's not inside a string
+                in_string = False
+                string_char = None
+                for i, ch in enumerate(line_for_macro):
+                    if i >= dbl_semi_pos:
+                        break
+                    if in_string:
+                        if ch == string_char:
+                            in_string = False
+                    elif ch in "'\"":
+                        in_string = True
+                        string_char = ch
+                if not in_string:
+                    line_for_macro = line_for_macro[:dbl_semi_pos]
+
             if upper_op == 'MACRO':
                 # Nested macro definition
                 self.macro_nest_depth += 1
-                self.macro_body.append(line)
+                self.macro_body.append(line_for_macro)
             elif upper_op == 'ENDM':
                 if self.macro_nest_depth > 0:
                     self.macro_nest_depth -= 1
-                    self.macro_body.append(line)
+                    self.macro_body.append(line_for_macro)
                 else:
                     # End of macro definition
                     self.macros[self.collecting_macro] = Macro(
@@ -1344,7 +1502,7 @@ class Assembler:
                     self.macro_params = []
                     self.macro_body = []
             else:
-                self.macro_body.append(line)
+                self.macro_body.append(line_for_macro)
             return
 
         # If collecting REPT/IRP/IRPC body, handle specially
@@ -1368,7 +1526,8 @@ class Assembler:
 
         # Handle conditional directives even in false blocks
         if upper_op in ('IF', 'IFT', 'IFE', 'IFF', 'IFDEF', 'IFNDEF',
-                        'IF1', 'IF2', 'ELSE', 'ENDIF'):
+                        'IF1', 'IF2', 'IFB', 'IFNB', 'IFIDN', 'IFDIF',
+                        'COND', 'ELSE', 'ENDIF', 'ENDC'):
             self.assemble_pseudo_op(operator, operands, label)
             return
 
@@ -1397,6 +1556,63 @@ class Assembler:
 
         self.error(f"Unknown instruction or directive: {operator}")
 
+    def process_macro_argument(self, arg):
+        """Process a macro argument, handling ! and % operators."""
+        result = []
+        i = 0
+        while i < len(arg):
+            if arg[i] == '!' and i + 1 < len(arg):
+                # ! makes next character literal
+                result.append(arg[i + 1])
+                i += 2
+            else:
+                result.append(arg[i])
+                i += 1
+        return ''.join(result)
+
+    def process_percent_operator(self, line):
+        """Process % operator in a line, converting expressions to numbers."""
+        result = []
+        i = 0
+        while i < len(line):
+            if line[i] == '%':
+                # Find the expression following %
+                # Expression ends at comma, space, or end of line
+                j = i + 1
+                paren_depth = 0
+                while j < len(line):
+                    ch = line[j]
+                    if ch == '(':
+                        paren_depth += 1
+                    elif ch == ')':
+                        if paren_depth > 0:
+                            paren_depth -= 1
+                        else:
+                            break
+                    elif paren_depth == 0 and ch in ',; \t':
+                        break
+                    j += 1
+                expr = line[i + 1:j]
+                if expr:
+                    val, _, _, _ = self.parse_expression(expr, allow_undefined=True)
+                    # Convert to current radix
+                    if self.radix == 16:
+                        result.append(f'{val:X}H')
+                    elif self.radix == 8:
+                        result.append(f'{val:o}O')
+                    elif self.radix == 2:
+                        result.append(f'{val:b}B')
+                    else:
+                        result.append(str(val))
+                    i = j
+                else:
+                    result.append('%')
+                    i += 1
+            else:
+                result.append(line[i])
+                i += 1
+        return ''.join(result)
+
     def expand_macro(self, name, operands):
         """Expand a macro."""
         macro = self.macros.get(name)
@@ -1404,10 +1620,11 @@ class Assembler:
             self.error(f"Undefined macro: {name}")
             return
 
-        # Parse actual arguments
+        # Parse actual arguments, handling ! operator
         args = []
         if operands:
-            args = self.split_operands(operands)
+            raw_args = self.split_operands(operands)
+            args = [self.process_macro_argument(arg) for arg in raw_args]
 
         # Build substitution map
         subst = {}
@@ -1452,6 +1669,9 @@ class Assembler:
                 expanded = re.sub(r'\b' + re.escape(local_sym) + r'\b',
                                   local_sym + local_suffix, expanded, flags=re.IGNORECASE)
 
+            # Process % operator (convert expressions to numbers)
+            expanded = self.process_percent_operator(expanded)
+
             # Process the expanded line
             self.process_line(expanded)
 
@@ -1489,6 +1709,76 @@ class Assembler:
                         expanded = re.sub(r'\b' + re.escape(iter_var) + r'\b',
                                           char, expanded, flags=re.IGNORECASE)
                     self.process_line(expanded)
+
+    def find_include_file(self, filename):
+        """Find an include file, searching in various locations."""
+        # Add default extension if none present
+        if '.' not in filename:
+            filename = filename + '.MAC'
+
+        # Try the filename as-is if absolute
+        if os.path.isabs(filename):
+            if os.path.exists(filename):
+                return filename
+            return None
+
+        # Try relative to base path (source file directory)
+        if self.base_path:
+            path = os.path.join(self.base_path, filename)
+            if os.path.exists(path):
+                return path
+
+        # Try relative to current directory
+        if os.path.exists(filename):
+            return filename
+
+        # Try additional include paths
+        for inc_path in self.include_paths:
+            path = os.path.join(inc_path, filename)
+            if os.path.exists(path):
+                return path
+
+        return None
+
+    def process_include_file(self, filepath):
+        """Process an include file."""
+        # Save current state
+        saved_line_num = self.line_num
+
+        # Push onto include stack
+        self.include_stack.append((filepath, saved_line_num))
+
+        try:
+            # Read the include file
+            with open(filepath, 'rb') as f:
+                data = f.read()
+
+            # Strip ^Z (0x1A) and everything after it (CP/M EOF marker)
+            eof_pos = data.find(0x1A)
+            if eof_pos >= 0:
+                data = data[:eof_pos]
+
+            # Decode to text
+            text = data.decode('ascii', errors='replace')
+            text = text.replace('\r\n', '\n').replace('\r', '\n')
+            text = text.rstrip('\x00')
+
+            lines = text.split('\n')
+
+            # Reset line number for include file
+            self.line_num = 0
+
+            # Process each line
+            for line in lines:
+                self.process_line(line)
+
+        except IOError as e:
+            self.error(f"Error reading include file {filepath}: {e}")
+
+        finally:
+            # Pop from include stack and restore line number
+            self.include_stack.pop()
+            self.line_num = saved_line_num
 
     def assemble_pass(self, lines, pass_num):
         """Run one pass of assembly."""
@@ -1575,6 +1865,9 @@ class Assembler:
 
     def assemble(self, source_file):
         """Assemble a source file."""
+        # Set base path for include file resolution
+        self.base_path = os.path.dirname(os.path.abspath(source_file))
+
         # Read source - handle CP/M format (CR/LF, ^Z EOF, 128-byte records)
         with open(source_file, 'rb') as f:
             data = f.read()
@@ -1670,6 +1963,8 @@ def main():
     parser.add_argument('-l', '--listing', help='Listing .PRN file')
     parser.add_argument('-D', '--define', action='append', metavar='SYMBOL[=VALUE]',
                         help='Define symbol (can be used multiple times)')
+    parser.add_argument('-I', '--include', action='append', metavar='PATH',
+                        help='Add include search path (can be used multiple times)')
 
     args = parser.parse_args()
 
@@ -1695,6 +1990,8 @@ def main():
 
     # Create assembler and run
     asm = Assembler(predefined=predefined)
+    if args.include:
+        asm.include_paths = args.include
     success = asm.assemble(args.input)
 
     # Report errors and warnings
