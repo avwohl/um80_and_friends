@@ -1,0 +1,569 @@
+#!/usr/bin/env python3
+"""
+ud80 - 8080 Disassembler for CP/M .COM files.
+
+Produces .MAC output compatible with um80 assembler.
+
+Usage: ud80 [-o output.mac] [-e entry] [-d datarange] input.com
+"""
+
+import sys
+import os
+import argparse
+from collections import defaultdict
+
+# 8080 instruction table: opcode -> (mnemonic, size, operand_type)
+# Operand types:
+#   None - no operands
+#   'r' - single register in bits 3-5
+#   's' - single register in bits 0-2
+#   'rp' - register pair in bits 4-5
+#   'rp2' - register pair for PUSH/POP (includes PSW)
+#   'd8' - 8-bit immediate
+#   'd16' - 16-bit immediate/address
+#   'a16' - 16-bit address (for jumps/calls)
+#   'rst' - RST vector in bits 3-5
+
+REGS = ['B', 'C', 'D', 'E', 'H', 'L', 'M', 'A']
+REGPAIRS = ['BC', 'DE', 'HL', 'SP']
+REGPAIRS_PUSH = ['BC', 'DE', 'HL', 'PSW']
+CONDITIONS = ['NZ', 'Z', 'NC', 'C', 'PO', 'PE', 'P', 'M']
+
+# Build instruction table
+OPCODES = {}
+
+# No operand instructions
+NO_OP = {
+    0x00: 'NOP', 0x07: 'RLC', 0x0F: 'RRC', 0x17: 'RAL', 0x1F: 'RAR',
+    0x27: 'DAA', 0x2F: 'CMA', 0x37: 'STC', 0x3F: 'CMC', 0x76: 'HLT',
+    0xC9: 'RET', 0xE9: 'PCHL', 0xF9: 'SPHL', 0xEB: 'XCHG', 0xE3: 'XTHL',
+    0xF3: 'DI', 0xFB: 'EI',
+}
+for op, mn in NO_OP.items():
+    OPCODES[op] = (mn, 1, None)
+
+# MOV r,r' (01 ddd sss) - but 76 is HLT
+for d in range(8):
+    for s in range(8):
+        op = 0x40 | (d << 3) | s
+        if op != 0x76:  # HLT
+            OPCODES[op] = ('MOV', 1, ('r', 's'))
+
+# MVI r,d8 (00 rrr 110)
+for r in range(8):
+    op = 0x06 | (r << 3)
+    OPCODES[op] = ('MVI', 2, ('r', 'd8'))
+
+# LXI rp,d16 (00 rp0 001)
+for rp in range(4):
+    op = 0x01 | (rp << 4)
+    OPCODES[op] = ('LXI', 3, ('rp', 'd16'))
+
+# INR r (00 rrr 100)
+for r in range(8):
+    op = 0x04 | (r << 3)
+    OPCODES[op] = ('INR', 1, ('r',))
+
+# DCR r (00 rrr 101)
+for r in range(8):
+    op = 0x05 | (r << 3)
+    OPCODES[op] = ('DCR', 1, ('r',))
+
+# INX rp (00 rp0 011)
+for rp in range(4):
+    op = 0x03 | (rp << 4)
+    OPCODES[op] = ('INX', 1, ('rp',))
+
+# DCX rp (00 rp0 011)
+for rp in range(4):
+    op = 0x0B | (rp << 4)
+    OPCODES[op] = ('DCX', 1, ('rp',))
+
+# DAD rp (00 rp1 001)
+for rp in range(4):
+    op = 0x09 | (rp << 4)
+    OPCODES[op] = ('DAD', 1, ('rp',))
+
+# LDAX rp (00 rp0 010) - only BC,DE
+for rp in range(2):
+    op = 0x0A | (rp << 4)
+    OPCODES[op] = ('LDAX', 1, ('rp',))
+
+# STAX rp (00 rp0 010) - only BC,DE
+for rp in range(2):
+    op = 0x02 | (rp << 4)
+    OPCODES[op] = ('STAX', 1, ('rp',))
+
+# PUSH rp (11 rp0 101)
+for rp in range(4):
+    op = 0xC5 | (rp << 4)
+    OPCODES[op] = ('PUSH', 1, ('rp2',))
+
+# POP rp (11 rp0 001)
+for rp in range(4):
+    op = 0xC1 | (rp << 4)
+    OPCODES[op] = ('POP', 1, ('rp2',))
+
+# ALU r (10 ooo rrr)
+ALU_OPS = ['ADD', 'ADC', 'SUB', 'SBB', 'ANA', 'XRA', 'ORA', 'CMP']
+for alu in range(8):
+    for r in range(8):
+        op = 0x80 | (alu << 3) | r
+        OPCODES[op] = (ALU_OPS[alu], 1, ('s',))
+
+# ALU immediate (11 ooo 110)
+ALU_IMM = ['ADI', 'ACI', 'SUI', 'SBI', 'ANI', 'XRI', 'ORI', 'CPI']
+for alu in range(8):
+    op = 0xC6 | (alu << 3)
+    OPCODES[op] = (ALU_IMM[alu], 2, ('d8',))
+
+# Conditional returns (11 ccc 000)
+for c in range(8):
+    op = 0xC0 | (c << 3)
+    mn = 'R' + CONDITIONS[c]
+    OPCODES[op] = (mn, 1, None)
+
+# Conditional jumps (11 ccc 010)
+for c in range(8):
+    op = 0xC2 | (c << 3)
+    mn = 'J' + CONDITIONS[c]
+    OPCODES[op] = (mn, 3, ('a16',))
+
+# Conditional calls (11 ccc 100)
+for c in range(8):
+    op = 0xC4 | (c << 3)
+    mn = 'C' + CONDITIONS[c]
+    OPCODES[op] = (mn, 3, ('a16',))
+
+# JMP
+OPCODES[0xC3] = ('JMP', 3, ('a16',))
+
+# CALL
+OPCODES[0xCD] = ('CALL', 3, ('a16',))
+
+# RST n (11 nnn 111)
+for n in range(8):
+    op = 0xC7 | (n << 3)
+    OPCODES[op] = ('RST', 1, ('rst',))
+
+# Memory reference
+OPCODES[0x3A] = ('LDA', 3, ('a16',))
+OPCODES[0x32] = ('STA', 3, ('a16',))
+OPCODES[0x2A] = ('LHLD', 3, ('a16',))
+OPCODES[0x22] = ('SHLD', 3, ('a16',))
+
+# I/O
+OPCODES[0xDB] = ('IN', 2, ('d8',))
+OPCODES[0xD3] = ('OUT', 2, ('d8',))
+
+
+def format_hex8(val):
+    """Format 8-bit value as hex with leading 0 if needed."""
+    s = f'{val:02X}H'
+    if s[0].isalpha():
+        s = '0' + s
+    return s
+
+
+def format_hex16(val):
+    """Format 16-bit value as hex with leading 0 if needed."""
+    s = f'{val:04X}H'
+    if s[0].isalpha():
+        s = '0' + s
+    return s
+
+
+class Disassembler:
+    """8080 Disassembler."""
+
+    def __init__(self, data, org=0x0100):
+        self.data = data
+        self.org = org
+        self.end = org + len(data)
+
+        # Analysis results
+        self.labels = {}  # addr -> label name
+        self.code_addrs = set()  # Addresses that are code
+        self.data_addrs = set()  # Addresses that are data
+        self.refs_from = defaultdict(set)  # addr -> set of addresses that reference it
+        self.refs_to = defaultdict(set)  # addr -> set of addresses it references
+        self.entry_points = set()  # Known entry points
+        self.strings = {}  # addr -> string content
+
+        # Output
+        self.output_lines = []
+
+    def byte_at(self, addr):
+        """Get byte at address."""
+        if addr < self.org or addr >= self.end:
+            return None
+        return self.data[addr - self.org]
+
+    def word_at(self, addr):
+        """Get 16-bit word at address (little endian)."""
+        lo = self.byte_at(addr)
+        hi = self.byte_at(addr + 1)
+        if lo is None or hi is None:
+            return None
+        return lo | (hi << 8)
+
+    def decode_instruction(self, addr):
+        """Decode instruction at address. Returns (mnemonic, size, operands, target)."""
+        opcode = self.byte_at(addr)
+        if opcode is None:
+            return None
+
+        if opcode not in OPCODES:
+            # Unknown opcode - treat as data
+            return ('DB', 1, [format_hex8(opcode)], None)
+
+        mnemonic, size, operand_type = OPCODES[opcode]
+        operands = []
+        target = None
+
+        if operand_type is None:
+            pass
+        elif operand_type == ('r', 's'):
+            # MOV r,r'
+            dst = REGS[(opcode >> 3) & 7]
+            src = REGS[opcode & 7]
+            operands = [dst, src]
+        elif operand_type == ('r', 'd8'):
+            # MVI r,d8
+            reg = REGS[(opcode >> 3) & 7]
+            imm = self.byte_at(addr + 1)
+            if imm is None:
+                return None
+            operands = [reg, format_hex8(imm)]
+        elif operand_type == ('r',):
+            # INR/DCR r
+            reg = REGS[(opcode >> 3) & 7]
+            operands = [reg]
+        elif operand_type == ('s',):
+            # ALU r
+            reg = REGS[opcode & 7]
+            operands = [reg]
+        elif operand_type == ('rp',):
+            # Register pair operations
+            rp = REGPAIRS[(opcode >> 4) & 3]
+            operands = [rp]
+        elif operand_type == ('rp2',):
+            # PUSH/POP with PSW
+            rp = REGPAIRS_PUSH[(opcode >> 4) & 3]
+            operands = [rp]
+        elif operand_type == ('rp', 'd16'):
+            # LXI rp,d16
+            rp = REGPAIRS[(opcode >> 4) & 3]
+            imm = self.word_at(addr + 1)
+            if imm is None:
+                return None
+            operands = [rp, format_hex16(imm)]
+            # Check if this might be a code reference
+            if self.org <= imm < self.end:
+                target = imm
+        elif operand_type == ('d8',):
+            # 8-bit immediate
+            imm = self.byte_at(addr + 1)
+            if imm is None:
+                return None
+            operands = [format_hex8(imm)]
+        elif operand_type == ('d16',):
+            # 16-bit immediate
+            imm = self.word_at(addr + 1)
+            if imm is None:
+                return None
+            operands = [format_hex16(imm)]
+        elif operand_type == ('a16',):
+            # 16-bit address (jumps/calls/memory)
+            target = self.word_at(addr + 1)
+            if target is None:
+                return None
+            operands = [format_hex16(target)]
+        elif operand_type == ('rst',):
+            # RST vector
+            n = (opcode >> 3) & 7
+            operands = [str(n)]
+
+        return (mnemonic, size, operands, target)
+
+    def is_unconditional_transfer(self, mnemonic):
+        """Check if instruction is unconditional transfer of control."""
+        return mnemonic in ('JMP', 'RET', 'PCHL', 'HLT')
+
+    def is_call(self, mnemonic):
+        """Check if instruction is a call."""
+        return mnemonic in ('CALL', 'CNZ', 'CZ', 'CNC', 'CC', 'CPO', 'CPE', 'CP', 'CM', 'RST')
+
+    def is_jump(self, mnemonic):
+        """Check if instruction is a jump."""
+        return mnemonic in ('JMP', 'JNZ', 'JZ', 'JNC', 'JC', 'JPO', 'JPE', 'JP', 'JM', 'PCHL')
+
+    def analyze_code_flow(self, entry_points):
+        """Trace code flow from entry points to identify code regions."""
+        work_list = list(entry_points)
+        visited = set()
+
+        while work_list:
+            addr = work_list.pop()
+
+            if addr in visited:
+                continue
+            if addr < self.org or addr >= self.end:
+                continue
+
+            visited.add(addr)
+
+            while addr < self.end:
+                if addr in self.code_addrs:
+                    break
+
+                result = self.decode_instruction(addr)
+                if result is None:
+                    break
+
+                mnemonic, size, operands, target = result
+
+                # Mark as code
+                for i in range(size):
+                    self.code_addrs.add(addr + i)
+
+                # Track references
+                if target is not None and self.org <= target < self.end:
+                    self.refs_from[target].add(addr)
+                    self.refs_to[addr].add(target)
+
+                    if self.is_jump(mnemonic) or self.is_call(mnemonic):
+                        if target not in visited:
+                            work_list.append(target)
+
+                # Follow conditional branches
+                if self.is_unconditional_transfer(mnemonic):
+                    break
+
+                addr += size
+
+    def find_strings(self, min_len=4):
+        """Find potential ASCII strings in non-code areas."""
+        i = 0
+        while i < len(self.data):
+            addr = self.org + i
+            if addr in self.code_addrs:
+                i += 1
+                continue
+
+            # Look for printable ASCII sequence
+            start = i
+            while i < len(self.data):
+                b = self.data[i]
+                # Accept printable ASCII and common control chars
+                if 0x20 <= b <= 0x7E or b in (0x0D, 0x0A, 0x09):
+                    i += 1
+                elif b == 0 and i > start:  # Null terminator
+                    i += 1
+                    break
+                elif b & 0x80 and 0x20 <= (b & 0x7F) <= 0x7E:
+                    # High bit set - common in BASIC for tokenized text
+                    i += 1
+                    break
+                else:
+                    break
+
+            if i - start >= min_len:
+                self.strings[self.org + start] = self.data[start:i]
+            elif i == start:
+                i += 1
+
+    def generate_labels(self):
+        """Generate labels for all referenced addresses."""
+        # Build set of instruction start addresses
+        instr_starts = set()
+        addr = self.org
+        while addr < self.end:
+            if addr in self.code_addrs:
+                instr_starts.add(addr)
+                result = self.decode_instruction(addr)
+                if result:
+                    addr += result[1]  # Skip instruction size
+                else:
+                    addr += 1
+            else:
+                addr += 1
+
+        # Entry points
+        for addr in self.entry_points:
+            if addr not in self.labels and addr in instr_starts:
+                self.labels[addr] = f'L{addr:04X}'
+
+        # Jump/call targets - only create labels at instruction boundaries
+        for addr in self.refs_from:
+            if addr not in self.labels and self.org <= addr < self.end:
+                # Only create label if it's at an instruction start or data location
+                if addr in instr_starts:
+                    self.labels[addr] = f'L{addr:04X}'
+                elif addr not in self.code_addrs:
+                    # Data reference
+                    self.labels[addr] = f'D{addr:04X}'
+                # If it's mid-instruction, don't create a label
+
+    def format_operand(self, op, addr):
+        """Format operand, using label if available."""
+        if op.endswith('H'):
+            # Strip leading 0 if present for parsing
+            hex_part = op[:-1]
+            if hex_part.startswith('0') and len(hex_part) > 1:
+                hex_part = hex_part[1:]
+            if len(hex_part) == 4:
+                # 16-bit address
+                target = int(hex_part, 16)
+                if target in self.labels:
+                    return self.labels[target]
+                # If target is within our range but has no label, keep as hex
+                # (it won't cause undefined symbol errors in assembler)
+        return op
+
+    def disassemble(self, entry_points=None):
+        """Perform full disassembly."""
+        # Default entry point is start of COM file
+        if entry_points is None:
+            entry_points = [self.org]
+        self.entry_points = set(entry_points)
+
+        # Analyze code flow
+        self.analyze_code_flow(entry_points)
+
+        # Generate labels
+        self.generate_labels()
+
+        # Find strings in data areas
+        self.find_strings()
+
+        # Generate output
+        return self.generate_output()
+
+    def generate_output(self):
+        """Generate .MAC output."""
+        lines = []
+        lines.append('; Disassembled by ud80')
+        lines.append(f'; Source file size: {len(self.data)} bytes')
+        lines.append('')
+        lines.append('\t.8080')
+        lines.append('')
+        lines.append(f'\tORG\t{format_hex16(self.org)}')
+        lines.append('')
+
+        addr = self.org
+        while addr < self.end:
+            line_parts = []
+
+            # Add label if present
+            if addr in self.labels:
+                line_parts.append(f'{self.labels[addr]}:')
+            else:
+                line_parts.append('')
+
+            if addr in self.code_addrs:
+                # Disassemble instruction
+                result = self.decode_instruction(addr)
+                if result:
+                    mnemonic, size, operands, target = result
+
+                    # Format operands with labels
+                    formatted_ops = [self.format_operand(op, addr) for op in operands]
+
+                    if formatted_ops:
+                        line_parts.append(f'\t{mnemonic}\t{",".join(formatted_ops)}')
+                    else:
+                        line_parts.append(f'\t{mnemonic}')
+
+                    # Add address comment
+                    bytes_str = ' '.join(f'{self.byte_at(addr+i):02X}' for i in range(size))
+                    line_parts.append(f'\t; {addr:04X}: {bytes_str}')
+
+                    lines.append(''.join(line_parts))
+                    addr += size
+                else:
+                    # Shouldn't happen, but handle it
+                    b = self.byte_at(addr)
+                    line_parts.append(f'\tDB\t{format_hex8(b)}')
+                    line_parts.append(f'\t; {addr:04X}')
+                    lines.append(''.join(line_parts))
+                    addr += 1
+            else:
+                # Data byte - output one at a time to allow labels at any position
+                b = self.byte_at(addr)
+                line_parts.append(f'\tDB\t{format_hex8(b)}')
+                line_parts.append(f'\t; {addr:04X}')
+                lines.append(''.join(line_parts))
+                addr += 1
+
+        lines.append('')
+        lines.append('\tEND')
+
+        return '\n'.join(lines)
+
+
+def parse_range(s):
+    """Parse address range like '1000-2000' or '1000'."""
+    if '-' in s:
+        start, end = s.split('-', 1)
+        return (int(start, 16), int(end, 16))
+    else:
+        return (int(s, 16), int(s, 16))
+
+
+def main():
+    parser = argparse.ArgumentParser(description='8080 Disassembler for CP/M .COM files')
+    parser.add_argument('input', help='Input .COM file')
+    parser.add_argument('-o', '--output', help='Output .MAC file')
+    parser.add_argument('-e', '--entry', action='append',
+                       help='Additional entry point (hex address)')
+    parser.add_argument('-d', '--data', action='append',
+                       help='Force data range (hex: start-end)')
+    parser.add_argument('--org', default='0100',
+                       help='Origin address (default: 0100 for CP/M)')
+
+    args = parser.parse_args()
+
+    # Read input file
+    with open(args.input, 'rb') as f:
+        data = f.read()
+
+    org = int(args.org, 16)
+
+    # Create disassembler
+    disasm = Disassembler(data, org)
+
+    # Parse entry points
+    entry_points = [org]
+    if args.entry:
+        for e in args.entry:
+            entry_points.append(int(e, 16))
+
+    # Parse data ranges
+    if args.data:
+        for d in args.data:
+            start, end = parse_range(d)
+            for addr in range(start, end + 1):
+                disasm.data_addrs.add(addr)
+
+    # Disassemble
+    output = disasm.disassemble(entry_points)
+
+    # Write output
+    if args.output:
+        output_path = args.output
+    else:
+        base = os.path.splitext(args.input)[0]
+        output_path = base + '.mac'
+
+    with open(output_path, 'w') as f:
+        f.write(output)
+
+    print(f'Disassembled {args.input} -> {output_path}')
+    print(f'  Code bytes: {len(disasm.code_addrs)}')
+    print(f'  Data bytes: {len(data) - len(disasm.code_addrs)}')
+    print(f'  Labels: {len(disasm.labels)}')
+
+
+if __name__ == '__main__':
+    main()
