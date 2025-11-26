@@ -1,0 +1,66 @@
+*~
+\#*
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+venv/
+env/
+ENV/
+.venv/
+pip-log.txt
+pip-delete-this-directory.txt
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Test outputs
+test_results_*.txt
+test_output*.txt
+test_latest*.txt
+
+# Compiled outputs from test_compile/
+# Note: z88dk generates both .com and files without extension
+# We keep .com files but exclude intermediate files
+test_compile/*.c
+test_compile/*
+!test_compile/*.bas
+!test_compile/*.py
+!test_compile/*.com
+!test_compile/*.md
+!test_compile/*.h
+
+# Prevent compiler artifacts in root directory
+/*.c
+/*.com
+/sz*
+/SZ*
+/test*.c
+/test*.com
+
+# OS
+.DS_Store
+Thumbs.db
+tests/data/
+
+# MkDocs generated files
+/site/
+.cache/
+
+**~
+**.sym
+**.prn
+**.rel
