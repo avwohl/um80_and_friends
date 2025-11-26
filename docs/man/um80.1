@@ -1,0 +1,236 @@
+.TH UM80 1 "November 2025" "um80 1.0.0" "User Commands"
+.SH NAME
+um80 \- Microsoft MACRO-80 compatible assembler for 8080/Z80
+.SH SYNOPSIS
+.B um80
+[\fB\-o\fR \fIoutput.rel\fR]
+[\fB\-l\fR \fIlisting.prn\fR]
+[\fB\-D\fR \fISYMBOL\fR[=\fIVALUE\fR]]...
+[\fB\-I\fR \fIPATH\fR]...
+.I input.mac
+.SH DESCRIPTION
+.B um80
+is a Microsoft MACRO-80 compatible assembler that translates 8080/Z80 assembly
+source files (.MAC) into relocatable object files (.REL). The output is compatible
+with the
+.BR ul80 (1)
+linker.
+.PP
+The assembler supports both Intel 8080 and Zilog Z80 instruction sets, macros,
+conditional assembly, and the full set of MACRO-80 directives.
+.SH OPTIONS
+.TP
+.BI \-o " output.rel"
+Specify the output file name. Default is the input file name with a .rel extension.
+.TP
+.BI \-l " listing.prn"
+Generate an assembly listing file showing source, generated code, and symbol table.
+.TP
+.BI \-D " SYMBOL" [= VALUE ]
+Define a symbol before assembly begins. If no value is given, the symbol is
+defined with value 1. Can be specified multiple times.
+.TP
+.BI \-I " PATH"
+Add a directory to the include file search path. Can be specified multiple times.
+.SH SOURCE FORMAT
+Assembly source files consist of lines containing:
+.IP \(bu 2
+Labels (optional) followed by a colon
+.IP \(bu 2
+Instructions or directives
+.IP \(bu 2
+Comments starting with semicolon (;)
+.PP
+Example:
+.PP
+.RS
+.nf
+        ORG     0100H
+START:  MVI     A,0         ; Initialize A
+        LXI     H,BUFFER    ; Point to buffer
+        CALL    INIT
+        JMP     START
+BUFFER: DS      100
+        END     START
+.fi
+.RE
+.SH DIRECTIVES
+.SS Assembly Control
+.TP
+.B ORG \fIaddress\fR
+Set the location counter to \fIaddress\fR.
+.TP
+.B END \fR[\fIaddress\fR]
+End of source. Optional \fIaddress\fR specifies the entry point.
+.SS Data Definition
+.TP
+.B DB \fIvalue\fR[,\fIvalue\fR]...
+Define bytes. Values can be numbers or quoted strings.
+.TP
+.B DW \fIvalue\fR[,\fIvalue\fR]...
+Define 16-bit words (low byte first).
+.TP
+.B DS \fIcount\fR
+Define storage (reserve \fIcount\fR bytes).
+.SS Symbol Definition
+.TP
+.B EQU \fIvalue\fR
+Define a constant symbol (cannot be redefined).
+.TP
+.B SET \fIvalue\fR
+Define a variable symbol (can be redefined with SET or DEFL).
+.TP
+.B DEFL \fIvalue\fR
+Same as SET.
+.SS Segments
+.TP
+.B CSEG
+Select code segment (program-relative).
+.TP
+.B DSEG
+Select data segment (data-relative).
+.TP
+.B ASEG
+Select absolute segment.
+.TP
+.B COMMON \fR/\fIname\fR/
+Select or define a COMMON block.
+.SS External Linkage
+.TP
+.B PUBLIC \fIsymbol\fR[,\fIsymbol\fR]...
+Make symbols available to other modules.
+.TP
+.B EXTRN \fIsymbol\fR[,\fIsymbol\fR]...
+Declare symbols defined in other modules.
+.SS Macros
+.TP
+\fIname\fB MACRO \fR[\fIparam\fR[,\fIparam\fR]...]
+Begin macro definition.
+.TP
+.B ENDM
+End macro definition.
+.TP
+.B LOCAL \fIsymbol\fR[,\fIsymbol\fR]...
+Declare local symbols within a macro.
+.TP
+.B EXITM
+Exit macro expansion early.
+.SS Repeat Blocks
+.TP
+.B REPT \fIcount\fR
+Repeat block \fIcount\fR times.
+.TP
+.B IRP \fIparam\fR,<\fIvalue\fR[,\fIvalue\fR]...>
+Repeat block for each value.
+.TP
+.B IRPC \fIparam\fR,\fIstring\fR
+Repeat block for each character in string.
+.SS Conditional Assembly
+.TP
+.B IF \fIexpression\fR
+Assemble following code if expression is non-zero.
+.TP
+.B ELSE
+Assemble following code if IF was false.
+.TP
+.B ENDIF
+End conditional block.
+.TP
+.B IFDEF \fIsymbol\fR
+Assemble if symbol is defined.
+.TP
+.B IFNDEF \fIsymbol\fR
+Assemble if symbol is not defined.
+.SS Listing Control
+.TP
+.B TITLE \fItext\fR
+Set listing title.
+.TP
+.B PAGE
+Start new listing page.
+.TP
+.B .LIST
+Enable listing output.
+.TP
+.B .XLIST
+Disable listing output.
+.SS Processor Mode
+.TP
+.B .Z80
+Enable Z80 instruction set.
+.TP
+.B .8080
+Restrict to 8080 instruction set (default).
+.SS Include Files
+.TP
+.B INCLUDE \fIfilename\fR
+Include another source file.
+.SH EXPRESSIONS
+Expressions can include:
+.IP \(bu 2
+Decimal numbers (default)
+.IP \(bu 2
+Hexadecimal numbers (suffix H or prefix 0x)
+.IP \(bu 2
+Octal numbers (suffix O or Q)
+.IP \(bu 2
+Binary numbers (suffix B)
+.IP \(bu 2
+ASCII characters in quotes ('A')
+.IP \(bu 2
+Symbols
+.IP \(bu 2
+Current location counter ($)
+.PP
+Operators: + \- * / MOD AND OR XOR NOT SHL SHR HIGH LOW
+.SH EXAMPLES
+.TP
+Assemble with default output:
+.B um80 program.mac
+.TP
+Specify output file:
+.B um80 \-o code.rel program.mac
+.TP
+Generate listing:
+.B um80 \-l program.prn program.mac
+.TP
+Define symbol:
+.B um80 \-D DEBUG=1 program.mac
+.TP
+Add include path:
+.B um80 \-I /usr/share/include program.mac
+.SH EXIT STATUS
+.TP
+.B 0
+Successful assembly (may include warnings).
+.TP
+.B 1
+Assembly failed due to errors.
+.SH FILES
+.TP
+.I input.mac
+Assembly source file.
+.TP
+.I output.rel
+Relocatable object file.
+.TP
+.I output.prn
+Assembly listing (if requested).
+.SH SEE ALSO
+.BR ul80 (1),
+.BR ulib80 (1),
+.BR ucref80 (1),
+.BR ud80 (1)
+.PP
+The original Microsoft MACRO-80 manual is available at docs/external/m80.pdf
+.SH COMPATIBILITY
+.B um80
+is compatible with Microsoft MACRO-80 (M80) with the following notes:
+.IP \(bu 2
+Source files can use Unix (LF) or DOS (CR/LF) line endings.
+.IP \(bu 2
+Symbol names are converted to uppercase.
+.IP \(bu 2
+The .REL file format is binary-compatible with the original.
+.SH AUTHOR
+um80 project contributors.

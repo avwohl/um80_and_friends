@@ -1,0 +1,11 @@
+include README.md
+include LICENSE
+include pyproject.toml
+
+recursive-include docs *.md *.1
+recursive-include docs/external *.pdf
+
+recursive-include tests *.mac
+
+prune docs/__pycache__
+prune um80/__pycache__
