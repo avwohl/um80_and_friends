@@ -14,8 +14,8 @@ from pathlib import Path
 # Add src directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from opcodes8080 import *
-from relformat import *
+from um80_8080opcodes import *
+from um80_relformat import *
 
 
 class AssemblerError(Exception):
