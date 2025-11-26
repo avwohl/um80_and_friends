@@ -295,6 +295,45 @@ COND_CALLS = {'CNZ', 'CZ', 'CNC', 'CC', 'CPO', 'CPE', 'CP', 'CM'}
 # Conditional return mnemonics
 COND_RETS = {'RNZ', 'RZ', 'RNC', 'RC', 'RPO', 'RPE', 'RP', 'RM'}
 
+# Opcodes as operand values (first byte of instruction encoding)
+# This allows using opcode names as values in expressions per M80 manual p.2-4
+OPCODE_VALUES = {
+    # No-operand instructions
+    'NOP': 0x00, 'RLC': 0x07, 'RRC': 0x0F, 'RAL': 0x17, 'RAR': 0x1F,
+    'DAA': 0x27, 'CMA': 0x2F, 'STC': 0x37, 'CMC': 0x3F, 'HLT': 0x76,
+    'RET': 0xC9, 'PCHL': 0xE9, 'SPHL': 0xF9, 'XCHG': 0xEB, 'XTHL': 0xE3,
+    'DI': 0xF3, 'EI': 0xFB,
+    # Conditional returns
+    'RNZ': 0xC0, 'RZ': 0xC8, 'RNC': 0xD0, 'RC': 0xD8,
+    'RPO': 0xE0, 'RPE': 0xE8, 'RP': 0xF0, 'RM': 0xF8,
+    # Conditional jumps
+    'JNZ': 0xC2, 'JZ': 0xCA, 'JNC': 0xD2, 'JC': 0xDA,
+    'JPO': 0xE2, 'JPE': 0xEA, 'JP': 0xF2, 'JM': 0xFA,
+    # Unconditional jump/call
+    'JMP': 0xC3, 'CALL': 0xCD,
+    # Conditional calls
+    'CNZ': 0xC4, 'CZ': 0xCC, 'CNC': 0xD4, 'CC': 0xDC,
+    'CPO': 0xE4, 'CPE': 0xEC, 'CP': 0xF4, 'CM': 0xFC,
+    # ALU immediate
+    'ADI': 0xC6, 'ACI': 0xCE, 'SUI': 0xD6, 'SBI': 0xDE,
+    'ANI': 0xE6, 'XRI': 0xEE, 'ORI': 0xF6, 'CPI': 0xFE,
+    # Memory reference
+    'LDA': 0x3A, 'STA': 0x32, 'LHLD': 0x2A, 'SHLD': 0x22,
+    # I/O
+    'IN': 0xDB, 'OUT': 0xD3,
+    # RST base (RST 0)
+    'RST': 0xC7,
+    # Register operations bases (use with register encoding)
+    'MOV': 0x40, 'MVI': 0x06,
+    'INR': 0x04, 'DCR': 0x05,
+    'ADD': 0x80, 'ADC': 0x88, 'SUB': 0x90, 'SBB': 0x98,
+    'ANA': 0xA0, 'XRA': 0xA8, 'ORA': 0xB0, 'CMP': 0xB8,
+    # Register pair operations bases
+    'LXI': 0x01, 'DAD': 0x09, 'INX': 0x03, 'DCX': 0x0B,
+    'PUSH': 0xC5, 'POP': 0xC1,
+    'LDAX': 0x0A, 'STAX': 0x02,
+}
+
 
 def get_cond_from_mnemonic(mnemonic):
     """Extract condition code from mnemonic like JNZ -> NZ."""
