@@ -1,0 +1,116 @@
+.TH UCREF80 1 "November 2025" "um80 1.0.0" "User Commands"
+.SH NAME
+ucref80 \- cross-reference utility for MACRO-80 assembly files
+.SH SYNOPSIS
+.B ucref80
+[\fB\-o\fR \fIoutput.txt\fR]
+.I file.mac
+[\fIfile.mac\fR]...
+.SH DESCRIPTION
+.B ucref80
+generates a cross-reference listing for MACRO-80 assembly source files. The
+listing shows where each symbol is defined and referenced, making it easier
+to understand and maintain assembly code.
+.PP
+The cross-reference output includes:
+.IP \(bu 2
+Alphabetized list of all symbols
+.IP \(bu 2
+Definition locations (file and line number)
+.IP \(bu 2
+Reference locations (file and line number)
+.IP \(bu 2
+Symbol attributes (PUBLIC, EXTERNAL, MACRO)
+.SH OPTIONS
+.TP
+.BI \-o " output.txt"
+Write the cross-reference listing to the specified file instead of standard output.
+.SH ARGUMENTS
+.TP
+.I file.mac
+One or more assembly source files to analyze. Multiple files are processed
+together, so cross-file references are tracked.
+.SH OUTPUT FORMAT
+The output consists of one entry per symbol:
+.PP
+.RS
+.nf
+SYMBOL_NAME
+  Def:   filename.mac:line
+  Refs:  filename.mac:line, filename.mac:line, ...
+.fi
+.RE
+.PP
+Special attributes are noted after the symbol name:
+.IP \(bu 2
+(PUBLIC) \- Symbol declared PUBLIC
+.IP \(bu 2
+(EXTERNAL) \- Symbol declared EXTRN
+.IP \(bu 2
+(MACRO) \- Symbol is a macro name
+.SH SYMBOLS TRACKED
+The cross-reference tracks:
+.IP \(bu 2
+Labels (lines ending with colon)
+.IP \(bu 2
+EQU/SET/DEFL definitions
+.IP \(bu 2
+PUBLIC declarations
+.IP \(bu 2
+EXTRN declarations
+.IP \(bu 2
+Macro names
+.IP \(bu 2
+All symbol references in instructions and expressions
+.PP
+Reserved words (instructions, directives, registers) are excluded from the listing.
+.SH EXAMPLES
+.TP
+Analyze a single file:
+.B ucref80 program.mac
+.TP
+Analyze multiple files:
+.B ucref80 main.mac io.mac util.mac
+.TP
+Save to file:
+.B ucref80 \-o xref.txt *.mac
+.TP
+Analyze all .mac files:
+.B ucref80 *.mac
+.SH EXIT STATUS
+.TP
+.B 0
+Analysis successful.
+.TP
+.B 1
+Error occurred (file not found, etc.).
+.SH USE CASES
+.IP \(bu 2
+.B Finding unused symbols:
+Symbols with no references may be dead code.
+.IP \(bu 2
+.B Impact analysis:
+Before modifying a symbol, see everywhere it's used.
+.IP \(bu 2
+.B Code documentation:
+The cross-reference serves as a symbol index.
+.IP \(bu 2
+.B Debugging:
+Verify symbols are defined and referenced correctly.
+.SH SEE ALSO
+.BR um80 (1),
+.BR ul80 (1),
+.BR ulib80 (1),
+.BR ud80 (1)
+.PP
+The original Microsoft CREF manual is available at docs/external/cref_lib.pdf
+.SH LIMITATIONS
+.IP \(bu 2
+Only processes .MAC source files (not .REL object files).
+.IP \(bu 2
+Macro expansion is not performed; references inside macros are to the
+parameter names, not the expanded values.
+.IP \(bu 2
+Conditional assembly is not evaluated; all branches are scanned.
+.SH AUTHOR
+um80 project contributors.

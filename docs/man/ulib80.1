@@ -1,0 +1,159 @@
+.TH ULIB80 1 "November 2025" "um80 1.0.0" "User Commands"
+.SH NAME
+ulib80 \- Microsoft LIB-80 compatible library manager for 8080/Z80
+.SH SYNOPSIS
+.B ulib80
+.B \-c
+.I library.lib
+.I file.rel
+[\fIfile.rel\fR]...
+.br
+.B ulib80
+.B \-l
+.I library.lib
+.br
+.B ulib80
+.B \-p
+.I library.lib
+.br
+.B ulib80
+.B \-x
+.I library.lib
+[\fImodule\fR]...
+.br
+.B ulib80
+.B \-a
+.I library.lib
+.I file.rel
+[\fIfile.rel\fR]...
+.br
+.B ulib80
+.B \-d
+.I library.lib
+.I module
+[\fImodule\fR]...
+.SH DESCRIPTION
+.B ulib80
+is a Microsoft LIB-80 compatible library manager for creating and maintaining
+libraries of relocatable object modules (.REL files) for use with the
+.BR ul80 (1)
+linker.
+.PP
+Libraries allow commonly used routines to be collected into a single file. When
+linking, only the modules needed to satisfy undefined references are included
+in the output, keeping executables small.
+.SH OPTIONS
+Exactly one operation must be specified:
+.TP
+.B \-c
+Create a new library from the specified .REL files. If the library file exists,
+it is overwritten.
+.TP
+.B \-l
+List the modules contained in the library, showing module names and sizes.
+.TP
+.B \-p
+Print the public symbols defined in each module of the library.
+.TP
+.B \-x
+Extract modules from the library. If no module names are given, all modules
+are extracted. Extracted modules are written as \fImodule\fR.rel files.
+.TP
+.B \-a
+Add .REL files to an existing library. The library must already exist.
+.TP
+.B \-d
+Delete the named modules from the library.
+.SH ARGUMENTS
+.TP
+.I library.lib
+The library file to operate on. By convention, library files use the .lib extension.
+.TP
+.I file.rel
+Relocatable object files to add to the library.
+.TP
+.I module
+Module name (without .rel extension) for extraction or deletion.
+.SH LIBRARY FORMAT
+The ulib80 library format (ULIB) consists of:
+.IP \(bu 2
+Magic header "ULIB"
+.IP \(bu 2
+Version number
+.IP \(bu 2
+Module directory with names, offsets, and public symbol lists
+.IP \(bu 2
+Concatenated module data
+.PP
+This format is specific to ulib80 and differs from the original Microsoft LIB-80
+format, but serves the same purpose.
+.SH EXAMPLES
+.TP
+Create a library:
+.B ulib80 \-c mylib.lib io.rel math.rel string.rel
+.TP
+List library contents:
+.B ulib80 \-l mylib.lib
+.TP
+Show public symbols:
+.B ulib80 \-p mylib.lib
+.TP
+Extract all modules:
+.B ulib80 \-x mylib.lib
+.TP
+Extract specific module:
+.B ulib80 \-x mylib.lib math
+.TP
+Add a module:
+.B ulib80 \-a mylib.lib newmod.rel
+.TP
+Delete a module:
+.B ulib80 \-d mylib.lib oldmod
+.SH EXIT STATUS
+.TP
+.B 0
+Operation successful.
+.TP
+.B 1
+Operation failed due to errors.
+.SH FILES
+.TP
+.I library.lib
+Library archive file.
+.TP
+.I module.rel
+Relocatable object file.
+.SH TYPICAL WORKFLOW
+.PP
+.RS
+.nf
+# Assemble source files
+um80 \-o io.rel io.mac
+um80 \-o math.rel math.mac
+um80 \-o string.rel string.mac
+
+# Create library
+ulib80 \-c stdlib.lib io.rel math.rel string.rel
+
+# Link with library
+ul80 \-o program.com main.rel stdlib.lib
+.fi
+.RE
+.SH SEE ALSO
+.BR um80 (1),
+.BR ul80 (1),
+.BR ucref80 (1),
+.BR ud80 (1)
+.PP
+The original Microsoft LIB-80 manual is available at docs/external/cref_lib.pdf
+.SH NOTES
+.IP \(bu 2
+Module names are derived from the .REL file name (without extension) and are
+converted to uppercase.
+.IP \(bu 2
+A library cannot contain duplicate module names.
+.IP \(bu 2
+When the linker searches a library, it only includes modules that define
+symbols referenced by other modules.
+.SH AUTHOR
+um80 project contributors.
