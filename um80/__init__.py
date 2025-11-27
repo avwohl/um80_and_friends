@@ -11,4 +11,4 @@ development tools from Microsoft:
 - ud80: 8080/Z80 disassembler
 """
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"

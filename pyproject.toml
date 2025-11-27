@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "um80"
-version = "0.2.0"
+version = "0.2.1"
 description = "Microsoft MACRO-80 compatible assembler toolchain for Linux"
 readme = "README.md"
 license = "GPL-3.0-or-later"
@@ -35,10 +35,10 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/um80/um80_and_friends"
-Documentation = "https://github.com/um80/um80_and_friends#readme"
-Repository = "https://github.com/um80/um80_and_friends"
-Issues = "https://github.com/um80/um80_and_friends/issues"
+Homepage = "https://github.com/avwohl/um80_and_friends"
+Documentation = "https://github.com/avwohl/um80_and_friends#readme"
+Repository = "https://github.com/avwohl/um80_and_friends"
+Issues = "https://github.com/avwohl/um80_and_friends/issues"
 
 [project.scripts]
 um80 = "um80.um80:main"
