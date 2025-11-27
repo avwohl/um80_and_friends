@@ -4,14 +4,20 @@ ud80 - 8080/Z80 Disassembler for CP/M .COM files.
 
 Produces .MAC output compatible with um80 assembler.
 
-Usage: ud80 [-z] [-o output.mac] [-e entry] [-d datarange] input.com
+Usage: ud80 [-z] [-o output.mac] [-e entry] [-l label] [-d range] [-t range] input.com
 
 Options:
     -z, --z80       Z80 mode: use Zilog mnemonics and decode Z80-only opcodes
                     (CB, DD, ED, FD prefixes including undocumented instructions)
     -o, --output    Output file (default: input.mac)
-    -e, --entry     Additional entry point (hex address)
-    -d, --data      Force data range (hex: start-end)
+    -e, --entry     Entry point to trace as code (e.g., -e 1234 or -e 1234,myproc)
+                    Can specify optional label name after comma
+    -l, --label     Add label without tracing as code (e.g., -l 1A00 or -l 1A00,buffer)
+                    Useful for data labels or unreached code
+    -d, --data      Force address range to be data, not code (e.g., -d 1A00-1A7F)
+                    Can be repeated for multiple ranges
+    -t, --table     Address table range, output as DW with labels (e.g., -t 0103-0120)
+                    Can be repeated for multiple ranges
     --org           Origin address (default: 0100 for CP/M)
 """
 
@@ -314,10 +320,17 @@ class Disassembler:
         self.labels = {}  # addr -> label name
         self.code_addrs = set()  # Addresses that are code
         self.data_addrs = set()  # Addresses that are data
+        self.table_addrs = set()  # Addresses that are address tables (DW)
         self.refs_from = defaultdict(set)  # addr -> set of addresses that reference it
         self.refs_to = defaultdict(set)  # addr -> set of addresses it references
         self.entry_points = set()  # Known entry points
         self.strings = {}  # addr -> string content
+        self.post_jump_gaps = []  # List of (start, end) ranges after unconditional jumps
+        self.detected_tables = set()  # Auto-detected address table addresses
+        self.user_labels = {}  # addr -> user-specified label name
+        self.dc_string_addrs = set()  # Addresses in high-bit terminated string regions
+        self.da_string_addrs = set()  # Addresses in ASCII string regions
+        self.da_string_len = {}  # addr -> fixed length (0 = null-terminated)
 
         # Output
         self.output_lines = []
@@ -839,8 +852,22 @@ class Disassembler:
         """Check if instruction is a jump."""
         return mnemonic in ('JMP', 'JNZ', 'JZ', 'JNC', 'JC', 'JPO', 'JPE', 'JP', 'JM', 'PCHL')
 
+    def is_in_post_jump_gap(self, addr):
+        """Check if address falls within a post-jump data gap."""
+        for gap_start, gap_end in self.post_jump_gaps:
+            if gap_start <= addr < gap_end:
+                return True
+        return False
+
     def analyze_code_flow(self, entry_points):
-        """Trace code flow from entry points to identify code regions."""
+        """Trace code flow from entry points to identify code regions.
+
+        Uses a two-pass approach:
+        1. First pass from primary entry points, recording post-jump gaps
+        2. Second pass processes discovered targets, skipping those in gaps
+        """
+        # First pass: trace from primary entry points and record post-jump gaps
+        primary_targets = set()  # Targets discovered in first pass
         work_list = list(entry_points)
         visited = set()
 
@@ -851,12 +878,20 @@ class Disassembler:
                 continue
             if addr < self.org or addr >= self.end:
                 continue
+            if addr in self.data_addrs:
+                continue  # Don't trace into forced data regions
+            if addr in self.table_addrs:
+                continue  # Don't trace into address tables
 
             visited.add(addr)
 
             while addr < self.end:
                 if addr in self.code_addrs:
                     break
+                if addr in self.data_addrs:
+                    break  # Stop at forced data region
+                if addr in self.table_addrs:
+                    break  # Stop at address table
 
                 result = self.decode_instruction(addr)
                 if result is None:
@@ -875,13 +910,41 @@ class Disassembler:
 
                     if self.is_jump(mnemonic) or self.is_call(mnemonic):
                         if target not in visited:
+                            primary_targets.add(target)
                             work_list.append(target)
 
-                # Follow conditional branches
+                # After unconditional transfer, record the gap
                 if self.is_unconditional_transfer(mnemonic):
+                    gap_start = addr + size
+                    # Find next known code or end of file
+                    gap_end = self.end
+                    # The gap extends until we hit known code or a branch target
+                    self.post_jump_gaps.append((gap_start, gap_end))
                     break
 
                 addr += size
+
+        # Refine post-jump gaps: end each gap at the next known branch target
+        refined_gaps = []
+        for gap_start, gap_end in self.post_jump_gaps:
+            # Find the lowest target address that's >= gap_start
+            next_target = gap_end
+            for target in primary_targets:
+                if gap_start <= target < next_target:
+                    next_target = target
+            # Also check entry points
+            for ep in entry_points:
+                if gap_start <= ep < next_target:
+                    next_target = ep
+            if gap_start < next_target:
+                refined_gaps.append((gap_start, next_target))
+        self.post_jump_gaps = refined_gaps
+
+        # Mark post-jump gap addresses as data (unless already code)
+        for gap_start, gap_end in self.post_jump_gaps:
+            for addr in range(gap_start, gap_end):
+                if addr not in self.code_addrs:
+                    self.data_addrs.add(addr)
 
     def find_strings(self, min_len=4):
         """Find potential ASCII strings in non-code areas."""
@@ -916,6 +979,10 @@ class Disassembler:
 
     def generate_labels(self):
         """Generate labels for all referenced addresses."""
+        # First, apply user-specified labels
+        for addr, name in self.user_labels.items():
+            self.labels[addr] = name
+
         # Build set of instruction start addresses
         instr_starts = set()
         addr = self.org
@@ -930,7 +997,7 @@ class Disassembler:
             else:
                 addr += 1
 
-        # Entry points
+        # Entry points (don't override user labels)
         for addr in self.entry_points:
             if addr not in self.labels and addr in instr_starts:
                 self.labels[addr] = f'L{addr:04X}'
@@ -949,18 +1016,247 @@ class Disassembler:
     def format_operand(self, op, addr):
         """Format operand, using label if available."""
         if op.endswith('H'):
-            # Strip leading 0 if present for parsing
             hex_part = op[:-1]
-            if hex_part.startswith('0') and len(hex_part) > 1:
-                hex_part = hex_part[1:]
+            # Check length before stripping leading 0
             if len(hex_part) == 4:
-                # 16-bit address
+                # 16-bit address - strip leading 0 for parsing if present
+                if hex_part.startswith('0'):
+                    hex_part = hex_part[1:]
                 target = int(hex_part, 16)
                 if target in self.labels:
                     return self.labels[target]
                 # If target is within our range but has no label, keep as hex
                 # (it won't cause undefined symbol errors in assembler)
         return op
+
+    def is_printable(self, b):
+        """Check if byte is printable ASCII (0x20-0x7E)."""
+        return 0x20 <= b <= 0x7E
+
+    def format_dc_string(self, start_addr):
+        """Format a high-bit terminated string starting at addr.
+
+        Returns (formatted_string, bytes_consumed, end_char_with_high_bit).
+        The string ends when we encounter a byte with bit 7 set where
+        the lower 7 bits are printable.
+        """
+        chars = []
+        addr = start_addr
+        while addr < self.end and addr in self.dc_string_addrs:
+            b = self.byte_at(addr)
+            if b is None:
+                break
+
+            if b & 0x80:
+                # High bit set - check if lower 7 bits are printable
+                low = b & 0x7F
+                if self.is_printable(low):
+                    # This is the terminator
+                    if chars:
+                        return (chars, addr - start_addr, chr(low))
+                    else:
+                        # Single char with high bit
+                        return ([], 0, chr(low))
+                else:
+                    # High bit set but not printable - end the scan
+                    break
+            elif self.is_printable(b):
+                chars.append(chr(b))
+                addr += 1
+            else:
+                # Non-printable without high bit - end the scan
+                break
+
+        # No terminator found - return what we have (if any)
+        if chars:
+            return (chars, addr - start_addr, None)
+        return ([], 0, None)
+
+    def format_da_string(self, start_addr):
+        """Format an ASCII string starting at addr.
+
+        Handles both null-terminated and fixed-length strings based on da_string_len.
+        Returns (string_content, bytes_consumed).
+        """
+        fixed_len = self.da_string_len.get(start_addr, 0)
+
+        if fixed_len > 0:
+            # Fixed-length string
+            chars = []
+            bytes_consumed = 0
+            for i in range(fixed_len):
+                addr = start_addr + i
+                if addr >= self.end or addr not in self.da_string_addrs:
+                    break
+                b = self.byte_at(addr)
+                if b is None:
+                    break
+                bytes_consumed += 1
+                if self.is_printable(b):
+                    chars.append(chr(b))
+                else:
+                    # Non-printable in fixed string - end string here
+                    break
+            return (''.join(chars), bytes_consumed)
+        else:
+            # Null-terminated string
+            chars = []
+            addr = start_addr
+            while addr < self.end and addr in self.da_string_addrs:
+                b = self.byte_at(addr)
+                if b is None:
+                    break
+
+                if b == 0:
+                    # Null terminator
+                    return (''.join(chars), addr - start_addr + 1)
+                elif self.is_printable(b):
+                    chars.append(chr(b))
+                    addr += 1
+                else:
+                    # Non-printable - end the scan
+                    break
+
+            # No null found - return what we have
+            if chars:
+                return (''.join(chars), addr - start_addr)
+            return ('', 0)
+
+    def detect_dispatch_tables(self):
+        """Detect jump/dispatch tables by looking for the dispatch pattern in code.
+
+        Pattern: LXI H,addr followed by DAD B (or DAD D) indicates addr is a table base.
+        The pattern 'lxi h,TABLE / dad rp' is used to calculate table[offset].
+        """
+        # Scan code for LXI H,addr followed by DAD B/D pattern
+        for addr in sorted(self.code_addrs):
+            opcode = self.byte_at(addr)
+            if opcode == 0x21:  # LXI H,d16
+                table_addr = self.word_at(addr + 1)
+                if table_addr is None or table_addr < self.org or table_addr >= self.end:
+                    continue
+
+                # Check if next instruction is DAD B (0x09) or DAD D (0x19)
+                next_addr = addr + 3
+                next_opcode = self.byte_at(next_addr)
+                if next_opcode in (0x09, 0x19):  # DAD B or DAD D
+                    # This looks like a table dispatch pattern
+                    # Now verify it's actually a table by checking if entries are valid addresses
+                    if self.verify_address_table(table_addr):
+                        self.mark_address_table(table_addr)
+
+    def detect_post_jump_tables(self):
+        """Detect address tables immediately following unconditional jumps at entry points.
+
+        Common pattern: JMP main_code followed by dispatch table addresses.
+        """
+        for ep in self.entry_points:
+            result = self.decode_instruction(ep)
+            if result is None:
+                continue
+
+            mnemonic, size, operands, target = result
+            if mnemonic == 'JMP' and target is not None:
+                # Check if bytes after JMP form an address table
+                table_start = ep + size
+                if self.verify_address_table(table_start, min_entries=3):
+                    self.mark_address_table(table_start)
+
+    def verify_address_table(self, start_addr, min_entries=3):
+        """Verify that a sequence of bytes looks like an address table.
+
+        Returns True if we find at least min_entries consecutive valid addresses
+        that point within our code range.
+        """
+        valid_count = 0
+        addr = start_addr
+
+        while addr + 1 < self.end:
+            word = self.word_at(addr)
+            if word is None:
+                break
+
+            # Check if this looks like a valid code/data address
+            if self.org <= word < self.end:
+                # Additional heuristic: the target should be at an instruction boundary
+                # or in a data area (not mid-instruction)
+                valid_count += 1
+                addr += 2
+            else:
+                # Not a valid address - end of table or not a table
+                break
+
+            # Don't scan forever - tables are typically < 256 entries
+            if valid_count > 256:
+                break
+
+        return valid_count >= min_entries
+
+    def find_table_end(self, start_addr):
+        """Find the end of an address table starting at start_addr.
+
+        Returns the address after the last valid table entry.
+        """
+        addr = start_addr
+        last_valid = start_addr
+        consecutive_invalid = 0
+
+        while addr + 1 < self.end and consecutive_invalid < 2:
+            word = self.word_at(addr)
+            if word is None:
+                break
+
+            if self.org <= word < self.end:
+                last_valid = addr + 2
+                consecutive_invalid = 0
+            else:
+                consecutive_invalid += 1
+
+            addr += 2
+
+            # Safety limit
+            if addr - start_addr > 512:
+                break
+
+        return last_valid
+
+    def mark_address_table(self, start_addr):
+        """Mark a range as an address table."""
+        end_addr = self.find_table_end(start_addr)
+
+        for addr in range(start_addr, end_addr):
+            self.detected_tables.add(addr)
+            self.table_addrs.add(addr)
+            self.data_addrs.add(addr)
+
+    def scan_address_tables(self):
+        """Scan address tables and add their contents to refs_from for label generation.
+
+        Returns a set of addresses found in tables that should be traced as code.
+        """
+        table_targets = set()
+
+        # Combine user-specified and auto-detected tables
+        all_tables = self.table_addrs | self.detected_tables
+
+        # Get sorted list of table addresses
+        table_list = sorted(all_tables)
+        i = 0
+        while i < len(table_list) - 1:
+            addr = table_list[i]
+            # Check if next byte is also in table (we need pairs for DW)
+            if i + 1 < len(table_list) and table_list[i + 1] == addr + 1:
+                word = self.word_at(addr)
+                if word is not None and self.org <= word < self.end:
+                    # This looks like an address - add to refs_from
+                    self.refs_from[word].add(addr)
+                    # Collect as potential code target
+                    table_targets.add(word)
+                i += 2
+            else:
+                i += 1
+
+        return table_targets
 
     def disassemble(self, entry_points=None):
         """Perform full disassembly."""
@@ -969,8 +1265,38 @@ class Disassembler:
             entry_points = [self.org]
         self.entry_points = set(entry_points)
 
-        # Analyze code flow
+        # First, detect tables after entry point JMPs (before code flow analysis)
+        self.detect_post_jump_tables()
+
+        # Analyze code flow from initial entry points
         self.analyze_code_flow(entry_points)
+
+        # Detect dispatch tables by finding LXI H,addr / DAD pattern in code
+        self.detect_dispatch_tables()
+
+        # Scan address tables and get their targets
+        table_targets = self.scan_address_tables()
+
+        # Trace table targets as code entry points (they're jump destinations)
+        # Filter to those not already traced
+        new_entries = table_targets - self.code_addrs
+        if new_entries:
+            # Table targets take precedence - remove from data_addrs if present
+            # (they might have been marked as data by post-jump gap detection)
+            self.data_addrs -= new_entries
+            self.entry_points.update(new_entries)
+            self.analyze_code_flow(list(new_entries))
+
+            # Check for more dispatch tables in newly discovered code
+            self.detect_dispatch_tables()
+
+            # Scan any new tables found
+            more_targets = self.scan_address_tables()
+            more_new = more_targets - self.code_addrs
+            if more_new:
+                self.data_addrs -= more_new
+                self.entry_points.update(more_new)
+                self.analyze_code_flow(list(more_new))
 
         # Generate labels
         self.generate_labels()
@@ -1030,6 +1356,69 @@ class Disassembler:
                     line_parts.append(f'\t; {addr:04X}')
                     lines.append(''.join(line_parts))
                     addr += 1
+            elif addr in self.table_addrs and addr + 1 in self.table_addrs:
+                # Address table - output as DW with label if possible
+                word = self.word_at(addr)
+                if word is not None:
+                    if word in self.labels:
+                        line_parts.append(f'\tDW\t{self.labels[word]}')
+                    else:
+                        line_parts.append(f'\tDW\t{format_hex16(word)}')
+                    line_parts.append(f'\t; {addr:04X}: {self.byte_at(addr):02X} {self.byte_at(addr+1):02X}')
+                    lines.append(''.join(line_parts))
+                    addr += 2
+                else:
+                    # Shouldn't happen, but handle edge case
+                    b = self.byte_at(addr)
+                    line_parts.append(f'\tDB\t{format_hex8(b)}')
+                    line_parts.append(f'\t; {addr:04X}')
+                    lines.append(''.join(line_parts))
+                    addr += 1
+            elif addr in self.dc_string_addrs:
+                # High-bit terminated string - use DC directive
+                chars, consumed, end_char = self.format_dc_string(addr)
+                if chars or end_char:
+                    # Build the complete string (chars + end_char)
+                    full_string = ''.join(chars)
+                    if end_char:
+                        full_string += end_char
+                    # Escape single quotes
+                    s = full_string.replace("'", "''")
+                    # Use DC directive which sets high bit on last char
+                    line_parts.append(f"\tDC\t'{s}'")
+                    bytes_used = consumed + (1 if end_char else 0)
+                    bytes_str = ' '.join(f'{self.byte_at(addr+i):02X}' for i in range(bytes_used))
+                    line_parts.append(f'\t; {addr:04X}: {bytes_str}')
+                    lines.append(''.join(line_parts))
+                    addr += bytes_used
+                else:
+                    # Can't parse as string - output as byte
+                    b = self.byte_at(addr)
+                    line_parts.append(f'\tDB\t{format_hex8(b)}')
+                    line_parts.append(f'\t; {addr:04X}')
+                    lines.append(''.join(line_parts))
+                    addr += 1
+            elif addr in self.da_string_addrs:
+                # ASCII string (null-terminated or fixed-length)
+                content, consumed = self.format_da_string(addr)
+                if content:
+                    # Escape single quotes
+                    s = content.replace("'", "''")
+                    # Output just the string, any null terminator is output separately
+                    line_parts.append(f"\tDB\t'{s}'")
+                    # Only show string bytes in comment (not the null if present)
+                    str_len = len(content)
+                    bytes_str = ' '.join(f'{self.byte_at(addr+i):02X}' for i in range(str_len))
+                    line_parts.append(f'\t; {addr:04X}: {bytes_str}')
+                    lines.append(''.join(line_parts))
+                    addr += str_len
+                else:
+                    # Can't parse as string - output as byte
+                    b = self.byte_at(addr)
+                    line_parts.append(f'\tDB\t{format_hex8(b)}')
+                    line_parts.append(f'\t; {addr:04X}')
+                    lines.append(''.join(line_parts))
+                    addr += 1
             else:
                 # Data byte - output one at a time to allow labels at any position
                 b = self.byte_at(addr)
@@ -1057,10 +1446,25 @@ def main():
     parser = argparse.ArgumentParser(description='8080/Z80 Disassembler for CP/M .COM files')
     parser.add_argument('input', help='Input .COM file')
     parser.add_argument('-o', '--output', help='Output .MAC file')
-    parser.add_argument('-e', '--entry', action='append',
-                       help='Additional entry point (hex address)')
-    parser.add_argument('-d', '--data', action='append',
-                       help='Force data range (hex: start-end)')
+    parser.add_argument('-e', '--entry', action='append', metavar='ADDR[,LABEL]',
+                       help='Additional entry point. Format: hex address, optionally with label name '
+                            '(e.g., -e 2024 or -e 2024,myloop)')
+    parser.add_argument('-l', '--label', action='append', metavar='ADDR[,LABEL]',
+                       help='Add a label at address without tracing as code. Format: hex address, '
+                            'optionally with label name (e.g., -l 1A00 or -l 1A00,buffer)')
+    parser.add_argument('-d', '--data', action='append', metavar='RANGE',
+                       help='Force address range to be data, not code (e.g., -d 1A00-1A7F). '
+                            'Can be repeated for multiple ranges.')
+    parser.add_argument('-t', '--table', action='append', metavar='RANGE',
+                       help='Address table range, output as DW with labels (e.g., -t 0103-0120). '
+                            'Can be repeated for multiple ranges.')
+    parser.add_argument('-dc', '--dcstring', action='append', metavar='RANGE',
+                       help='High-bit terminated string table (e.g., -dc 0200-02FF). '
+                            'Strings end with last char OR 80H. Can be repeated.')
+    parser.add_argument('-da', '--dastring', action='append', metavar='RANGE[,LEN]',
+                       help='ASCII string region. Format: RANGE or RANGE,LEN. '
+                            'Without LEN: strings end at null (00H) or non-printable. '
+                            'With LEN: fixed-length strings. Can be repeated.')
     parser.add_argument('--org', default='0100',
                        help='Origin address (default: 0100 for CP/M)')
     parser.add_argument('-z', '--z80', action='store_true',
@@ -1077,17 +1481,71 @@ def main():
     # Create disassembler
     disasm = Disassembler(data, org, z80_mode=args.z80)
 
-    # Parse entry points
+    # Parse entry points (format: addr or addr,label)
     entry_points = [org]
     if args.entry:
         for e in args.entry:
-            entry_points.append(int(e, 16))
+            if ',' in e:
+                addr_str, label = e.split(',', 1)
+                addr = int(addr_str, 16)
+                disasm.user_labels[addr] = label
+            else:
+                addr = int(e, 16)
+            entry_points.append(addr)
+
+    # Parse label-only points (format: addr or addr,label) - no code tracing
+    if args.label:
+        for l in args.label:
+            if ',' in l:
+                addr_str, label = l.split(',', 1)
+                addr = int(addr_str, 16)
+                disasm.user_labels[addr] = label
+            else:
+                addr = int(l, 16)
+                # Auto-generate label if not specified
+                disasm.user_labels[addr] = f'L{addr:04X}'
 
     # Parse data ranges
     if args.data:
         for d in args.data:
             start, end = parse_range(d)
             for addr in range(start, end + 1):
+                disasm.data_addrs.add(addr)
+
+    # Parse table ranges (also mark as data to prevent code tracing)
+    if args.table:
+        for t in args.table:
+            start, end = parse_range(t)
+            for addr in range(start, end + 1):
+                disasm.table_addrs.add(addr)
+                disasm.data_addrs.add(addr)
+
+    # Parse DC string ranges (high-bit terminated strings)
+    if args.dcstring:
+        for dc in args.dcstring:
+            start, end = parse_range(dc)
+            for addr in range(start, end + 1):
+                disasm.dc_string_addrs.add(addr)
+                disasm.data_addrs.add(addr)
+
+    # Parse DA string ranges (null-terminated or fixed-length ASCII strings)
+    if args.dastring:
+        for da in args.dastring:
+            # Check for optional length: RANGE,LEN
+            if ',' in da:
+                range_part, len_part = da.rsplit(',', 1)
+                try:
+                    fixed_len = int(len_part)
+                except ValueError:
+                    print(f'Error: Invalid length in -da {da}', file=sys.stderr)
+                    sys.exit(1)
+            else:
+                range_part = da
+                fixed_len = 0  # null-terminated
+            start, end = parse_range(range_part)
+            for addr in range(start, end + 1):
+                disasm.da_string_addrs.add(addr)
+                disasm.da_string_len[addr] = fixed_len
                 disasm.data_addrs.add(addr)
 
     # Disassemble
@@ -1108,6 +1566,8 @@ def main():
     print(f'  Code bytes: {len(disasm.code_addrs)}')
     print(f'  Data bytes: {len(data) - len(disasm.code_addrs)}')
     print(f'  Labels: {len(disasm.labels)}')
+    if disasm.detected_tables:
+        print(f'  Auto-detected table bytes: {len(disasm.detected_tables)}')
 
 
 if __name__ == '__main__':

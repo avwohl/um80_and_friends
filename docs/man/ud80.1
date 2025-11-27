@@ -1,12 +1,16 @@
-.TH UD80 1 "November 2025" "um80 1.0.0" "User Commands"
+.TH UD80 1 "November 2025" "um80 0.2.0" "User Commands"
 .SH NAME
 ud80 \- 8080/Z80 disassembler for CP/M .COM files
 .SH SYNOPSIS
 .B ud80
 [\fB\-z\fR]
 [\fB\-o\fR \fIoutput.mac\fR]
-[\fB\-e\fR \fIaddress\fR]...
+[\fB\-e\fR \fIaddress\fR[\fB,\fR\fIlabel\fR]]...
+[\fB\-l\fR \fIaddress\fR[\fB,\fR\fIlabel\fR]]...
 [\fB\-d\fR \fIstart\-end\fR]...
+[\fB\-t\fR \fIstart\-end\fR]...
+[\fB\-dc\fR \fIstart\-end\fR]...
+[\fB\-da\fR \fIstart\-end\fR[\fB,\fR\fIlength\fR]]...
 [\fB\-\-org\fR \fIaddress\fR]
 .I input.com
 .SH DESCRIPTION
@@ -38,13 +42,26 @@ Without this flag, only 8080 instructions are decoded using Intel mnemonics.
 .BI \-o " output.mac"
 Specify the output file name. Default is the input file name with a .mac extension.
 .TP
-.BI \-e " address"
+.BI \-e " address" "\fR[\fB,\fIlabel\fR]"
 Add an entry point at the specified hexadecimal address. Flow analysis will
 trace execution from this address. Can be specified multiple times.
+.IP
+Optionally, specify a label name after a comma (e.g., \fB\-e 297a,ends\fR).
+The label will be used in the output instead of an auto-generated one.
 .IP
 By default, the disassembler starts at the origin address (typically 0100h for
 CP/M programs). Use \-e to add additional entry points for code that isn't
 reached by normal flow (interrupt handlers, jump tables, etc.).
+.TP
+.BI \-l " address" "\fR[\fB,\fIlabel\fR]"
+Add a label at the specified address without tracing it as code. Can be
+specified multiple times.
+.IP
+Optionally, specify a label name after a comma (e.g., \fB\-l 4406,buffer\fR).
+If no label name is given, an auto-generated label (L\fIxxxx\fR) is used.
+.IP
+Use this for data labels or for code that you want to label but not trace
+(e.g., when you know it's already reached by other means).
 .TP
 .BI \-d " start\-end"
 Force a range of addresses to be treated as data, not code. Both \fIstart\fR
@@ -53,6 +70,56 @@ Can be specified multiple times.
 .IP
 Use this for embedded data tables that might otherwise be incorrectly
 disassembled as instructions.
+.TP
+.BI \-t " start\-end"
+Mark a range of addresses as an address table. The range will be output as
+DW (define word) directives with labels where possible, instead of individual
+DB bytes. Both \fIstart\fR and \fIend\fR are hexadecimal addresses.
+Can be specified multiple times.
+.IP
+Use this for jump tables or dispatch tables containing 16-bit addresses.
+The table entries will be output as:
+.RS
+.nf
+DW      L1234
+DW      L5678
+\&...
+.fi
+.RE
+.TP
+.BI \-dc " start\-end"
+Mark a range as containing high-bit terminated strings. These are strings where
+the last character has bit 7 set (OR 80H). Common in keyword tables.
+Both \fIstart\fR and \fIend\fR are hexadecimal addresses.
+Can be specified multiple times.
+.IP
+The output uses the DC directive which sets the high bit on the last character:
+.RS
+.nf
+DC      'ABC'
+.fi
+.RE
+.IP
+Note: Each \-dc marks one string region. Token bytes or other data between
+strings should not be included in the range.
+.TP
+.BI \-da " start\-end" "\fR[,\fIlength\fR]"
+Mark a range as containing ASCII strings. Without a length parameter, strings
+end at a null byte (00H) or any non-printable character. With a length, strings
+are fixed-length. Both \fIstart\fR and \fIend\fR are hexadecimal addresses.
+Can be specified multiple times.
+.IP
+Examples:
+.RS
+.nf
+\-da 0200\-02FF          # Strings end at null or non-printable
+\-da 0200\-02FF,8        # Fixed 8-character strings
+.fi
+.RE
+.IP
+Output format: \fBDB 'HELLO'\fR
+.br
+Any null terminator is output as a separate \fBDB 00H\fR directive.
 .TP
 .BI \-\-org " address"
 Set the origin address (where the binary is loaded in memory). Default is 0100h,
@@ -70,6 +137,29 @@ When encountering branches (JMP, JNZ, CALL, etc.), queue branch targets
 Stop tracing at unconditional jumps, returns, and halts
 .IP 5.
 Continue until all reachable code is traced
+.PP
+.B Post-jump gap detection:
+After an unconditional jump (JMP, RET, HLT), the bytes immediately following
+are typically data, not code. The disassembler automatically detects these
+"post-jump gaps" and marks them as data, preventing false code traces that
+might otherwise occur if stale addresses happen to point into these regions.
+.PP
+.B Automatic jump table detection:
+The disassembler automatically detects address tables (jump/dispatch tables)
+using two methods:
+.IP \(bu 2
+.B Post-entry tables:
+After the initial JMP at an entry point, if the following bytes form a
+sequence of valid addresses (3 or more consecutive 16-bit values pointing
+within the code range), they are treated as an address table.
+.IP \(bu 2
+.B Dispatch pattern detection:
+Code sequences like "LXI H,addr / DAD B" indicate a table lookup. The
+disassembler recognizes this pattern and marks the referenced address as
+a table base.
+.PP
+Automatically detected tables are output as DW directives with labels,
+making the disassembly more readable.
 .PP
 This approach correctly identifies code vs. data in most cases, but may miss
 code only reached through computed jumps or interrupt vectors.
@@ -90,7 +180,7 @@ L0103:  DB      0,0,0       ; Data bytes
         ...
 L0150:  MVI     A,0         ; Main entry
         ...
-        END     L0100
+        END
 .fi
 .RE
 .PP
@@ -101,8 +191,13 @@ Labels are generated for all branch targets (L\fIxxxx\fR format)
 Unreachable bytes are output as DB directives
 .IP \(bu 2
 String-like data is shown as DB with ASCII strings where possible
-.IP \(bu 2
-The END directive includes the entry point
+.PP
+.B Note:
+The END directive is output without an entry point label. In CP/M, execution
+always begins at the load address (typically 0100H), so the entry point is
+implicit. The first linked module determines where execution starts. An
+END with an explicit label would only be useful for non-CP/M targets (such as
+ROM-based systems) where a startup JMP would be inserted at the load address.
 .SH 8080 vs Z80 MODE
 .SS 8080 Mode (default)
 Uses Intel 8080 mnemonics:
@@ -153,11 +248,14 @@ Multiple entry points:
 Force data range:
 .B ud80 \-d 0500\-05FF program.com
 .TP
+Mark jump table (output as DW):
+.B ud80 \-t 0103\-0120 program.com
+.TP
 Non-CP/M binary at 0000h:
 .B ud80 \-\-org 0000 bios.bin
 .TP
 Combine options:
-.B ud80 \-z \-e 0200 \-d 0300\-03FF \-o source.mac game.com
+.B ud80 \-z \-e 0200 \-d 0300\-03FF \-t 0103\-0120 \-o source.mac game.com
 .SH ROUND-TRIP VERIFICATION
 To verify disassembly quality, reassemble and compare:
 .PP
