@@ -118,6 +118,12 @@ class Assembler:
         self.listing_lines = []
         self.source_lines = []
 
+        # Listing generation
+        self.generate_listing = False
+        self.current_line_bytes = []
+        self.current_line_start_loc = 0
+        self.current_line_start_seg = 'CSEG'
+
         # Include file handling
         self.include_stack = []  # Stack of (filename, line_num) for nested includes
         self.base_path = None  # Base path for resolving relative includes
@@ -154,6 +160,24 @@ class Assembler:
     def warning(self, msg):
         """Record a warning."""
         self.warnings.append(f"Warning at line {self.line_num}: {msg}")
+
+    def _start_listing_line(self):
+        """Prepare for listing capture at start of line processing."""
+        if self.pass_num == 2 and self.generate_listing:
+            self.current_line_start_loc = self.loc
+            self.current_line_start_seg = self.current_seg
+            self.current_line_bytes = []
+
+    def _save_listing_entry(self, line):
+        """Save a listing entry for the current line."""
+        if self.pass_num == 2 and self.generate_listing:
+            self.listing_lines.append({
+                'line_num': self.line_num,
+                'addr': self.current_line_start_loc,
+                'seg': self.current_line_start_seg,
+                'bytes': self.current_line_bytes[:],
+                'source': line
+            })
 
     def define_symbol(self, name, value, seg_type=None, public=False):
         """Define or update a symbol."""
@@ -622,6 +646,8 @@ class Assembler:
         """Emit a byte to current segment."""
         if self.pass_num == 2:
             self.output.write_absolute_byte(value & 0xFF)
+            if self.generate_listing:
+                self.current_line_bytes.append(value & 0xFF)
         self.loc += 1
 
     def emit_word(self, value, seg_type=ADDR_ABSOLUTE):
@@ -636,6 +662,9 @@ class Assembler:
                 self.output.write_data_relative(value)
             elif seg_type == ADDR_COMMON_REL:
                 self.output.write_common_relative(value)
+            if self.generate_listing:
+                self.current_line_bytes.append(value & 0xFF)
+                self.current_line_bytes.append((value >> 8) & 0xFF)
         self.loc += 2
 
     def emit_external_ref(self, name, offset=0):
@@ -1042,8 +1071,9 @@ class Assembler:
                     self.emit_byte(b)
                 return True
 
-            # LD r,n (immediate byte)
+            # LD r,n (immediate byte) - but NOT if src is (nn) memory access
             if dst_upper in Z80_REGS_M and src_upper not in Z80_REGS_M:
+                # Check for indexed addressing first
                 indexed = self.parse_z80_indexed(src)
                 if indexed:
                     # LD r,(IX+d) or LD r,(IY+d)
@@ -1055,11 +1085,16 @@ class Assembler:
                         for b in encode_z80_ld_r_iyd(dst, disp):
                             self.emit_byte(b)
                     return True
-                # LD r,n
-                val, seg, ext, name = self.parse_expression(src)
-                for b in encode_z80_ld_r_n(dst, val):
-                    self.emit_byte(b)
-                return True
+                # If src is (expr), this might be LD A,(nn) - handle below
+                if src.startswith('(') and src.endswith(')'):
+                    # Fall through to LD A,(nn) / LD (nn),A handling
+                    pass
+                else:
+                    # LD r,n (immediate byte)
+                    val, seg, ext, name = self.parse_expression(src)
+                    for b in encode_z80_ld_r_n(dst, val):
+                        self.emit_byte(b)
+                    return True
 
             # LD (IX+d),r or LD (IY+d),r or LD (IX+d),n or LD (IY+d),n
             indexed = self.parse_z80_indexed(dst)
@@ -1127,6 +1162,20 @@ class Assembler:
                 self.emit_byte(PREFIX_ED)
                 self.emit_byte(0x4F)
                 return True
+
+            # LD SP,HL / LD SP,IX / LD SP,IY (must check before LD dd,nn)
+            if dst_upper == 'SP':
+                if src_upper == 'HL':
+                    self.emit_byte(0xF9)
+                    return True
+                if src_upper == 'IX':
+                    self.emit_byte(PREFIX_DD)
+                    self.emit_byte(0xF9)
+                    return True
+                if src_upper == 'IY':
+                    self.emit_byte(PREFIX_FD)
+                    self.emit_byte(0xF9)
+                    return True
 
             # LD dd,nn (16-bit immediate)
             if dst_upper in Z80_PAIRS_BC_DE_HL_SP:
@@ -1197,20 +1246,6 @@ class Assembler:
                 if src_upper == 'IY':
                     for b in encode_z80_ld_ind_iy(val):
                         self.emit_byte(b)
-                    return True
-
-            # LD SP,HL / LD SP,IX / LD SP,IY
-            if dst_upper == 'SP':
-                if src_upper == 'HL':
-                    self.emit_byte(0xF9)
-                    return True
-                if src_upper == 'IX':
-                    self.emit_byte(PREFIX_DD)
-                    self.emit_byte(0xF9)
-                    return True
-                if src_upper == 'IY':
-                    self.emit_byte(PREFIX_FD)
-                    self.emit_byte(0xF9)
                     return True
 
             self.error(f"Invalid operands for LD: {dst},{src}")
@@ -2143,6 +2178,7 @@ class Assembler:
     def process_line(self, line):
         """Process a single source line."""
         self.line_num += 1
+        self._start_listing_line()
 
         label, operator, operands, comment = self.parse_line(line)
         upper_op = operator.upper() if operator else ''
@@ -2212,9 +2248,11 @@ class Assembler:
                         'IF1', 'IF2', 'IFB', 'IFNB', 'IFIDN', 'IFDIF',
                         'COND', 'ELSE', 'ENDIF', 'ENDC'):
             self.assemble_pseudo_op(operator, operands, label)
+            self._save_listing_entry(line)
             return
 
         if self.cond_false_depth > 0:
+            self._save_listing_entry(line)
             return
 
         # Define label if present
@@ -2222,26 +2260,32 @@ class Assembler:
             self.define_symbol(label, self.loc, self.seg_type)
 
         if not operator:
+            self._save_listing_entry(line)
             return
 
         # Try CPU instruction
         if self.z80_mode:
             if self.assemble_z80_instruction(operator, operands):
+                self._save_listing_entry(line)
                 return
         else:
             if self.assemble_instruction(operator, operands):
+                self._save_listing_entry(line)
                 return
 
         # Try pseudo-op
         if self.assemble_pseudo_op(operator, operands, label):
+            self._save_listing_entry(line)
             return
 
         # Check if it's a macro call
         if upper_op in self.macros:
             self.expand_macro(upper_op, operands)
+            self._save_listing_entry(line)
             return
 
         self.error(f"Unknown instruction or directive: {operator}")
+        self._save_listing_entry(line)
 
     def process_macro_argument(self, arg):
         """Process a macro argument, handling ! and % operators."""
@@ -2550,6 +2594,44 @@ class Assembler:
 
         self.output.write_end_file()
 
+    def write_listing(self, filepath):
+        """Write the listing file."""
+        with open(filepath, 'w') as f:
+            for entry in self.listing_lines:
+                line_num = entry['line_num']
+                addr = entry['addr']
+                code_bytes = entry['bytes']
+                source = entry['source']
+
+                # Format: line_num  addr  bytes  source
+                # Line number: 5 chars right-aligned
+                # Address: 4 hex digits (or blank if no code)
+                # Bytes: up to 4 bytes shown (8 hex chars with spaces)
+
+                if code_bytes:
+                    addr_str = f"{addr:04X}"
+                    # Show up to 4 bytes on first line
+                    bytes_shown = code_bytes[:4]
+                    bytes_str = ' '.join(f"{b:02X}" for b in bytes_shown)
+                    bytes_str = bytes_str.ljust(11)  # 4 bytes = "XX XX XX XX"
+                else:
+                    addr_str = "    "
+                    bytes_str = "           "
+
+                f.write(f"{line_num:5d}  {addr_str}  {bytes_str}  {source}\n")
+
+                # If more than 4 bytes, show continuation lines
+                if len(code_bytes) > 4:
+                    remaining = code_bytes[4:]
+                    cont_addr = addr + 4
+                    while remaining:
+                        chunk = remaining[:4]
+                        remaining = remaining[4:]
+                        bytes_str = ' '.join(f"{b:02X}" for b in chunk)
+                        bytes_str = bytes_str.ljust(11)
+                        f.write(f"       {cont_addr:04X}  {bytes_str}\n")
+                        cont_addr += len(chunk)
+
     def assemble(self, source_file):
         """Assemble a source file."""
         # Set base path for include file resolution
@@ -2679,6 +2761,8 @@ def main():
     asm = Assembler(predefined=predefined)
     if args.include:
         asm.include_paths = args.include
+    if args.listing:
+        asm.generate_listing = True
     success = asm.assemble(args.input)
 
     # Report errors and warnings
@@ -2693,6 +2777,10 @@ def main():
     # Write output
     with open(output_path, 'wb') as f:
         f.write(asm.output.get_bytes())
+
+    # Write listing file if requested
+    if args.listing:
+        asm.write_listing(args.listing)
 
     print(f"Assembled {args.input} -> {output_path}")
     print(f"  Code segment: {asm.segments['CSEG'].loc} bytes")
