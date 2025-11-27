@@ -43,7 +43,13 @@ ul80 -p 0x8000 program.rel      # Custom origin
 ud80 program.com                # Output: program.mac
 ud80 -z program.com             # Z80 mode
 ud80 -e 0200 program.com        # Add entry point
+ud80 -e 297a,ends program.com   # Entry point with label
+ud80 -l 4406,buffer program.com # Add label without tracing
 ud80 -d 0300-03FF program.com   # Mark data range
+ud80 -t 0103-0120 program.com   # Mark address table (DW output)
+ud80 -dc 0200-0210 program.com  # High-bit terminated strings
+ud80 -da 0300-03FF program.com  # ASCII strings (null-terminated)
+ud80 -da 0300-03FF,8 program.com # Fixed-length (8 char) strings
 ud80 --org 0000 rom.bin         # Non-CP/M origin
 ```
 
