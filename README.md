@@ -7,6 +7,7 @@ A complete Unix/Linux implementation of Microsoft's classic CP/M development too
 - **ulib80** - LIB-80 compatible library manager
 - **ucref80** - Cross-reference utility
 - **ud80** - 8080/Z80 disassembler for CP/M .COM files
+- **ux80** - 8080 to Z80 assembly source translator
 
 These tools can assemble, link, and manage 8080/Z80 assembly code to produce CP/M-compatible .COM executables on modern Linux systems.
 
@@ -71,6 +72,13 @@ ucref80 program.mac                 # Print to stdout
 ucref80 -o xref.txt *.mac           # Output to file
 ```
 
+### Translate 8080 to Z80 assembly
+
+```bash
+ux80 program.mac                    # Creates program_z80.mac
+ux80 -o output.mac program.mac      # Specify output name
+```
+
 ## Tools Reference
 
 ### um80 - Assembler
@@ -132,6 +140,48 @@ See `man ucref80` for full documentation.
 
 See `man ud80` for full documentation (no Microsoft equivalent exists).
 
+### ux80 - 8080 to Z80 Translator
+
+Source-to-source translator that converts Intel 8080 assembly to Zilog Z80 assembly:
+
+- Translates all 8080 instructions to equivalent Z80 mnemonics
+- Preserves all comments, labels, and formatting
+- Produces byte-identical output when assembled
+- Automatically adds `.Z80` directive to output
+- Handles all assembler directives (passes them through unchanged)
+
+**Translation examples:**
+
+| 8080 | Z80 |
+|------|-----|
+| `MOV A,B` | `LD A,B` |
+| `MVI A,42H` | `LD A,42H` |
+| `LXI H,1234H` | `LD HL,1234H` |
+| `LDA addr` | `LD A,(addr)` |
+| `LHLD addr` | `LD HL,(addr)` |
+| `LDAX B` | `LD A,(BC)` |
+| `INR A` | `INC A` |
+| `INX H` | `INC HL` |
+| `DAD D` | `ADD HL,DE` |
+| `ADD B` | `ADD B` |
+| `ADI 10` | `ADD 10` |
+| `JMP addr` | `JP addr` |
+| `JNZ addr` | `JP NZ,addr` |
+| `CALL addr` | `CALL addr` |
+| `CNZ addr` | `CALL NZ,addr` |
+| `RET` / `RNZ` | `RET` / `RET NZ` |
+| `RLC` | `RLCA` |
+| `CMA` | `CPL` |
+| `HLT` | `HALT` |
+| `PCHL` | `JP (HL)` |
+| `XCHG` | `EX DE,HL` |
+| `IN port` | `IN A,(port)` |
+| `OUT port` | `OUT (port),A` |
+| `PSW` | `AF` |
+| `M` (memory) | `(HL)` |
+
+See `man ux80` for full documentation.
+
 ## File Formats
 
 | Extension | Description |
@@ -154,7 +204,7 @@ These tools aim for compatibility with the original Microsoft tools while runnin
 
 ## Documentation
 
-- Man pages: `man um80`, `man ul80`, `man ulib80`, `man ucref80`, `man ud80`
+- Man pages: `man um80`, `man ul80`, `man ulib80`, `man ucref80`, `man ud80`, `man ux80`
 - Original Microsoft manuals in `docs/external/`:
   - `m80.pdf` - MACRO-80 assembler
   - `l80.pdf` - LINK-80 linker
