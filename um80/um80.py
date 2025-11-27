@@ -1135,8 +1135,11 @@ class Assembler:
                     return True
                 if src.startswith('(') and src.endswith(')'):
                     val, seg, ext, name = self.parse_expression(src[1:-1])
-                    for b in encode_z80_ld_a_nn(val):
-                        self.emit_byte(b)
+                    self.emit_byte(0x3A)  # LD A,(nn) opcode
+                    if ext:
+                        self.emit_external_ref(name, val)
+                    else:
+                        self.emit_word(val, seg)
                     return True
 
             # LD (BC),A / LD (DE),A / LD (nn),A
@@ -1149,8 +1152,11 @@ class Assembler:
                     return True
                 if dst.startswith('(') and dst.endswith(')'):
                     val, seg, ext, name = self.parse_expression(dst[1:-1])
-                    for b in encode_z80_ld_nn_a(val):
-                        self.emit_byte(b)
+                    self.emit_byte(0x32)  # LD (nn),A opcode
+                    if ext:
+                        self.emit_external_ref(name, val)
+                    else:
+                        self.emit_word(val, seg)
                     return True
 
             # LD I,A / LD R,A
@@ -1183,11 +1189,16 @@ class Assembler:
                     # LD dd,(nn)
                     val, seg, ext, name = self.parse_expression(src[1:-1])
                     if dst_upper == 'HL':
-                        for b in encode_z80_ld_hl_ind(val):
-                            self.emit_byte(b)
+                        self.emit_byte(0x2A)  # LD HL,(nn) opcode
                     else:
-                        for b in encode_z80_ld_dd_ind(dst, val):
-                            self.emit_byte(b)
+                        # BC=0x4B, DE=0x5B, SP=0x7B
+                        dd_opcodes = {'BC': 0x4B, 'DE': 0x5B, 'SP': 0x7B}
+                        self.emit_byte(PREFIX_ED)
+                        self.emit_byte(dd_opcodes[dst_upper])
+                    if ext:
+                        self.emit_external_ref(name, val)
+                    else:
+                        self.emit_word(val, seg)
                 else:
                     val, seg, ext, name = self.parse_expression(src)
                     self.emit_byte(0x01 | (Z80_PAIRS_BC_DE_HL_SP[dst_upper] << 4))
@@ -1201,8 +1212,12 @@ class Assembler:
             if dst_upper == 'IX':
                 if src.startswith('(') and src.endswith(')'):
                     val, seg, ext, name = self.parse_expression(src[1:-1])
-                    for b in encode_z80_ld_ix_ind(val):
-                        self.emit_byte(b)
+                    self.emit_byte(PREFIX_DD)
+                    self.emit_byte(0x2A)  # LD IX,(nn)
+                    if ext:
+                        self.emit_external_ref(name, val)
+                    else:
+                        self.emit_word(val, seg)
                 else:
                     val, seg, ext, name = self.parse_expression(src)
                     self.emit_byte(PREFIX_DD)
@@ -1215,8 +1230,12 @@ class Assembler:
             if dst_upper == 'IY':
                 if src.startswith('(') and src.endswith(')'):
                     val, seg, ext, name = self.parse_expression(src[1:-1])
-                    for b in encode_z80_ld_iy_ind(val):
-                        self.emit_byte(b)
+                    self.emit_byte(PREFIX_FD)
+                    self.emit_byte(0x2A)  # LD IY,(nn)
+                    if ext:
+                        self.emit_external_ref(name, val)
+                    else:
+                        self.emit_word(val, seg)
                 else:
                     val, seg, ext, name = self.parse_expression(src)
                     self.emit_byte(PREFIX_FD)
@@ -1232,20 +1251,38 @@ class Assembler:
                 addr_expr = dst[1:-1]
                 val, seg, ext, name = self.parse_expression(addr_expr)
                 if src_upper == 'HL':
-                    for b in encode_z80_ld_ind_hl(val):
-                        self.emit_byte(b)
+                    self.emit_byte(0x22)  # LD (nn),HL opcode
+                    if ext:
+                        self.emit_external_ref(name, val)
+                    else:
+                        self.emit_word(val, seg)
                     return True
                 if src_upper in Z80_PAIRS_BC_DE_HL_SP:
-                    for b in encode_z80_ld_ind_dd(val, src):
-                        self.emit_byte(b)
+                    # BC=0x43, DE=0x53, HL handled above, SP=0x73
+                    dd_opcodes = {'BC': 0x43, 'DE': 0x53, 'SP': 0x73}
+                    if src_upper in dd_opcodes:
+                        self.emit_byte(PREFIX_ED)
+                        self.emit_byte(dd_opcodes[src_upper])
+                        if ext:
+                            self.emit_external_ref(name, val)
+                        else:
+                            self.emit_word(val, seg)
                     return True
                 if src_upper == 'IX':
-                    for b in encode_z80_ld_ind_ix(val):
-                        self.emit_byte(b)
+                    self.emit_byte(PREFIX_DD)
+                    self.emit_byte(0x22)  # LD (nn),IX
+                    if ext:
+                        self.emit_external_ref(name, val)
+                    else:
+                        self.emit_word(val, seg)
                     return True
                 if src_upper == 'IY':
-                    for b in encode_z80_ld_ind_iy(val):
-                        self.emit_byte(b)
+                    self.emit_byte(PREFIX_FD)
+                    self.emit_byte(0x22)  # LD (nn),IY
+                    if ext:
+                        self.emit_external_ref(name, val)
+                    else:
+                        self.emit_word(val, seg)
                     return True
 
             self.error(f"Invalid operands for LD: {dst},{src}")
