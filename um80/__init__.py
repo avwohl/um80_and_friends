@@ -9,6 +9,7 @@ development tools from Microsoft:
 - ulib80: LIB-80 compatible library manager
 - ucref80: Cross-reference utility
 - ud80: 8080/Z80 disassembler
+- ux80: 8080 to Z80 assembly translator
 """
 
-__version__ = "0.2.4"
+__version__ = "0.3.0"

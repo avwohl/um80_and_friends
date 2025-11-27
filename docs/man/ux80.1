@@ -1,0 +1,279 @@
+.TH UX80 1 "November 2025" "um80 0.3.0" "User Commands"
+.SH NAME
+ux80 \- translate Intel 8080 assembly to Zilog Z80 assembly
+.SH SYNOPSIS
+.B ux80
+[\fB\-o\fR \fIoutput.mac\fR]
+.I input.mac
+.SH DESCRIPTION
+.B ux80
+is a source-to-source translator that converts Intel 8080 assembly language
+to Zilog Z80 assembly language. The translated code assembles to an identical
+binary as the original 8080 source when processed by an assembler that
+supports both instruction sets.
+.PP
+The translator:
+.IP \(bu 2
+Converts all 8080 mnemonics to their Z80 equivalents
+.IP \(bu 2
+Preserves all comments, labels, macros, and formatting
+.IP \(bu 2
+Passes through assembler directives unchanged
+.IP \(bu 2
+Automatically adds a \fB.Z80\fR directive at the start of the output
+.IP \(bu 2
+Handles both single-colon (:) and double-colon (::) label syntax
+.PP
+The output is designed to be assembled with
+.BR um80 (1)
+or any compatible Z80 assembler.
+.SH OPTIONS
+.TP
+.BI \-o " output.mac"
+Specify the output file name. If not specified, the output file is named
+by appending \fB_z80\fR before the extension of the input file
+(e.g., \fIprogram.mac\fR becomes \fIprogram_z80.mac\fR).
+.TP
+.B \-h\fR, \fB\-\-help
+Show usage information and exit.
+.SH INSTRUCTION TRANSLATION
+.SS Data Movement
+.TS
+l l l.
+8080	Z80	Description
+_
+MOV r,r'	LD r,r'	Register to register
+MOV r,M	LD r,(HL)	Memory to register
+MOV M,r	LD (HL),r	Register to memory
+MVI r,n	LD r,n	Immediate to register
+MVI M,n	LD (HL),n	Immediate to memory
+LXI rp,nn	LD rp,nn	Immediate to register pair
+LDA addr	LD A,(addr)	Direct load accumulator
+STA addr	LD (addr),A	Direct store accumulator
+LHLD addr	LD HL,(addr)	Direct load HL
+SHLD addr	LD (addr),HL	Direct store HL
+LDAX rp	LD A,(rp)	Indirect load (BC/DE)
+STAX rp	LD (rp),A	Indirect store (BC/DE)
+XCHG	EX DE,HL	Exchange DE and HL
+XTHL	EX (SP),HL	Exchange HL with stack top
+SPHL	LD SP,HL	Load SP from HL
+.TE
+.SS Arithmetic and Logic
+.TS
+l l l.
+8080	Z80	Description
+_
+ADD r	ADD r	Add register to A
+ADC r	ADC r	Add with carry
+SUB r	SUB r	Subtract register from A
+SBB r	SBC r	Subtract with borrow
+ANA r	AND r	AND register with A
+XRA r	XOR r	XOR register with A
+ORA r	OR r	OR register with A
+CMP r	CP r	Compare register with A
+ADI n	ADD n	Add immediate
+ACI n	ADC n	Add immediate with carry
+SUI n	SUB n	Subtract immediate
+SBI n	SBC n	Subtract immediate with borrow
+ANI n	AND n	AND immediate
+XRI n	XOR n	XOR immediate
+ORI n	OR n	OR immediate
+CPI n	CP n	Compare immediate
+INR r	INC r	Increment register
+DCR r	DEC r	Decrement register
+INX rp	INC rp	Increment register pair
+DCX rp	DEC rp	Decrement register pair
+DAD rp	ADD HL,rp	Add register pair to HL
+DAA	DAA	Decimal adjust A
+.TE
+.SS Rotate and Complement
+.TS
+l l l.
+8080	Z80	Description
+_
+RLC	RLCA	Rotate A left
+RRC	RRCA	Rotate A right
+RAL	RLA	Rotate A left through carry
+RAR	RRA	Rotate A right through carry
+CMA	CPL	Complement A
+STC	SCF	Set carry flag
+CMC	CCF	Complement carry flag
+.TE
+.SS Branching
+.TS
+l l l.
+8080	Z80	Description
+_
+JMP addr	JP addr	Jump unconditional
+JNZ addr	JP NZ,addr	Jump if not zero
+JZ addr	JP Z,addr	Jump if zero
+JNC addr	JP NC,addr	Jump if no carry
+JC addr	JP C,addr	Jump if carry
+JPO addr	JP PO,addr	Jump if parity odd
+JPE addr	JP PE,addr	Jump if parity even
+JP addr	JP P,addr	Jump if positive
+JM addr	JP M,addr	Jump if minus
+PCHL	JP (HL)	Jump to address in HL
+.TE
+.SS Subroutines
+.TS
+l l l.
+8080	Z80	Description
+_
+CALL addr	CALL addr	Call unconditional
+CNZ addr	CALL NZ,addr	Call if not zero
+CZ addr	CALL Z,addr	Call if zero
+CNC addr	CALL NC,addr	Call if no carry
+CC addr	CALL C,addr	Call if carry
+CPO addr	CALL PO,addr	Call if parity odd
+CPE addr	CALL PE,addr	Call if parity even
+CP addr	CALL P,addr	Call if positive
+CM addr	CALL M,addr	Call if minus
+RET	RET	Return unconditional
+RNZ	RET NZ	Return if not zero
+RZ	RET Z	Return if zero
+RNC	RET NC	Return if no carry
+RC	RET C	Return if carry
+RPO	RET PO	Return if parity odd
+RPE	RET PE	Return if parity even
+RP	RET P	Return if positive
+RM	RET M	Return if minus
+RST n	RST n	Restart (software interrupt)
+.TE
+.SS Stack and I/O
+.TS
+l l l.
+8080	Z80	Description
+_
+PUSH rp	PUSH rp	Push register pair
+POP rp	POP rp	Pop register pair
+IN port	IN A,(port)	Input from port to A
+OUT port	OUT (port),A	Output A to port
+.TE
+.SS Miscellaneous
+.TS
+l l l.
+8080	Z80	Description
+_
+NOP	NOP	No operation
+HLT	HALT	Halt processor
+DI	DI	Disable interrupts
+EI	EI	Enable interrupts
+.TE
+.SS Register Names
+.TS
+l l l.
+8080	Z80	Description
+_
+M	(HL)	Memory addressed by HL
+PSW	AF	Accumulator and flags pair
+B	BC	B register pair (also B alone)
+D	DE	D register pair (also D alone)
+H	HL	H register pair (also H alone)
+.TE
+.SH DIRECTIVES
+Assembler directives are passed through unchanged. This includes:
+.IP \(bu 2
+ORG, END, EQU, SET, DEFL
+.IP \(bu 2
+DB, DW, DS, DC, DA
+.IP \(bu 2
+CSEG, DSEG, ASEG, COMMON
+.IP \(bu 2
+PUBLIC, EXTRN, EXTERN
+.IP \(bu 2
+IF, ELSE, ENDIF, IFDEF, IFNDEF
+.IP \(bu 2
+MACRO, ENDM, LOCAL, REPT, IRP, IRPC
+.IP \(bu 2
+INCLUDE, INCBIN
+.IP \(bu 2
+TITLE, SUBTTL, PAGE, .SALL, .LALL, .XALL
+.IP \(bu 2
+.Z80, .8080 (mode directives)
+.PP
+A \fB.Z80\fR directive is automatically added at the beginning of the output
+file if not already present in the input.
+.SH EXAMPLES
+.TP
+Basic translation:
+.B ux80 program.mac
+.IP
+Creates \fIprogram_z80.mac\fR with Z80 mnemonics.
+.TP
+Custom output file:
+.B ux80 \-o z80_version.mac program.mac
+.TP
+Translate and assemble:
+.nf
+.B ux80 program.mac
+.B um80 program_z80.mac
+.B ul80 program_z80.rel
+.fi
+.SH ROUND-TRIP VERIFICATION
+To verify that the translation produces identical binaries:
+.PP
+.RS
+.nf
+# Assemble original 8080 source
+um80 program.mac
+ul80 -o orig.com program.rel
+
+# Translate and assemble
+ux80 program.mac
+um80 program_z80.mac
+ul80 -o z80.com program_z80.rel
+
+# Compare binaries
+cmp orig.com z80.com && echo "Identical!"
+.fi
+.RE
+.SH NOTES
+.SS Why Translate?
+.IP \(bu 2
+Z80 mnemonics are often considered more readable and consistent
+.IP \(bu 2
+Enables use of Z80-specific tools and assemblers
+.IP \(bu 2
+Facilitates mixing translated code with new Z80-native code
+.IP \(bu 2
+Some assemblers only support Z80 syntax
+.SS Limitations
+.IP \(bu 2
+Z80-only instructions (IX, IY, block moves, etc.) must be added manually
+.IP \(bu 2
+The translator does not optimize for Z80-specific features
+.IP \(bu 2
+Code that was specifically written for 8080 timing may need adjustment
+.SS SET Directive
+The 8080 \fBSET\fR assembler directive (reassignable equate) is preserved
+in the output. In Z80 mode, the assembler distinguishes between the \fBSET\fR
+directive (which has a label) and the Z80 \fBSET\fR instruction (which sets
+a bit in a register and has no label).
+.SH EXIT STATUS
+.TP
+.B 0
+Translation successful.
+.TP
+.B 1
+Error occurred (file not found, syntax error, etc.).
+.SH FILES
+.TP
+.I input.mac
+Input 8080 assembly source file.
+.TP
+.I output.mac
+Output Z80 assembly source file.
+.SH SEE ALSO
+.BR um80 (1),
+.BR ul80 (1),
+.BR ud80 (1),
+.BR ulib80 (1),
+.BR ucref80 (1)
+.SH HISTORY
+.B ux80
+was created as part of the um80 toolchain to facilitate working with legacy
+8080 assembly code in Z80-based projects. The 8080 and Z80 processors share
+the same basic instruction set, but use different assembly language syntax.
+.SH AUTHOR
+um80 project contributors.

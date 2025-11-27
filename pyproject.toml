@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "um80"
-version = "0.2.4"
+version = "0.3.0"
 description = "Microsoft MACRO-80 compatible assembler toolchain for Linux"
 readme = "README.md"
 license = "GPL-3.0-or-later"
@@ -14,7 +14,7 @@ authors = [
 ]
 keywords = [
     "assembler", "8080", "z80", "cp/m", "macro-80", "m80", "l80",
-    "retro-computing", "disassembler", "linker"
+    "retro-computing", "disassembler", "linker", "translator"
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -46,6 +46,7 @@ ul80 = "um80.ul80:main"
 ulib80 = "um80.ulib80:main"
 ucref80 = "um80.ucref80:main"
 ud80 = "um80.ud80:main"
+ux80 = "um80.ux80:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

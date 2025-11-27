@@ -2293,12 +2293,19 @@ class Assembler:
             return
 
         # Define label if present
-        if label and upper_op not in ('EQU', 'SET', 'MACRO'):
+        if label and upper_op not in ('EQU', 'SET', 'DEFL', 'MACRO'):
             self.define_symbol(label, self.loc, self.seg_type)
 
         if not operator:
             self._save_listing_entry(line)
             return
+
+        # In Z80 mode, SET with a label is the directive, not the instruction
+        # (Z80 SET instruction is "SET bit,reg" which doesn't have a label)
+        if self.z80_mode and upper_op == 'SET' and label:
+            if self.assemble_pseudo_op(operator, operands, label):
+                self._save_listing_entry(line)
+                return
 
         # Try CPU instruction
         if self.z80_mode:
