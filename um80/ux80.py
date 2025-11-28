@@ -13,6 +13,8 @@ import os
 import argparse
 import re
 
+from um80 import __version__
+
 
 class TranslatorError(Exception):
     """Translation error with context."""
@@ -581,7 +583,8 @@ class Translator:
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Translate 8080 assembly to Z80 assembly')
+        description='ux80 - Translate 8080 assembly to Z80 assembly')
+    parser.add_argument('-v', '--version', action='version', version=f'%(prog)s {__version__}')
     parser.add_argument('input', help='Input 8080 assembly file (.mac)')
     parser.add_argument('-o', '--output', help='Output Z80 assembly file '
                         '(default: <input>_z80.mac)')

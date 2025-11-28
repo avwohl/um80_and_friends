@@ -1,4 +1,4 @@
-.TH ULIB80 1 "November 2025" "um80 0.2.0" "User Commands"
+.TH ULIB80 1 "November 2025" "um80 0.3.3" "User Commands"
 .SH NAME
 ulib80 \- Microsoft LIB-80 compatible library manager for 8080/Z80
 .SH SYNOPSIS
@@ -43,6 +43,10 @@ Libraries allow commonly used routines to be collected into a single file. When
 linking, only the modules needed to satisfy undefined references are included
 in the output, keeping executables small.
 .SH OPTIONS
+.TP
+.B \-v\fR, \fB\-\-version
+Display version information and exit.
+.PP
 Exactly one operation must be specified:
 .TP
 .B \-c

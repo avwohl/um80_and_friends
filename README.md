@@ -35,6 +35,7 @@ pip install -e .
 um80 program.mac                    # Creates program.rel
 um80 -o output.rel program.mac      # Specify output name
 um80 -l listing.prn program.mac     # Generate listing file
+um80 -g program.mac                 # Export all symbols as PUBLIC (for debug)
 ```
 
 ### Link object files
@@ -42,7 +43,9 @@ um80 -l listing.prn program.mac     # Generate listing file
 ```bash
 ul80 program.rel                    # Creates program.com
 ul80 -o output.com a.rel b.rel      # Link multiple files
-ul80 -s program.rel                 # Generate symbol file
+ul80 -s program.rel                 # Generate symbol file (.sym)
+ul80 -S symbols.sym program.rel     # Specify symbol file name
+ul80 -p E000 program.rel            # Set origin address (hex)
 ```
 
 ### Disassemble a COM file

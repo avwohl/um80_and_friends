@@ -1,8 +1,9 @@
-.TH UX80 1 "November 2025" "um80 0.3.0" "User Commands"
+.TH UX80 1 "November 2025" "um80 0.3.3" "User Commands"
 .SH NAME
 ux80 \- translate Intel 8080 assembly to Zilog Z80 assembly
 .SH SYNOPSIS
 .B ux80
+[\fB\-v\fR]
 [\fB\-o\fR \fIoutput.mac\fR]
 .I input.mac
 .SH DESCRIPTION
@@ -28,6 +29,9 @@ The output is designed to be assembled with
 .BR um80 (1)
 or any compatible Z80 assembler.
 .SH OPTIONS
+.TP
+.B \-v\fR, \fB\-\-version
+Display version information and exit.
 .TP
 .BI \-o " output.mac"
 Specify the output file name. If not specified, the output file is named

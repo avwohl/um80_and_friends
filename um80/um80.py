@@ -11,6 +11,7 @@ import re
 import argparse
 from pathlib import Path
 
+from um80 import __version__
 from um80.opcodes_8080 import *
 from um80.opcodes_z80 import *
 from um80.relformat import *
@@ -49,6 +50,8 @@ class Segment:
         self.name = name
         self.seg_type = seg_type
         self.loc = 0  # Location counter
+        self.org = 0  # Starting origin (first ORG or 0)
+        self.org_set = False  # Whether org has been set
         self.size = 0  # High water mark
         self.data = bytearray()
 
@@ -64,8 +67,9 @@ class Macro:
 class Assembler:
     """MACRO-80 compatible assembler."""
 
-    def __init__(self, predefined=None):
+    def __init__(self, predefined=None, export_all_symbols=False):
         self.symbols = {}  # Symbol table
+        self.export_all_symbols = export_all_symbols  # -g flag: export all as PUBLIC
         self.macros = {}   # Macro definitions
         self.segments = {
             'ASEG': Segment('ASEG', ADDR_ABSOLUTE),
@@ -1713,13 +1717,19 @@ class Assembler:
             if len(ops) != 1:
                 self.error("ORG requires one operand")
                 return True
-            val, seg, ext, name = self.parse_expression(ops[0])
+            val, expr_seg_type, ext, name = self.parse_expression(ops[0])
             if ext:
                 self.error("Cannot use external in ORG")
                 return True
             self.loc = val
+            # Track first ORG as segment origin
+            seg_obj = self.segments[self.current_seg]
+            if not seg_obj.org_set:
+                seg_obj.org = val
+                seg_obj.org_set = True
             if self.pass_num == 2:
-                self.output.write_set_location(self.seg_type, val)
+                # Use the expression's segment type (absolute for absolute ORG values)
+                self.output.write_set_location(expr_seg_type, val)
             return True
 
         # EQU - equate symbol to value
@@ -2582,7 +2592,7 @@ class Assembler:
 
         # Write entry symbols (for library search)
         for sym in self.symbols.values():
-            if sym.public and sym.defined:
+            if (sym.public or self.export_all_symbols) and sym.defined:
                 self.output.write_entry_symbol(sym.name)
 
         # Reset for code generation
@@ -2596,9 +2606,15 @@ class Assembler:
         # Second pass already wrote the code bytes
 
         # Write public symbol definitions
+        # For relocatable symbols, subtract segment ORG so linker can add its base
         for sym in self.symbols.values():
-            if sym.public and sym.defined:
-                self.output.write_define_entry_point(sym.seg_type, sym.value, sym.name)
+            if (sym.public or self.export_all_symbols) and sym.defined:
+                value = sym.value
+                if sym.seg_type == ADDR_PROGRAM_REL and self.segments['CSEG'].org_set:
+                    value -= self.segments['CSEG'].org
+                elif sym.seg_type == ADDR_DATA_REL and self.segments['DSEG'].org_set:
+                    value -= self.segments['DSEG'].org
+                self.output.write_define_entry_point(sym.seg_type, value, sym.name)
 
         # Write external chains
         # The chain head is the LAST reference; linker walks backward through chain
@@ -2615,9 +2631,11 @@ class Assembler:
                     sym_name = name
                 self.output.write_chain_external(seg, offset, sym_name)
 
-        # Write segment sizes
-        cseg_size = self.segments['CSEG'].loc
-        dseg_size = self.segments['DSEG'].loc
+        # Write segment sizes (actual bytes, not location counter value)
+        cseg = self.segments['CSEG']
+        dseg = self.segments['DSEG']
+        cseg_size = cseg.loc - cseg.org if cseg.org_set else cseg.loc
+        dseg_size = dseg.loc - dseg.org if dseg.org_set else dseg.loc
 
         if cseg_size > 0:
             self.output.write_define_program_size(cseg_size)
@@ -2714,7 +2732,7 @@ class Assembler:
 
         # Write entry symbols (PUBLIC symbols for library search)
         for sym in self.symbols.values():
-            if sym.public and sym.defined:
+            if (sym.public or self.export_all_symbols) and sym.defined:
                 self.output.write_entry_symbol(sym.name)
 
         self.assemble_pass(lines, 2)
@@ -2724,9 +2742,15 @@ class Assembler:
 
         # Finalize output
         # Write public symbol definitions
+        # For relocatable symbols, subtract segment ORG so linker can add its base
         for sym in self.symbols.values():
-            if sym.public and sym.defined:
-                self.output.write_define_entry_point(sym.seg_type, sym.value, sym.name)
+            if (sym.public or self.export_all_symbols) and sym.defined:
+                value = sym.value
+                if sym.seg_type == ADDR_PROGRAM_REL and self.segments['CSEG'].org_set:
+                    value -= self.segments['CSEG'].org
+                elif sym.seg_type == ADDR_DATA_REL and self.segments['DSEG'].org_set:
+                    value -= self.segments['DSEG'].org
+                self.output.write_define_entry_point(sym.seg_type, value, sym.name)
 
         # Write external chains
         # The chain head is the LAST reference; linker walks backward through chain
@@ -2743,9 +2767,11 @@ class Assembler:
                     sym_name = name
                 self.output.write_chain_external(seg, offset, sym_name)
 
-        # Write segment sizes
-        cseg_size = self.segments['CSEG'].loc
-        dseg_size = self.segments['DSEG'].loc
+        # Write segment sizes (actual bytes, not location counter value)
+        cseg = self.segments['CSEG']
+        dseg = self.segments['DSEG']
+        cseg_size = cseg.loc - cseg.org if cseg.org_set else cseg.loc
+        dseg_size = dseg.loc - dseg.org if dseg.org_set else dseg.loc
 
         if cseg_size > 0:
             self.output.write_define_program_size(cseg_size)
@@ -2771,6 +2797,7 @@ class Assembler:
 
 def main():
     parser = argparse.ArgumentParser(description='um80 - MACRO-80 compatible assembler')
+    parser.add_argument('-v', '--version', action='version', version=f'%(prog)s {__version__}')
     parser.add_argument('input', help='Input .MAC file')
     parser.add_argument('-o', '--output', help='Output .REL file')
     parser.add_argument('-l', '--listing', help='Listing .PRN file')
@@ -2778,6 +2805,8 @@ def main():
                         help='Define symbol (can be used multiple times)')
     parser.add_argument('-I', '--include', action='append', metavar='PATH',
                         help='Add include search path (can be used multiple times)')
+    parser.add_argument('-g', '--globals', action='store_true',
+                        help='Export all symbols as PUBLIC (for debug symbol files)')
 
     args = parser.parse_args()
 
@@ -2802,7 +2831,7 @@ def main():
                 predefined[defn.upper()] = 1
 
     # Create assembler and run
-    asm = Assembler(predefined=predefined)
+    asm = Assembler(predefined=predefined, export_all_symbols=args.globals)
     if args.include:
         asm.include_paths = args.include
     if args.listing:
@@ -2826,9 +2855,14 @@ def main():
     if args.listing:
         asm.write_listing(args.listing)
 
+    cseg = asm.segments['CSEG']
+    dseg = asm.segments['DSEG']
+    cseg_size = cseg.loc - cseg.org if cseg.org_set else cseg.loc
+    dseg_size = dseg.loc - dseg.org if dseg.org_set else dseg.loc
+
     print(f"Assembled {args.input} -> {output_path}")
-    print(f"  Code segment: {asm.segments['CSEG'].loc} bytes")
-    print(f"  Data segment: {asm.segments['DSEG'].loc} bytes")
+    print(f"  Code segment: {cseg_size} bytes (ORG {cseg.org:04X}H)" if cseg.org_set else f"  Code segment: {cseg_size} bytes")
+    print(f"  Data segment: {dseg_size} bytes")
     print(f"  Symbols: {len(asm.symbols)}")
 
     sys.exit(0)

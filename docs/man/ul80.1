@@ -1,11 +1,13 @@
-.TH UL80 1 "November 2025" "um80 0.2.0" "User Commands"
+.TH UL80 1 "November 2025" "um80 0.3.3" "User Commands"
 .SH NAME
 ul80 \- Microsoft LINK-80 compatible linker for 8080/Z80
 .SH SYNOPSIS
 .B ul80
+[\fB\-v\fR]
 [\fB\-o\fR \fIoutput.com\fR]
 [\fB\-x\fR]
 [\fB\-s\fR]
+[\fB\-S\fR \fIfile.sym\fR]
 [\fB\-p\fR \fIorigin\fR]
 .I file.rel
 [\fIfile.rel\fR]...
@@ -21,6 +23,9 @@ COMMON blocks, and produces a binary executable suitable for running under CP/M
 or a CP/M emulator.
 .SH OPTIONS
 .TP
+.B \-v\fR, \fB\-\-version
+Display version information and exit.
+.TP
 .BI \-o " output.com"
 Specify the output file name. Default is the first input file name with a .com extension.
 .TP
@@ -28,12 +33,23 @@ Specify the output file name. Default is the first input file name with a .com e
 Output Intel HEX format instead of binary. Useful for EPROM programmers.
 .TP
 .B \-s
-Generate a symbol file (.SYM) containing all public symbols and their addresses.
+Generate a symbol file (.SYM) with an auto-generated name based on the output file.
+The symbol file contains all PUBLIC symbols and their final relocated addresses.
+.TP
+.BI \-S " file.sym"
+Generate a symbol file with the specified name. Use this with the assembler's
+\fB\-g\fR option to generate a complete symbol file including all labels:
+.RS
+.nf
+um80 \-g program.mac
+ul80 \-S program.sym program.rel
+.fi
+.RE
 .TP
 .BI \-p " origin"
-Set the program origin address. Default is 0x100 (256 decimal), the standard
-CP/M transient program load address. Can be specified in hex (0x100), octal (0400),
-or decimal (256).
+Set the program origin address. Default is 100 (hex), the standard CP/M transient
+program load address. Values are interpreted as hexadecimal by default (e.g., E000),
+or can use prefixes: 0x for hex, 0o for octal.
 .SH MEMORY LAYOUT
 The linker arranges memory as follows:
 .IP 1. 3
@@ -71,8 +87,11 @@ Link multiple modules:
 Generate symbol file:
 .B ul80 \-s program.rel
 .TP
-Set custom origin:
-.B ul80 \-p 0x8000 program.rel
+Set custom origin (bare hex):
+.B ul80 \-p E000 program.rel
+.TP
+Generate named symbol file:
+.B ul80 \-S program.sym program.rel
 .TP
 Output Intel HEX:
 .B ul80 \-x \-o program.hex program.rel

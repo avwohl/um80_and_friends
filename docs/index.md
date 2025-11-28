@@ -14,6 +14,7 @@ The um80 toolchain provides five command-line tools:
 | ulib80 | LIB-80 library manager | LIB80 |
 | ucref80 | Cross-reference utility | CREF80 |
 | ud80 | Disassembler | (none) |
+| ux80 | 8080 to Z80 translator | (none) |
 
 ## Quick Reference
 
@@ -25,6 +26,8 @@ um80 -o out.rel source.mac      # Specify output
 um80 -l source.prn source.mac   # Generate listing
 um80 -D DEBUG=1 source.mac      # Define symbol
 um80 -I ./include source.mac    # Add include path
+um80 -g source.mac              # Export all symbols as PUBLIC
+um80 -v                         # Show version
 ```
 
 ### Link
@@ -32,9 +35,11 @@ um80 -I ./include source.mac    # Add include path
 ```bash
 ul80 program.rel                # Output: program.com
 ul80 -o app.com a.rel b.rel     # Multiple inputs
-ul80 -s program.rel             # Generate .sym file
+ul80 -s program.rel             # Generate .sym file (auto name)
+ul80 -S prog.sym program.rel    # Specify symbol file name
 ul80 -x program.rel             # Intel HEX output
-ul80 -p 0x8000 program.rel      # Custom origin
+ul80 -p E000 program.rel        # Custom origin (hex)
+ul80 -v                         # Show version
 ```
 
 ### Disassemble
@@ -153,6 +158,7 @@ man ul80      # Linker
 man ulib80    # Library manager
 man ucref80   # Cross-reference
 man ud80      # Disassembler
+man ux80      # 8080 to Z80 translator
 ```
 
 ## Differences from Microsoft Tools
