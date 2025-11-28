@@ -661,9 +661,17 @@ class Assembler:
                 self.output.write_absolute_byte(value & 0xFF)
                 self.output.write_absolute_byte((value >> 8) & 0xFF)
             elif seg_type == ADDR_PROGRAM_REL:
-                self.output.write_program_relative(value)
+                # Subtract segment ORG so linker can relocate properly
+                rel_value = value
+                if self.segments['CSEG'].org_set:
+                    rel_value -= self.segments['CSEG'].org
+                self.output.write_program_relative(rel_value)
             elif seg_type == ADDR_DATA_REL:
-                self.output.write_data_relative(value)
+                # Subtract segment ORG so linker can relocate properly
+                rel_value = value
+                if self.segments['DSEG'].org_set:
+                    rel_value -= self.segments['DSEG'].org
+                self.output.write_data_relative(rel_value)
             elif seg_type == ADDR_COMMON_REL:
                 self.output.write_common_relative(value)
             if self.generate_listing:
