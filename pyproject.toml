@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "um80"
-version = "0.3.0"
+version = "0.3.5"
 description = "Microsoft MACRO-80 compatible assembler toolchain for Linux"
 readme = "README.md"
 license = "GPL-3.0-or-later"

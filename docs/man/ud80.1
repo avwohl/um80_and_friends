@@ -1,8 +1,9 @@
-.TH UD80 1 "November 2025" "um80 0.2.0" "User Commands"
+.TH UD80 1 "November 2025" "um80 0.3.3" "User Commands"
 .SH NAME
 ud80 \- 8080/Z80 disassembler for CP/M .COM files
 .SH SYNOPSIS
 .B ud80
+[\fB\-v\fR]
 [\fB\-z\fR]
 [\fB\-o\fR \fIoutput.mac\fR]
 [\fB\-e\fR \fIaddress\fR[\fB,\fR\fIlabel\fR]]...
@@ -25,6 +26,9 @@ The disassembler performs flow analysis starting from entry points to distinguis
 code from data. Unvisited bytes are output as DB directives. The output is
 designed to reassemble to an identical binary with um80.
 .SH OPTIONS
+.TP
+.B \-v\fR, \fB\-\-version
+Display version information and exit.
 .TP
 .BR \-z ", " \-\-z80
 Enable Z80 mode. In this mode:

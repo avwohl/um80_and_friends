@@ -1,10 +1,12 @@
-.TH UM80 1 "November 2025" "um80 0.2.0" "User Commands"
+.TH UM80 1 "November 2025" "um80 0.3.3" "User Commands"
 .SH NAME
 um80 \- Microsoft MACRO-80 compatible assembler for 8080/Z80
 .SH SYNOPSIS
 .B um80
+[\fB\-v\fR]
 [\fB\-o\fR \fIoutput.rel\fR]
 [\fB\-l\fR \fIlisting.prn\fR]
+[\fB\-g\fR]
 [\fB\-D\fR \fISYMBOL\fR[=\fIVALUE\fR]]...
 [\fB\-I\fR \fIPATH\fR]...
 .I input.mac
@@ -20,11 +22,19 @@ The assembler supports both Intel 8080 and Zilog Z80 instruction sets, macros,
 conditional assembly, and the full set of MACRO-80 directives.
 .SH OPTIONS
 .TP
+.B \-v\fR, \fB\-\-version
+Display version information and exit.
+.TP
 .BI \-o " output.rel"
 Specify the output file name. Default is the input file name with a .rel extension.
 .TP
 .BI \-l " listing.prn"
 Generate an assembly listing file showing source, generated code, and symbol table.
+.TP
+.B \-g\fR, \fB\-\-globals
+Export all defined symbols as PUBLIC. This is useful for generating complete symbol
+files for debugging. The linker can then output all symbols with their final
+relocated addresses using the \fB\-S\fR option.
 .TP
 .BI \-D " SYMBOL" [= VALUE ]
 Define a symbol before assembly begins. If no value is given, the symbol is
@@ -199,6 +209,9 @@ Define symbol:
 .TP
 Add include path:
 .B um80 \-I /usr/share/include program.mac
+.TP
+Export all symbols for debugging:
+.B um80 \-g program.mac
 .SH EXIT STATUS
 .TP
 .B 0

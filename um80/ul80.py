@@ -10,6 +10,7 @@ import os
 import argparse
 from pathlib import Path
 
+from um80 import __version__
 from um80.relformat import *
 
 
@@ -27,6 +28,7 @@ class Module:
         self.data_size = 0
         self.code_base = 0  # Will be set during linking
         self.data_base = 0
+        self.code_start = 0  # Starting offset within code buffer (for absolute ORG)
 
         # Symbols defined in this module
         self.publics = {}  # name -> (value, seg_type)
@@ -79,6 +81,7 @@ class Linker:
         current_loc = 0
         current_seg = ADDR_PROGRAM_REL  # Default to code segment
         code_bytes = bytearray()
+        first_loc_set = False  # Track if we've seen the first location
 
         while True:
             try:
@@ -154,6 +157,10 @@ class Linker:
                 addr_type, value = a_field
                 current_loc = value
                 current_seg = addr_type
+                # Track the first absolute location as code_start
+                if not first_loc_set and addr_type == ADDR_ABSOLUTE:
+                    module.code_start = value
+                    first_loc_set = True
 
             elif item_type == 'CHAIN_ADDRESS':
                 # Internal forward reference chain
@@ -276,12 +283,14 @@ class Linker:
 
         self.calculate_addresses()
 
-        # Build output starting at 0x100 (CP/M TPA)
-        # First 3 bytes are JMP to entry point
+        # Build output starting at origin (code_base of first module)
+        # Determine output base address (lowest module address)
+        self.output_base = min(m.code_base for m in self.modules)
+
         total_size = 0
         for module in self.modules:
             code_size = module.code_size if module.code_size else len(module.code)
-            end_addr = module.code_base + code_size - 0x100
+            end_addr = module.code_base + code_size - self.output_base
             if end_addr > total_size:
                 total_size = end_addr
 
@@ -289,17 +298,21 @@ class Linker:
 
         # Copy and relocate each module
         for module in self.modules:
-            code_size = module.code_size if module.code_size else len(module.code)
-            dest_offset = module.code_base - 0x100
+            code_size = module.code_size if module.code_size else len(module.code) - module.code_start
+            dest_offset = module.code_base - self.output_base
 
-            # Copy code bytes
-            for i in range(min(code_size, len(module.code))):
-                if dest_offset + i < len(self.output):
-                    self.output[dest_offset + i] = module.code[i]
+            # Copy code bytes from the code_start position in the source buffer
+            # (accounts for absolute ORG where code is stored at offset > 0)
+            src_start = module.code_start
+            for i in range(code_size):
+                src_idx = src_start + i
+                if src_idx < len(module.code) and dest_offset + i < len(self.output):
+                    self.output[dest_offset + i] = module.code[src_idx]
 
         # Fix up external references
         for mod_idx, module in enumerate(self.modules):
-            dest_offset = module.code_base - 0x100
+            dest_offset = module.code_base - self.output_base
+            src_start = module.code_start  # For absolute ORG adjustment
 
             for name, refs in module.externals.items():
                 # Parse "SYMBOL+N" format for expression offsets
@@ -323,13 +336,14 @@ class Linker:
 
                 for head, ref_seg_type in refs:
                     # Follow the chain and fix up each reference
-                    offset = head
+                    # Chain offsets are absolute addresses, adjust for code_start
+                    offset = head - src_start
                     visited = set()  # Prevent infinite loops
-                    while offset not in visited:
+                    while offset not in visited and offset >= 0:
                         visited.add(offset)
                         abs_offset = dest_offset + offset
-                        if abs_offset + 1 < len(self.output):
-                            # Get value at this location
+                        if abs_offset + 1 < len(self.output) and abs_offset >= 0:
+                            # Get value at this location (this is the next chain link, absolute addr)
                             value = self.output[abs_offset] | (self.output[abs_offset + 1] << 8)
 
                             # Chain format: each link points to previous reference
@@ -342,17 +356,19 @@ class Linker:
                                 # End of chain
                                 break
                             else:
-                                # Follow chain to previous reference
-                                offset = value
+                                # Follow chain to previous reference (absolute addr, adjust for code_start)
+                                offset = value - src_start
                         else:
                             break
 
         # Apply relocations for program-relative, data-relative, and common-relative addresses
         for module in self.modules:
-            dest_offset = module.code_base - 0x100
+            dest_offset = module.code_base - self.output_base
+            src_start = module.code_start  # For absolute ORG adjustment
             for offset, seg_type in module.relocations:
-                abs_offset = dest_offset + offset
-                if abs_offset + 1 < len(self.output):
+                # Relocation offsets are absolute addresses, adjust for code_start
+                abs_offset = dest_offset + (offset - src_start)
+                if abs_offset >= 0 and abs_offset + 1 < len(self.output):
                     # Read current value
                     value = self.output[abs_offset] | (self.output[abs_offset + 1] << 8)
                     # Apply relocation based on segment type
@@ -378,7 +394,7 @@ class Linker:
     def save_hex(self, filename):
         """Save as Intel HEX format."""
         with open(filename, 'w') as f:
-            addr = 0x100
+            addr = self.output_base
             data = bytes(self.output)
 
             idx = 0
@@ -424,12 +440,14 @@ class Linker:
 
 def main():
     parser = argparse.ArgumentParser(description='ul80 - LINK-80 compatible linker')
+    parser.add_argument('-v', '--version', action='version', version=f'%(prog)s {__version__}')
     parser.add_argument('inputs', nargs='+', help='Input .REL files')
     parser.add_argument('-o', '--output', help='Output file (default: first input with .com)')
     parser.add_argument('-x', '--hex', action='store_true', help='Output Intel HEX format')
     parser.add_argument('-s', '--sym', action='store_true', help='Generate .SYM symbol file')
-    parser.add_argument('-p', '--origin', type=lambda x: int(x, 0), default=0x100,
-                       help='Program origin (default: 0x100)')
+    parser.add_argument('-S', '--sym-file', metavar='FILE', help='Generate .SYM symbol file with specified name')
+    parser.add_argument('-p', '--origin', type=lambda x: int(x, 16) if not x.startswith(('0x', '0X', '0o', '0O', '0b', '0B')) else int(x, 0), default=0x100,
+                       help='Program origin as hex (e.g., E000, 0xE000, default: 100)')
 
     args = parser.parse_args()
 
@@ -465,8 +483,11 @@ def main():
         linker.save_com(str(output_path))
 
     # Save symbol file if requested
-    if args.sym:
-        sym_path = Path(output_path).with_suffix('.sym')
+    if args.sym or args.sym_file:
+        if args.sym_file:
+            sym_path = Path(args.sym_file)
+        else:
+            sym_path = Path(output_path).with_suffix('.sym')
         linker.save_sym(str(sym_path))
         print(f"Symbol file -> {sym_path}")
 

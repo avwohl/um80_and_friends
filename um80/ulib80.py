@@ -17,6 +17,7 @@ import argparse
 import struct
 from pathlib import Path
 
+from um80 import __version__
 from um80.relformat import RELReader
 
 
@@ -391,8 +392,7 @@ def main():
     parser = argparse.ArgumentParser(
         description='ulib80 - LIB-80 compatible library manager',
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
+        epilog="""Examples:
   ulib80 -c mylib.lib foo.rel bar.rel    Create library from REL files
   ulib80 -l mylib.lib                    List modules in library
   ulib80 -p mylib.lib                    List public symbols
@@ -402,6 +402,7 @@ Examples:
   ulib80 -d mylib.lib FOO                Delete module from library
 """
     )
+    parser.add_argument('-v', '--version', action='version', version=f'%(prog)s {__version__}')
 
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument('-c', '--create', action='store_true',

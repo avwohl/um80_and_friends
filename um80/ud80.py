@@ -26,6 +26,8 @@ import os
 import argparse
 from collections import defaultdict
 
+from um80 import __version__
+
 # 8080 instruction table: opcode -> (mnemonic, size, operand_type)
 # Operand types:
 #   None - no operands
@@ -1443,7 +1445,8 @@ def parse_range(s):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='8080/Z80 Disassembler for CP/M .COM files')
+    parser = argparse.ArgumentParser(description='ud80 - 8080/Z80 Disassembler for CP/M .COM files')
+    parser.add_argument('-v', '--version', action='version', version=f'%(prog)s {__version__}')
     parser.add_argument('input', help='Input .COM file')
     parser.add_argument('-o', '--output', help='Output .MAC file')
     parser.add_argument('-e', '--entry', action='append', metavar='ADDR[,LABEL]',

@@ -1,8 +1,9 @@
-.TH UCREF80 1 "November 2025" "um80 0.2.0" "User Commands"
+.TH UCREF80 1 "November 2025" "um80 0.3.3" "User Commands"
 .SH NAME
 ucref80 \- cross-reference utility for MACRO-80 assembly files
 .SH SYNOPSIS
 .B ucref80
+[\fB\-v\fR]
 [\fB\-o\fR \fIoutput.txt\fR]
 .I file.mac
 [\fIfile.mac\fR]...
@@ -22,6 +23,9 @@ Reference locations (file and line number)
 .IP \(bu 2
 Symbol attributes (PUBLIC, EXTERNAL, MACRO)
 .SH OPTIONS
+.TP
+.B \-v\fR, \fB\-\-version
+Display version information and exit.
 .TP
 .BI \-o " output.txt"
 Write the cross-reference listing to the specified file instead of standard output.
