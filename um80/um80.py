@@ -1794,7 +1794,7 @@ class Assembler:
                         self.emit_byte(val)
             return True
 
-        # DC - define character string (M80 compatible - no high bit modification)
+        # DC - define character string with high bit set on last character (M80 compatible)
         if operator == 'DC':
             if len(ops) != 1:
                 self.error("DC requires one string operand")
@@ -1808,8 +1808,11 @@ class Assembler:
                 if not s:
                     self.error("DC requires non-empty string")
                     return True
-                for ch in s:
-                    self.emit_byte(ord(ch))
+                for i, ch in enumerate(s):
+                    byte_val = ord(ch)
+                    if i == len(s) - 1:
+                        byte_val |= 0x80  # Set high bit on last character
+                    self.emit_byte(byte_val)
             else:
                 self.error("DC requires a string operand")
             return True
