@@ -12,4 +12,4 @@ development tools from Microsoft:
 - ux80: 8080 to Z80 assembly translator
 """
 
-__version__ = "0.3.6"
+__version__ = "0.3.7"
