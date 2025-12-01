@@ -2266,6 +2266,10 @@ class Assembler:
                 # Nested macro definition
                 self.macro_nest_depth += 1
                 self.macro_body.append(line_for_macro)
+            elif upper_op in ('REPT', 'IRP', 'IRPC'):
+                # REPT/IRP/IRPC also use ENDM, so track nesting
+                self.macro_nest_depth += 1
+                self.macro_body.append(line_for_macro)
             elif upper_op == 'ENDM':
                 if self.macro_nest_depth > 0:
                     self.macro_nest_depth -= 1
@@ -2353,7 +2357,11 @@ class Assembler:
         self._save_listing_entry(line)
 
     def process_macro_argument(self, arg):
-        """Process a macro argument, handling ! and % operators."""
+        """Process a macro argument, handling angle brackets and ! operator."""
+        # Strip outer angle brackets (used to preserve special chars in arglist)
+        if arg.startswith('<') and arg.endswith('>'):
+            arg = arg[1:-1]
+        # Process ! operator (makes next character literal)
         result = []
         i = 0
         while i < len(arg):
@@ -2490,6 +2498,10 @@ class Assembler:
                     # Substitute iter_var with value
                     expanded = line
                     if iter_var:
+                        # Replace &iter_var with value (for concatenation)
+                        expanded = expanded.replace(f'&{iter_var}', value)
+                        expanded = expanded.replace(f'&{iter_var.lower()}', value)
+                        # Replace standalone iter_var with value
                         expanded = re.sub(r'\b' + re.escape(iter_var) + r'\b',
                                           value, expanded, flags=re.IGNORECASE)
                     self.process_line(expanded)
@@ -2502,6 +2514,10 @@ class Assembler:
                     # Substitute iter_var with character
                     expanded = line
                     if iter_var:
+                        # Replace &iter_var with char (for concatenation)
+                        expanded = expanded.replace(f'&{iter_var}', char)
+                        expanded = expanded.replace(f'&{iter_var.lower()}', char)
+                        # Replace standalone iter_var with char
                         expanded = re.sub(r'\b' + re.escape(iter_var) + r'\b',
                                           char, expanded, flags=re.IGNORECASE)
                     self.process_line(expanded)
