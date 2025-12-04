@@ -419,23 +419,27 @@ class Linker:
             f.write(':00000001FF\n')
 
     def save_sym(self, filename):
-        """Save symbol table file (.SYM) compatible with L80/debuggers."""
-        # Build list of (address, name) for all defined globals
+        """Save symbol table file (.SYM) compatible with SID/ZSID debuggers.
+
+        Format: ADDR NAME (one per line, LF endings)
+        Sorted alphabetically by symbol name.
+        """
+        # Build list of (name, address) for all defined globals
         symbols = []
         for name, (mod_idx, value, seg_type, is_defined) in self.globals.items():
             if is_defined:
                 module = self.modules[mod_idx]
                 addr = self.relocate_value(module, value, seg_type)
-                symbols.append((addr, name))
+                symbols.append((name, addr))
 
-        # Sort by address
+        # Sort alphabetically by symbol name (DRI convention)
         symbols.sort(key=lambda x: x[0])
 
         with open(filename, 'w') as f:
-            # L80 .SYM format: symbol name followed by address
-            # Format: NAME    XXXX (name left-justified, address in hex)
-            for addr, name in symbols:
-                f.write(f"{name:16s} {addr:04X}\n")
+            # SID .SYM format: ADDR NAME (one per line)
+            # Use LF line endings - cpmemu converts to CR-LF in text mode
+            for name, addr in symbols:
+                f.write(f"{addr:04X} {name}\n")
 
 
 def main():
