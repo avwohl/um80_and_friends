@@ -405,15 +405,21 @@ class Linker:
             # Write EOF record
             f.write(':00000001FF\n')
 
-    def save_sym(self, filename):
-        """Save symbol table file (.SYM) compatible with L80/debuggers."""
+    def save_sym(self, filename, truncate=None):
+        """Save symbol table file (.SYM) compatible with L80/debuggers.
+
+        Args:
+            filename: Output filename
+            truncate: If set, truncate symbol names to this many characters (e.g., 8 for SID.COM)
+        """
         # Build list of (address, name) for all defined globals
         symbols = []
         for name, (mod_idx, value, seg_type, is_defined) in self.globals.items():
             if is_defined:
                 module = self.modules[mod_idx]
                 addr = self.relocate_value(module, value, seg_type)
-                symbols.append((addr, name))
+                sym_name = name[:truncate] if truncate else name
+                symbols.append((addr, sym_name))
 
         # Sort by address
         symbols.sort(key=lambda x: x[0])
@@ -433,6 +439,8 @@ def main():
     parser.add_argument('-s', '--sym', action='store_true', help='Generate .SYM symbol file')
     parser.add_argument('-p', '--origin', type=lambda x: int(x, 0), default=0x100,
                        help='Program origin (default: 0x100)')
+    parser.add_argument('-8', '--sid', action='store_true', dest='sid8',
+                       help='Truncate symbols to 8 chars for SID.COM compatibility')
 
     args = parser.parse_args()
 
@@ -470,8 +478,9 @@ def main():
     # Save symbol file if requested
     if args.sym:
         sym_path = Path(output_path).with_suffix('.sym')
-        linker.save_sym(str(sym_path))
-        print(f"Symbol file -> {sym_path}")
+        truncate = 8 if args.sid8 else None
+        linker.save_sym(str(sym_path), truncate=truncate)
+        print(f"Symbol file -> {sym_path}" + (" (8-char SID format)" if args.sid8 else ""))
 
     # Report warnings
     for warn in linker.warnings:
