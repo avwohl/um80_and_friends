@@ -46,6 +46,7 @@ ul80 -o output.com a.rel b.rel      # Link multiple files
 ul80 -s program.rel                 # Generate symbol file (.sym)
 ul80 -S symbols.sym program.rel     # Specify symbol file name
 ul80 -p E000 program.rel            # Set origin address (hex)
+ul80 --prl program.rel              # Output MP/M .PRL format
 ```
 
 ### Disassemble a COM file
@@ -108,6 +109,7 @@ LINK-80 compatible linker that:
 - Produces CP/M .COM executables
 - Supports COMMON blocks
 - Can output Intel HEX format
+- Can output MP/M .PRL (Page Relocatable) format
 
 See `man ul80` for full documentation, or refer to the original [Microsoft L80 Manual](docs/external/l80.pdf).
 
@@ -192,6 +194,7 @@ See `man ux80` for full documentation.
 | .MAC | Assembly source (MACRO-80 format) |
 | .REL | Relocatable object file |
 | .COM | CP/M executable |
+| .PRL | MP/M Page Relocatable executable |
 | .LIB | Library archive |
 | .PRN | Assembly listing |
 | .SYM | Symbol file |

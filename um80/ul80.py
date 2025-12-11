@@ -287,10 +287,13 @@ class Linker:
         # Determine output base address (lowest module address)
         self.output_base = min(m.code_base for m in self.modules)
 
+        # Calculate total output size - use actual buffer length which includes
+        # both CSEG and initialized DSEG data (DB/DW in DSEG)
         total_size = 0
         for module in self.modules:
-            code_size = module.code_size if module.code_size else len(module.code)
-            end_addr = module.code_base + code_size - self.output_base
+            # Actual bytes to output = full code buffer minus code_start offset
+            actual_bytes = len(module.code) - module.code_start
+            end_addr = module.code_base + actual_bytes - self.output_base
             if end_addr > total_size:
                 total_size = end_addr
 
@@ -298,13 +301,14 @@ class Linker:
 
         # Copy and relocate each module
         for module in self.modules:
-            code_size = module.code_size if module.code_size else len(module.code) - module.code_start
+            # Copy all bytes in the code buffer (CSEG + initialized DSEG)
+            actual_bytes = len(module.code) - module.code_start
             dest_offset = module.code_base - self.output_base
 
             # Copy code bytes from the code_start position in the source buffer
             # (accounts for absolute ORG where code is stored at offset > 0)
             src_start = module.code_start
-            for i in range(code_size):
+            for i in range(actual_bytes):
                 src_idx = src_start + i
                 if src_idx < len(module.code) and dest_offset + i < len(self.output):
                     self.output[dest_offset + i] = module.code[src_idx]
@@ -418,6 +422,73 @@ class Linker:
             # Write EOF record
             f.write(':00000001FF\n')
 
+    def save_prl(self, filename):
+        """Save as MP/M .PRL (Page Relocatable) format.
+
+        PRL files can be loaded at any page boundary. The relocation bitmap
+        marks high bytes of 16-bit addresses that need adjustment when loaded
+        at a different page than 0x100.
+
+        Format:
+        - 256-byte header (code length at offset 1-2, BSS at 4-5)
+        - Code/data (code_length bytes)
+        - Relocation bitmap ((code_length + 7) / 8 bytes)
+        """
+        code_length = len(self.output)
+
+        # Calculate total BSS (uninitialized data) size from all modules
+        # BSS = declared DSEG size - initialized DSEG bytes actually emitted
+        # Initialized DSEG bytes = total buffer - code_start - CSEG size
+        bss_size = 0
+        for module in self.modules:
+            actual_bytes = len(module.code) - module.code_start
+            cseg_size = module.code_size if module.code_size else 0
+            initialized_dseg = actual_bytes - cseg_size
+            uninitialized_dseg = module.data_size - initialized_dseg
+            if uninitialized_dseg > 0:
+                bss_size += uninitialized_dseg
+
+        # Build relocation bitmap - one bit per byte of code
+        # Bit is set if corresponding byte is a HIGH byte of relocatable address
+        bitmap_size = (code_length + 7) // 8
+        bitmap = bytearray(bitmap_size)
+
+        # Collect all relocation high-byte offsets from all modules
+        for module in self.modules:
+            dest_offset = module.code_base - self.output_base
+            src_start = module.code_start
+
+            for offset, seg_type in module.relocations:
+                # offset points to low byte of 16-bit address
+                # high byte is at offset + 1
+                abs_offset = dest_offset + (offset - src_start)
+                high_byte_offset = abs_offset + 1
+
+                if 0 <= high_byte_offset < code_length:
+                    # Set bit in bitmap
+                    # Bit 7 of byte 0 = code byte 0, bit 6 = code byte 1, etc.
+                    byte_idx = high_byte_offset // 8
+                    bit_idx = 7 - (high_byte_offset % 8)
+                    bitmap[byte_idx] |= (1 << bit_idx)
+
+        # Build header (256 bytes)
+        header = bytearray(256)
+        header[0] = 0  # Always 0
+        header[1] = code_length & 0xFF  # Code length low byte
+        header[2] = (code_length >> 8) & 0xFF  # Code length high byte
+        header[3] = 0  # Always 0
+        header[4] = bss_size & 0xFF  # BSS size low byte
+        header[5] = (bss_size >> 8) & 0xFF  # BSS size high byte
+        header[6] = 0  # Always 0
+        header[7] = 0  # Load address low (0 for PRL)
+        header[8] = 0  # Load address high (0 for PRL)
+        # Bytes 9-255 remain 0
+
+        with open(filename, 'wb') as f:
+            f.write(bytes(header))
+            f.write(bytes(self.output))
+            f.write(bytes(bitmap))
+
     def save_sym(self, filename):
         """Save symbol table file (.SYM) compatible with SID/ZSID debuggers.
 
@@ -448,6 +519,7 @@ def main():
     parser.add_argument('inputs', nargs='+', help='Input .REL files')
     parser.add_argument('-o', '--output', help='Output file (default: first input with .com)')
     parser.add_argument('-x', '--hex', action='store_true', help='Output Intel HEX format')
+    parser.add_argument('--prl', action='store_true', help='Output MP/M .PRL (Page Relocatable) format')
     parser.add_argument('-s', '--sym', action='store_true', help='Generate .SYM symbol file')
     parser.add_argument('-S', '--sym-file', metavar='FILE', help='Generate .SYM symbol file with specified name')
     parser.add_argument('-p', '--origin', type=lambda x: int(x, 16) if not x.startswith(('0x', '0X', '0o', '0O', '0b', '0B')) else int(x, 0), default=0x100,
@@ -477,12 +549,19 @@ def main():
     if args.output:
         output_path = args.output
     else:
-        ext = '.hex' if args.hex else '.com'
+        if args.hex:
+            ext = '.hex'
+        elif args.prl:
+            ext = '.prl'
+        else:
+            ext = '.com'
         output_path = Path(args.inputs[0]).with_suffix(ext)
 
     # Save output
     if args.hex:
         linker.save_hex(str(output_path))
+    elif args.prl:
+        linker.save_prl(str(output_path))
     else:
         linker.save_com(str(output_path))
 
