@@ -6,6 +6,7 @@ ul80 \- Microsoft LINK-80 compatible linker for 8080/Z80
 [\fB\-v\fR]
 [\fB\-o\fR \fIoutput.com\fR]
 [\fB\-x\fR]
+[\fB\-\-prl\fR]
 [\fB\-s\fR]
 [\fB\-S\fR \fIfile.sym\fR]
 [\fB\-p\fR \fIorigin\fR]
@@ -31,6 +32,13 @@ Specify the output file name. Default is the first input file name with a .com e
 .TP
 .B \-x
 Output Intel HEX format instead of binary. Useful for EPROM programmers.
+.TP
+.B \-\-prl
+Output MP/M .PRL (Page Relocatable) format instead of binary .COM.
+PRL files can be loaded at any page boundary in memory, useful for MP/M's
+multi-user environment. The output file contains a 256-byte header with
+code/BSS sizes, the code section, and a relocation bitmap that marks which
+bytes need page adjustment when loaded at a different address.
 .TP
 .B \-s
 Generate a symbol file (.SYM) with an auto-generated name based on the output file.
@@ -96,6 +104,9 @@ Generate named symbol file:
 Output Intel HEX:
 .B ul80 \-x \-o program.hex program.rel
 .TP
+Output MP/M PRL:
+.B ul80 \-\-prl program.rel
+.TP
 Link with library:
 .B ul80 \-o program.com main.rel mylib.lib
 .SH EXIT STATUS
@@ -118,6 +129,9 @@ CP/M executable binary.
 .TP
 .I output.hex
 Intel HEX format (with \-x option).
+.TP
+.I output.prl
+MP/M Page Relocatable format (with \-\-prl option).
 .TP
 .I output.sym
 Symbol file (with \-s option).
