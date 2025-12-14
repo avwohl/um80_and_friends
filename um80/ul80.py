@@ -2,7 +2,10 @@
 """
 ul80 - Microsoft LINK-80 compatible linker for Linux.
 
-Usage: ul80 [-o output.com] file1.rel file2.rel ...
+Usage: ul80 [-o output.com] file1.rel file2.rel ... [lib1.lib ...]
+
+Supports both .rel object files and .lib library files (created by ulib80).
+Library modules are automatically extracted to resolve undefined symbols.
 """
 
 import sys
@@ -12,6 +15,7 @@ from pathlib import Path
 
 from um80 import __version__
 from um80.relformat import *
+from um80.ulib80 import Library, LibraryError
 
 
 class LinkerError(Exception):
@@ -218,6 +222,171 @@ class Linker:
                 self.commons[name] = size
 
         return True
+
+    def load_rel_data(self, name, data):
+        """Load REL data from bytes (e.g., from a library module)."""
+        reader = RELReader(data)
+        module = Module(name.upper())
+
+        current_loc = 0
+        current_seg = ADDR_PROGRAM_REL  # Default to code segment
+        code_bytes = bytearray()
+        first_loc_set = False  # Track if we've seen the first location
+
+        while True:
+            try:
+                item = reader.read_item()
+            except EOFError:
+                break
+
+            if item is None:
+                break
+
+            item_type = item[0]
+
+            if item_type == 'ABSOLUTE_BYTE':
+                # Extend buffer if needed
+                while len(code_bytes) <= current_loc:
+                    code_bytes.append(0)
+                code_bytes[current_loc] = item[1]
+                current_loc += 1
+
+            elif item_type == 'PROGRAM_REL':
+                # 16-bit program-relative value - needs relocation
+                value = item[1]
+                while len(code_bytes) <= current_loc + 1:
+                    code_bytes.append(0)
+                code_bytes[current_loc] = value & 0xFF
+                code_bytes[current_loc + 1] = (value >> 8) & 0xFF
+                module.relocations.append((current_loc, ADDR_PROGRAM_REL))
+                current_loc += 2
+
+            elif item_type == 'DATA_REL':
+                # 16-bit data-relative value - needs relocation
+                value = item[1]
+                while len(code_bytes) <= current_loc + 1:
+                    code_bytes.append(0)
+                code_bytes[current_loc] = value & 0xFF
+                code_bytes[current_loc + 1] = (value >> 8) & 0xFF
+                module.relocations.append((current_loc, ADDR_DATA_REL))
+                current_loc += 2
+
+            elif item_type == 'COMMON_REL':
+                # 16-bit common-relative value - needs relocation
+                value = item[1]
+                while len(code_bytes) <= current_loc + 1:
+                    code_bytes.append(0)
+                code_bytes[current_loc] = value & 0xFF
+                code_bytes[current_loc + 1] = (value >> 8) & 0xFF
+                module.relocations.append((current_loc, ADDR_COMMON_REL))
+                current_loc += 2
+
+            elif item_type == 'PROGRAM_NAME':
+                module.name = item[1]
+
+            elif item_type == 'ENTRY_SYMBOL':
+                # Symbol this module exports (for library search)
+                pass
+
+            elif item_type == 'DEFINE_ENTRY':
+                # PUBLIC symbol definition
+                a_field, name = item[1], item[2]
+                addr_type, value = a_field
+                module.publics[name] = (value, addr_type)
+
+            elif item_type == 'CHAIN_EXTERNAL':
+                # External reference chain
+                a_field, name = item[1], item[2]
+                addr_type, head = a_field
+                if name not in module.externals:
+                    module.externals[name] = []
+                module.externals[name].append((head, addr_type))
+
+            elif item_type == 'SET_LOC':
+                a_field = item[1]
+                addr_type, value = a_field
+                current_loc = value
+                current_seg = addr_type
+                # Track the first absolute location as code_start
+                if not first_loc_set and addr_type == ADDR_ABSOLUTE:
+                    module.code_start = value
+                    first_loc_set = True
+
+            elif item_type == 'CHAIN_ADDRESS':
+                # Internal forward reference chain
+                a_field = item[1]
+                addr_type, head = a_field
+                # Store for later processing
+                if head not in module.chains:
+                    module.chains[head] = []
+                module.chains[head].append((current_loc, addr_type))
+
+            elif item_type == 'DEFINE_PROG_SIZE':
+                a_field = item[1]
+                _, size = a_field
+                module.code_size = size
+
+            elif item_type == 'DEFINE_DATA_SIZE':
+                a_field = item[1]
+                _, size = a_field
+                module.data_size = size
+
+            elif item_type == 'DEFINE_COMMON_SIZE':
+                a_field, name = item[1], item[2]
+                _, size = a_field
+                module.commons[name] = size
+
+            elif item_type == 'SELECT_COMMON':
+                # Switch to common block
+                pass
+
+            elif item_type == 'REQUEST_LIB':
+                # Library search request
+                pass
+
+            elif item_type == 'END_PROGRAM':
+                # End of module
+                pass
+
+            elif item_type == 'END_FILE':
+                break
+
+        module.code = code_bytes
+        self.modules.append(module)
+
+        # Register public symbols
+        mod_idx = len(self.modules) - 1
+        for name, (value, seg_type) in module.publics.items():
+            if name in self.globals and self.globals[name][3]:
+                self.warning(f"Multiple definition of '{name}'")
+            else:
+                self.globals[name] = (mod_idx, value, seg_type, True)
+
+        # Track common block sizes
+        for name, size in module.commons.items():
+            if name not in self.commons or size > self.commons[name]:
+                self.commons[name] = size
+
+        return True
+
+    def get_undefined_symbols(self):
+        """Get list of undefined external symbols."""
+        undefined = set()
+        for module in self.modules:
+            for name in module.externals:
+                # Parse "SYMBOL+N" format - check base symbol
+                base_name = name
+                if '+' in name:
+                    parts = name.rsplit('+', 1)
+                    try:
+                        int(parts[1])  # Valid offset?
+                        base_name = parts[0]
+                    except ValueError:
+                        pass  # Not a valid offset, use full name
+
+                if base_name not in self.globals or not self.globals[base_name][3]:
+                    undefined.add(base_name)
+        return undefined
 
     def resolve_externals(self):
         """Check that all external references can be resolved."""
@@ -516,7 +685,7 @@ class Linker:
 def main():
     parser = argparse.ArgumentParser(description='ul80 - LINK-80 compatible linker')
     parser.add_argument('-v', '--version', action='version', version=f'%(prog)s {__version__}')
-    parser.add_argument('inputs', nargs='+', help='Input .REL files')
+    parser.add_argument('inputs', nargs='+', help='Input .REL and .LIB files')
     parser.add_argument('-o', '--output', help='Output file (default: first input with .com)')
     parser.add_argument('-x', '--hex', action='store_true', help='Output Intel HEX format')
     parser.add_argument('--prl', action='store_true', help='Output MP/M .PRL (Page Relocatable) format')
@@ -530,14 +699,67 @@ def main():
     linker = Linker()
     linker.code_base = args.origin  # Code starts at origin (0x100 for CP/M)
 
-    # Load all input files
+    # Separate .rel and .lib files
+    rel_files = []
+    lib_files = []
     for filename in args.inputs:
         if not os.path.exists(filename):
             print(f"Error: File not found: {filename}", file=sys.stderr)
             sys.exit(1)
+        ext = Path(filename).suffix.lower()
+        if ext == '.lib':
+            lib_files.append(filename)
+        else:
+            rel_files.append(filename)
+
+    # Load all .rel files first
+    for filename in rel_files:
         if not linker.load_rel(filename):
             print(f"Error loading {filename}", file=sys.stderr)
             sys.exit(1)
+
+    # Load libraries
+    libraries = []
+    for filename in lib_files:
+        try:
+            lib = Library.load(filename)
+            libraries.append((filename, lib))
+        except LibraryError as e:
+            print(f"Error loading library {filename}: {e}", file=sys.stderr)
+            sys.exit(1)
+
+    # Resolve undefined symbols from libraries
+    # Keep searching until no more symbols can be resolved
+    modules_loaded = set()  # Track which library modules we've already loaded
+    while libraries:
+        undefined = linker.get_undefined_symbols()
+        if not undefined:
+            break
+
+        resolved_any = False
+        for symbol in list(undefined):
+            # Search libraries for this symbol
+            for lib_filename, lib in libraries:
+                module_name = lib.find_module_for_symbol(symbol)
+                if module_name:
+                    # Check if we already loaded this module
+                    lib_mod_key = (lib_filename, module_name)
+                    if lib_mod_key in modules_loaded:
+                        continue
+
+                    # Get the module and load its REL data
+                    lib_module = lib.get_module(module_name)
+                    if lib_module:
+                        linker.load_rel_data(module_name, lib_module.data)
+                        modules_loaded.add(lib_mod_key)
+                        resolved_any = True
+                        break
+            if resolved_any:
+                break  # Restart the search with updated undefined symbols
+
+        if not resolved_any:
+            # No more symbols can be resolved from libraries
+            break
 
     # Link
     if not linker.link():
