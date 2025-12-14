@@ -303,14 +303,14 @@ class RELReader:
         return (addr_type, value)
 
     def _read_b_field(self):
-        """Read B-field, return symbol name."""
+        """Read B-field, return symbol name (uppercased for L80 compatibility)."""
         length = self.bits.read_bits(3)
         if length == 0:
             length = 8
         name = ''
         for _ in range(length):
             name += chr(self.bits.read_byte())
-        return name
+        return name.upper()
 
     def read_item(self):
         """
