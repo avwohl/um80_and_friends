@@ -49,6 +49,10 @@ class Module:
         # Relocation info: list of (offset, seg_type) for addresses that need relocation
         self.relocations = []
 
+        # Segment buffer offsets: maps segment type to buffer offset where that segment starts
+        # Used to convert segment-relative addresses to buffer offsets during chain following
+        self.seg_buf_start = {}  # seg_type -> buffer start offset
+
 
 class Linker:
     """LINK-80 compatible linker."""
@@ -82,10 +86,22 @@ class Linker:
         reader = RELReader(data)
         module = Module(Path(filename).stem.upper())
 
-        current_loc = 0
+        current_loc = 0  # Position within current segment
         current_seg = ADDR_PROGRAM_REL  # Default to code segment
         code_bytes = bytearray()
         first_loc_set = False  # Track if we've seen the first location
+
+        # Track where each segment starts in the buffer
+        # This fixes a bug where SET_LOC to a new segment would reset current_loc
+        # to 0 and overwrite bytes from earlier segments
+        seg_buf_start = {}  # seg_type -> buffer start offset
+
+        def get_buf_idx():
+            """Get buffer index for current segment + offset."""
+            if current_seg not in seg_buf_start:
+                # First byte for this segment - starts at end of buffer
+                seg_buf_start[current_seg] = len(code_bytes)
+            return seg_buf_start[current_seg] + current_loc
 
         while True:
             try:
@@ -99,40 +115,44 @@ class Linker:
             item_type = item[0]
 
             if item_type == 'ABSOLUTE_BYTE':
+                buf_idx = get_buf_idx()
                 # Extend buffer if needed
-                while len(code_bytes) <= current_loc:
+                while len(code_bytes) <= buf_idx:
                     code_bytes.append(0)
-                code_bytes[current_loc] = item[1]
+                code_bytes[buf_idx] = item[1]
                 current_loc += 1
 
             elif item_type == 'PROGRAM_REL':
                 # 16-bit program-relative value - needs relocation
                 value = item[1]
-                while len(code_bytes) <= current_loc + 1:
+                buf_idx = get_buf_idx()
+                while len(code_bytes) <= buf_idx + 1:
                     code_bytes.append(0)
-                code_bytes[current_loc] = value & 0xFF
-                code_bytes[current_loc + 1] = (value >> 8) & 0xFF
-                module.relocations.append((current_loc, ADDR_PROGRAM_REL))
+                code_bytes[buf_idx] = value & 0xFF
+                code_bytes[buf_idx + 1] = (value >> 8) & 0xFF
+                module.relocations.append((buf_idx, ADDR_PROGRAM_REL))
                 current_loc += 2
 
             elif item_type == 'DATA_REL':
                 # 16-bit data-relative value - needs relocation
                 value = item[1]
-                while len(code_bytes) <= current_loc + 1:
+                buf_idx = get_buf_idx()
+                while len(code_bytes) <= buf_idx + 1:
                     code_bytes.append(0)
-                code_bytes[current_loc] = value & 0xFF
-                code_bytes[current_loc + 1] = (value >> 8) & 0xFF
-                module.relocations.append((current_loc, ADDR_DATA_REL))
+                code_bytes[buf_idx] = value & 0xFF
+                code_bytes[buf_idx + 1] = (value >> 8) & 0xFF
+                module.relocations.append((buf_idx, ADDR_DATA_REL))
                 current_loc += 2
 
             elif item_type == 'COMMON_REL':
                 # 16-bit common-relative value - needs relocation
                 value = item[1]
-                while len(code_bytes) <= current_loc + 1:
+                buf_idx = get_buf_idx()
+                while len(code_bytes) <= buf_idx + 1:
                     code_bytes.append(0)
-                code_bytes[current_loc] = value & 0xFF
-                code_bytes[current_loc + 1] = (value >> 8) & 0xFF
-                module.relocations.append((current_loc, ADDR_COMMON_REL))
+                code_bytes[buf_idx] = value & 0xFF
+                code_bytes[buf_idx + 1] = (value >> 8) & 0xFF
+                module.relocations.append((buf_idx, ADDR_COMMON_REL))
                 current_loc += 2
 
             elif item_type == 'PROGRAM_NAME':
@@ -154,7 +174,11 @@ class Linker:
                 addr_type, head = a_field
                 if name not in module.externals:
                     module.externals[name] = []
-                module.externals[name].append((head, addr_type))
+                # Store buffer offset for the chain head
+                if addr_type not in seg_buf_start:
+                    seg_buf_start[addr_type] = len(code_bytes)
+                buf_head = seg_buf_start[addr_type] + head
+                module.externals[name].append((buf_head, addr_type))
 
             elif item_type == 'SET_LOC':
                 a_field = item[1]
@@ -170,10 +194,14 @@ class Linker:
                 # Internal forward reference chain
                 a_field = item[1]
                 addr_type, head = a_field
-                # Store for later processing
-                if head not in module.chains:
-                    module.chains[head] = []
-                module.chains[head].append((current_loc, addr_type))
+                # Store buffer offset for the chain
+                if addr_type not in seg_buf_start:
+                    seg_buf_start[addr_type] = len(code_bytes)
+                buf_head = seg_buf_start[addr_type] + head
+                buf_cur = get_buf_idx()
+                if buf_head not in module.chains:
+                    module.chains[buf_head] = []
+                module.chains[buf_head].append((buf_cur, addr_type))
 
             elif item_type == 'DEFINE_PROG_SIZE':
                 a_field = item[1]
@@ -206,6 +234,7 @@ class Linker:
                 break
 
         module.code = code_bytes
+        module.seg_buf_start = seg_buf_start  # Save for chain following during link
         self.modules.append(module)
 
         # Register public symbols
@@ -228,10 +257,22 @@ class Linker:
         reader = RELReader(data)
         module = Module(name.upper())
 
-        current_loc = 0
+        current_loc = 0  # Position within current segment
         current_seg = ADDR_PROGRAM_REL  # Default to code segment
         code_bytes = bytearray()
         first_loc_set = False  # Track if we've seen the first location
+
+        # Track where each segment starts in the buffer
+        # This fixes a bug where SET_LOC to a new segment would reset current_loc
+        # to 0 and overwrite bytes from earlier segments
+        seg_buf_start = {}  # seg_type -> buffer start offset
+
+        def get_buf_idx():
+            """Get buffer index for current segment + offset."""
+            if current_seg not in seg_buf_start:
+                # First byte for this segment - starts at end of buffer
+                seg_buf_start[current_seg] = len(code_bytes)
+            return seg_buf_start[current_seg] + current_loc
 
         while True:
             try:
@@ -245,40 +286,44 @@ class Linker:
             item_type = item[0]
 
             if item_type == 'ABSOLUTE_BYTE':
+                buf_idx = get_buf_idx()
                 # Extend buffer if needed
-                while len(code_bytes) <= current_loc:
+                while len(code_bytes) <= buf_idx:
                     code_bytes.append(0)
-                code_bytes[current_loc] = item[1]
+                code_bytes[buf_idx] = item[1]
                 current_loc += 1
 
             elif item_type == 'PROGRAM_REL':
                 # 16-bit program-relative value - needs relocation
                 value = item[1]
-                while len(code_bytes) <= current_loc + 1:
+                buf_idx = get_buf_idx()
+                while len(code_bytes) <= buf_idx + 1:
                     code_bytes.append(0)
-                code_bytes[current_loc] = value & 0xFF
-                code_bytes[current_loc + 1] = (value >> 8) & 0xFF
-                module.relocations.append((current_loc, ADDR_PROGRAM_REL))
+                code_bytes[buf_idx] = value & 0xFF
+                code_bytes[buf_idx + 1] = (value >> 8) & 0xFF
+                module.relocations.append((buf_idx, ADDR_PROGRAM_REL))
                 current_loc += 2
 
             elif item_type == 'DATA_REL':
                 # 16-bit data-relative value - needs relocation
                 value = item[1]
-                while len(code_bytes) <= current_loc + 1:
+                buf_idx = get_buf_idx()
+                while len(code_bytes) <= buf_idx + 1:
                     code_bytes.append(0)
-                code_bytes[current_loc] = value & 0xFF
-                code_bytes[current_loc + 1] = (value >> 8) & 0xFF
-                module.relocations.append((current_loc, ADDR_DATA_REL))
+                code_bytes[buf_idx] = value & 0xFF
+                code_bytes[buf_idx + 1] = (value >> 8) & 0xFF
+                module.relocations.append((buf_idx, ADDR_DATA_REL))
                 current_loc += 2
 
             elif item_type == 'COMMON_REL':
                 # 16-bit common-relative value - needs relocation
                 value = item[1]
-                while len(code_bytes) <= current_loc + 1:
+                buf_idx = get_buf_idx()
+                while len(code_bytes) <= buf_idx + 1:
                     code_bytes.append(0)
-                code_bytes[current_loc] = value & 0xFF
-                code_bytes[current_loc + 1] = (value >> 8) & 0xFF
-                module.relocations.append((current_loc, ADDR_COMMON_REL))
+                code_bytes[buf_idx] = value & 0xFF
+                code_bytes[buf_idx + 1] = (value >> 8) & 0xFF
+                module.relocations.append((buf_idx, ADDR_COMMON_REL))
                 current_loc += 2
 
             elif item_type == 'PROGRAM_NAME':
@@ -300,7 +345,11 @@ class Linker:
                 addr_type, head = a_field
                 if name not in module.externals:
                     module.externals[name] = []
-                module.externals[name].append((head, addr_type))
+                # Store buffer offset for the chain head
+                if addr_type not in seg_buf_start:
+                    seg_buf_start[addr_type] = len(code_bytes)
+                buf_head = seg_buf_start[addr_type] + head
+                module.externals[name].append((buf_head, addr_type))
 
             elif item_type == 'SET_LOC':
                 a_field = item[1]
@@ -316,10 +365,14 @@ class Linker:
                 # Internal forward reference chain
                 a_field = item[1]
                 addr_type, head = a_field
-                # Store for later processing
-                if head not in module.chains:
-                    module.chains[head] = []
-                module.chains[head].append((current_loc, addr_type))
+                # Store buffer offset for the chain
+                if addr_type not in seg_buf_start:
+                    seg_buf_start[addr_type] = len(code_bytes)
+                buf_head = seg_buf_start[addr_type] + head
+                buf_cur = get_buf_idx()
+                if buf_head not in module.chains:
+                    module.chains[buf_head] = []
+                module.chains[buf_head].append((buf_cur, addr_type))
 
             elif item_type == 'DEFINE_PROG_SIZE':
                 a_field = item[1]
@@ -352,6 +405,7 @@ class Linker:
                 break
 
         module.code = code_bytes
+        module.seg_buf_start = seg_buf_start  # Save for chain following during link
         self.modules.append(module)
 
         # Register public symbols
@@ -509,14 +563,17 @@ class Linker:
 
                 for head, ref_seg_type in refs:
                     # Follow the chain and fix up each reference
-                    # Chain offsets are absolute addresses, adjust for code_start
+                    # head is now a buffer offset, convert to output offset
                     offset = head - src_start
+                    seg_base = module.seg_buf_start.get(ref_seg_type, 0)
                     visited = set()  # Prevent infinite loops
                     while offset not in visited and offset >= 0:
                         visited.add(offset)
                         abs_offset = dest_offset + offset
                         if abs_offset + 1 < len(self.output) and abs_offset >= 0:
-                            # Get value at this location (this is the next chain link, absolute addr)
+                            # Get value at this location (this is the next chain link)
+                            # For ADDR_ABSOLUTE, values are absolute addresses
+                            # For relative segments, values are segment-relative offsets
                             value = self.output[abs_offset] | (self.output[abs_offset + 1] << 8)
 
                             # Chain format: each link points to previous reference
@@ -529,8 +586,9 @@ class Linker:
                                 # End of chain
                                 break
                             else:
-                                # Follow chain to previous reference (absolute addr, adjust for code_start)
-                                offset = value - src_start
+                                # Follow chain to previous reference
+                                # Convert segment-relative value to output offset using seg_buf_start
+                                offset = seg_base + value - src_start
                         else:
                             break
 
@@ -538,9 +596,9 @@ class Linker:
         for module in self.modules:
             dest_offset = module.code_base - self.output_base
             src_start = module.code_start  # For absolute ORG adjustment
-            for offset, seg_type in module.relocations:
-                # Relocation offsets are absolute addresses, adjust for code_start
-                abs_offset = dest_offset + (offset - src_start)
+            for buf_offset, seg_type in module.relocations:
+                # buf_offset is now a buffer offset, convert to output offset
+                abs_offset = dest_offset + (buf_offset - src_start)
                 if abs_offset >= 0 and abs_offset + 1 < len(self.output):
                     # Read current value
                     value = self.output[abs_offset] | (self.output[abs_offset + 1] << 8)
@@ -627,10 +685,10 @@ class Linker:
             dest_offset = module.code_base - self.output_base
             src_start = module.code_start
 
-            for offset, seg_type in module.relocations:
-                # offset points to low byte of 16-bit address
-                # high byte is at offset + 1
-                abs_offset = dest_offset + (offset - src_start)
+            for buf_offset, seg_type in module.relocations:
+                # buf_offset is buffer offset, points to low byte of 16-bit address
+                # high byte is at buf_offset + 1
+                abs_offset = dest_offset + (buf_offset - src_start)
                 high_byte_offset = abs_offset + 1
 
                 if 0 <= high_byte_offset < code_length:
