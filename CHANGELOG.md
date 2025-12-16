@@ -2,6 +2,13 @@
 
 All notable changes to the um80 toolchain are documented here.
 
+## [0.3.14] - 2024-12-16
+
+### Fixed
+- ul80 linker: Fixed segment buffer management to prevent SET_LOC to new segments
+  from overwriting bytes from earlier segments. Chain following now correctly uses
+  buffer offsets instead of segment-relative addresses.
+
 ## [0.3.13] - 2024-12-14
 
 ### Fixed
