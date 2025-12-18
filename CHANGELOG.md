@@ -2,6 +2,18 @@
 
 All notable changes to the um80 toolchain are documented here.
 
+## [0.3.16] - 2025-12-18
+
+### Added
+- ul80 linker: Predefined `__END__` symbol pointing to the first free byte after
+  all linked segments (code + data + common blocks). Useful for dynamic memory
+  allocation in CP/M programs.
+- Test suite for `__END__` symbol (`tests/test_end_symbol.py`)
+
+### Fixed
+- ul80 linker: Fixed segment buffer offset calculation for external references
+  in absolute-origin code (ORG directive with absolute address).
+
 ## [0.3.15] - 2024-12-16
 
 ### Fixed
