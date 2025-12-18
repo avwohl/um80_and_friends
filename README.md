@@ -110,6 +110,22 @@ LINK-80 compatible linker that:
 - Supports COMMON blocks
 - Can output Intel HEX format
 - Can output MP/M .PRL (Page Relocatable) format
+- Provides `__END__` symbol for dynamic memory allocation
+
+#### Predefined Symbols
+
+The linker provides a predefined `__END__` symbol that points to the first free byte after all linked segments (code + data + common blocks). This is useful for implementing heap allocation:
+
+```asm
+        EXTRN   __END__         ; Import linker symbol
+
+START:  LXI     H,__END__       ; Load end of program
+        SHLD    HEAP            ; Initialize heap pointer
+        ...
+
+        DSEG
+HEAP:   DW      0               ; Heap pointer
+```
 
 See `man ul80` for full documentation, or refer to the original [Microsoft L80 Manual](docs/external/l80.pdf).
 

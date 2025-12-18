@@ -62,6 +62,10 @@ class Linker:
         self.globals = {}  # name -> (module_idx, value, seg_type, is_defined)
         self.commons = {}  # name -> size (largest wins)
 
+        # Pre-define __END__ symbol (value computed in calculate_addresses)
+        # mod_idx=0 is placeholder, value will be absolute address
+        self.globals['__END__'] = (0, 0, ADDR_ABSOLUTE, True)
+
         self.code_base = 0x0103  # Default CP/M load address + 3 for JMP
         self.data_base = None  # Will be after code if not specified
         self.common_base = None  # After data
@@ -175,8 +179,10 @@ class Linker:
                 if name not in module.externals:
                     module.externals[name] = []
                 # Store buffer offset for the chain head
+                # For code at absolute origin, program-relative addresses map to
+                # absolute buffer positions, so use absolute segment's offset as fallback
                 if addr_type not in seg_buf_start:
-                    seg_buf_start[addr_type] = len(code_bytes)
+                    seg_buf_start[addr_type] = seg_buf_start.get(ADDR_ABSOLUTE, len(code_bytes))
                 buf_head = seg_buf_start[addr_type] + head
                 module.externals[name].append((buf_head, addr_type))
 
@@ -346,8 +352,10 @@ class Linker:
                 if name not in module.externals:
                     module.externals[name] = []
                 # Store buffer offset for the chain head
+                # For code at absolute origin, program-relative addresses map to
+                # absolute buffer positions, so use absolute segment's offset as fallback
                 if addr_type not in seg_buf_start:
-                    seg_buf_start[addr_type] = len(code_bytes)
+                    seg_buf_start[addr_type] = seg_buf_start.get(ADDR_ABSOLUTE, len(code_bytes))
                 buf_head = seg_buf_start[addr_type] + head
                 module.externals[name].append((buf_head, addr_type))
 
@@ -486,6 +494,14 @@ class Linker:
         # Common follows data
         if self.common_base is None:
             self.common_base = self.data_base + total_data
+
+        # Calculate total common size
+        total_common = sum(self.commons.values())
+
+        # Add __END__ symbol pointing to first free byte after all segments
+        # This is an absolute address, not module-relative
+        end_addr = self.common_base + total_common
+        self.globals['__END__'] = (0, end_addr, ADDR_ABSOLUTE, True)
 
     def relocate_value(self, module, value, seg_type):
         """Relocate a value based on its segment type."""
