@@ -2,6 +2,17 @@
 
 All notable changes to the um80 toolchain are documented here.
 
+## [0.3.17] - 2025-12-21
+
+### Fixed
+- ul80 linker: Fixed segment buffer management when switching between segments
+  (e.g., CSEG -> DSEG -> CSEG). Previously, returning to a segment could overwrite
+  data from other segments. Now uses separate buffers per segment type.
+
+### Added
+- Test suite for DS and ORG directive combinations (`tests/test_ds_org.py`)
+  covering segment switching, RST vector layouts, and external references.
+
 ## [0.3.16] - 2025-12-18
 
 ### Added
