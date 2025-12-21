@@ -1,0 +1,2 @@
+  Root Cause:
+  The ul80 linker had issues with ds (define space) padding calculations when used with multiple org directives. This caused all structures (RST vectors, HCB bank IDs, PMGMT, entry points) to be offset by 7 bytes from their intended positions.
