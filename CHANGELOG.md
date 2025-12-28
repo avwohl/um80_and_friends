@@ -2,6 +2,12 @@
 
 All notable changes to the um80 toolchain are documented here.
 
+## [0.3.18] - 2025-12-28
+
+### Fixed
+- ul80 linker: Binary output files (.COM and .PRL) now padded to 128-byte
+  CP/M record boundary. Fixes MP/M 2 .SPR file loading issues.
+
 ## [0.3.17] - 2025-12-21
 
 ### Fixed
