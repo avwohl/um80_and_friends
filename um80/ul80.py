@@ -687,6 +687,10 @@ class Linker:
         # Only prepend JMP if entry point is not at 0x100
         with open(filename, 'wb') as f:
             f.write(bytes(self.output))
+            # Pad to CP/M record boundary (128 bytes)
+            remainder = len(self.output) % 128
+            if remainder:
+                f.write(bytes(128 - remainder))
 
     def save_hex(self, filename):
         """Save as Intel HEX format."""
@@ -787,6 +791,11 @@ class Linker:
             f.write(bytes(header))
             f.write(bytes(self.output))
             f.write(bytes(bitmap))
+            # Pad to CP/M record boundary (128 bytes)
+            total_size = 256 + code_length + bitmap_size
+            remainder = total_size % 128
+            if remainder:
+                f.write(bytes(128 - remainder))
 
     def save_sym(self, filename):
         """Save symbol table file (.SYM) compatible with SID/ZSID debuggers.
