@@ -2,6 +2,13 @@
 
 All notable changes to the um80 toolchain are documented here.
 
+## [0.3.19] - 2025-12-28
+
+### Fixed
+- ul80 linker: PRL/SPR output now defaults to origin 0 instead of 0x100.
+  Previously, --prl incorrectly used the CP/M COM default origin, causing
+  all addresses to be 0x100 too high in SPR files.
+
 ## [0.3.18] - 2025-12-28
 
 ### Fixed

@@ -830,13 +830,16 @@ def main():
     parser.add_argument('--prl', action='store_true', help='Output MP/M .PRL (Page Relocatable) format')
     parser.add_argument('-s', '--sym', action='store_true', help='Generate .SYM symbol file')
     parser.add_argument('-S', '--sym-file', metavar='FILE', help='Generate .SYM symbol file with specified name')
-    parser.add_argument('-p', '--origin', type=lambda x: int(x, 16) if not x.startswith(('0x', '0X', '0o', '0O', '0b', '0B')) else int(x, 0), default=0x100,
-                       help='Program origin as hex (e.g., E000, 0xE000, default: 100)')
+    parser.add_argument('-p', '--origin', type=lambda x: int(x, 16) if not x.startswith(('0x', '0X', '0o', '0O', '0b', '0B')) else int(x, 0), default=None,
+                       help='Program origin as hex (e.g., E000, 0xE000, default: 0 for PRL, 100 for COM)')
 
     args = parser.parse_args()
 
     linker = Linker()
-    linker.code_base = args.origin  # Code starts at origin (0x100 for CP/M)
+    # Default origin: 0 for PRL/SPR (page relocatable), 0x100 for COM (CP/M TPA)
+    if args.origin is None:
+        args.origin = 0 if args.prl else 0x100
+    linker.code_base = args.origin
 
     # Separate .rel and .lib files
     rel_files = []
