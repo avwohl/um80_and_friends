@@ -2,6 +2,11 @@
 
 All notable changes to the um80 toolchain are documented here.
 
+## [0.3.20] - 2025-12-28
+
+### Changed
+- Added GitHub Actions workflow for automated PyPI publishing via trusted publishers.
+
 ## [0.3.19] - 2025-12-28
 
 ### Fixed
