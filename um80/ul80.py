@@ -765,11 +765,17 @@ class Linker:
                     bitmap[byte_idx] |= (1 << bit_idx)
 
         # Build header (256 bytes)
+        # MP/M II PRL format (verified from PRLCM.PLM):
+        # Byte 0: Type/reserved (0)
+        # Bytes 1-2: Code length (16-bit little-endian)
+        # Byte 3: Reserved (0)
+        # Bytes 4-5: BSS/extra size (optional)
+        # Bytes 6-255: Reserved (0)
         header = bytearray(256)
-        header[0] = 0  # Always 0
+        header[0] = 0  # Type/reserved
         header[1] = code_length & 0xFF  # Code length low byte
         header[2] = (code_length >> 8) & 0xFF  # Code length high byte
-        header[3] = 0  # Always 0
+        header[3] = 0  # Reserved
         header[4] = bss_size & 0xFF  # BSS size low byte
         header[5] = (bss_size >> 8) & 0xFF  # BSS size high byte
         header[6] = 0  # Always 0
