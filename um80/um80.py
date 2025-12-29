@@ -67,9 +67,10 @@ class Macro:
 class Assembler:
     """MACRO-80 compatible assembler."""
 
-    def __init__(self, predefined=None, export_all_symbols=False):
+    def __init__(self, predefined=None, export_all_symbols=False, truncate_symbols=False):
         self.symbols = {}  # Symbol table
         self.export_all_symbols = export_all_symbols  # -g flag: export all as PUBLIC
+        self.truncate_symbols = truncate_symbols  # -t flag: truncate symbols to 8 chars
         self.macros = {}   # Macro definitions
         self.segments = {
             'ASEG': Segment('ASEG', ADDR_ABSOLUTE),
@@ -118,7 +119,7 @@ class Assembler:
         # Forward reference chains (for labels within module)
         self.fwd_chains = {}  # name -> list of (seg, offset) references
 
-        self.output = RELWriter()
+        self.output = RELWriter(truncate_symbols=truncate_symbols)
         self.listing_lines = []
         self.source_lines = []
 
@@ -215,6 +216,9 @@ class Assembler:
         s = s.strip().upper()
         if not s:
             return (0, False)
+
+        # DRI extension: strip $ digit separators (e.g., 010$0000B)
+        s = s.replace('$', '')
 
         # Check for suffix notation
         if s.endswith('H'):
@@ -348,6 +352,17 @@ class Assembler:
                 return (0xFFFF, ADDR_ABSOLUTE, False, None)
             return (0, ADDR_ABSOLUTE, False, None)
 
+        # DRI extension: HIGH(expr) and LOW(expr) function-call syntax
+        if upper.startswith('HIGH(') and expr.endswith(')'):
+            # Find matching closing paren
+            inner = expr[5:-1]  # Extract content between HIGH( and )
+            val, seg, ext, name = self.parse_expression(inner, allow_undefined)
+            return ((val >> 8) & 0xFF, ADDR_ABSOLUTE, ext, name)
+        if upper.startswith('LOW(') and expr.endswith(')'):
+            inner = expr[4:-1]  # Extract content between LOW( and )
+            val, seg, ext, name = self.parse_expression(inner, allow_undefined)
+            return (val & 0xFF, ADDR_ABSOLUTE, ext, name)
+        # Original M80 syntax: HIGH expr and LOW expr (with space)
         if upper.startswith('HIGH '):
             val, seg, ext, name = self.parse_expression(expr[5:], allow_undefined)
             return ((val >> 8) & 0xFF, ADDR_ABSOLUTE, ext, name)
@@ -576,17 +591,34 @@ class Assembler:
             return (None, None, None, comment)
 
         # Parse label (if any)
+        # Labels can be at column 1 or indented, but are identified by trailing colon
+        # Conditional directives (IF, ELSE, ENDIF, etc.) at column 1 without colon are NOT labels
+        CONDITIONAL_DIRECTIVES = {
+            'IF', 'IFT', 'IFE', 'IFF', 'IFDEF', 'IFNDEF',
+            'IF1', 'IF2', 'IFB', 'IFNB', 'IFIDN', 'IFDIF',
+            'COND', 'ELSE', 'ENDIF', 'ENDC'
+        }
         label = None
-        if line and not line[0].isspace():
-            # Label at start of line
-            match = re.match(r'^([$A-Za-z_@?][A-Za-z0-9_@?$.]*)(:?:?)\s*', line)
+        stripped = line.lstrip()
+        # Check for label: identifier followed by : or ::
+        match = re.match(r'^([$A-Za-z_@?][A-Za-z0-9_@?$.]*)(::|:)\s*', stripped)
+        if match:
+            # Has a colon, so it's definitely a label
+            label = match.group(1)
+            colons = match.group(2)
+            stripped = stripped[match.end():]
+            line = stripped  # Continue with remainder
+            if colons == '::':
+                self.lookup_symbol(label).public = True
+        elif not line[0].isspace() if line else False:
+            # At column 1, no colon - check if it's a conditional directive
+            match = re.match(r'^([$A-Za-z_@?][A-Za-z0-9_@?$.]*)\s*', stripped)
             if match:
-                label = match.group(1)
-                colons = match.group(2)
-                line = line[match.end():]
-                # Double colon makes it PUBLIC
-                if colons == '::':
-                    self.lookup_symbol(label).public = True
+                potential = match.group(1).upper()
+                if potential not in CONDITIONAL_DIRECTIVES:
+                    # Not a directive, treat as label (M80 allows labels without colons at col 1)
+                    label = match.group(1)
+                    line = stripped[match.end():]
 
         if not line.strip():
             return (label, None, None, comment)
@@ -643,6 +675,63 @@ class Assembler:
 
         if current.strip():
             result.append(current.strip())
+
+        return result
+
+    def split_on_exclamation(self, line):
+        """
+        DRI extension: Split a line on '!' separator, respecting strings.
+        Returns list of statement strings. Each statement after the first
+        should be treated as having no label.
+        Example: "PUSH H! PUSH D! PUSH B" -> ["PUSH H", " PUSH D", " PUSH B"]
+        """
+        # First, find the comment (if any) and separate it
+        comment = ''
+        in_string = False
+        string_char = None
+        comment_pos = -1
+        for i, ch in enumerate(line):
+            if in_string:
+                if ch == string_char:
+                    in_string = False
+            elif ch in "'\"":
+                in_string = True
+                string_char = ch
+            elif ch == ';':
+                comment = line[i:]  # Include the semicolon
+                comment_pos = i
+                break
+
+        if comment_pos >= 0:
+            line = line[:comment_pos]
+
+        # Now split on '!' while respecting strings
+        result = []
+        current = ''
+        in_string = False
+        string_char = None
+
+        for ch in line:
+            if in_string:
+                current += ch
+                if ch == string_char:
+                    in_string = False
+            elif ch in "'\"":
+                in_string = True
+                string_char = ch
+                current += ch
+            elif ch == '!':
+                result.append(current)
+                current = ''
+            else:
+                current += ch
+
+        # Add the last segment
+        result.append(current)
+
+        # Append comment to the last segment
+        if comment and result:
+            result[-1] = result[-1] + comment
 
         return result
 
@@ -712,6 +801,58 @@ class Assembler:
         # Emit chain link (0 for first reference, else previous offset)
         self.emit_word(chain_link)
 
+    def resolve_register_alias(self, name):
+        """
+        DRI extension: Resolve a register name or alias.
+        If name is a direct register (B, C, D, E, H, L, M, A), return it.
+        If name is a symbol with EQU value 0-7, return the corresponding register.
+        Returns the register name or None if not a valid register/alias.
+        """
+        name = name.upper()
+        if name in REGS:
+            return name
+        # Check if it's a symbol with a register value
+        sym = self.symbols.get(name)
+        if sym and sym.defined and 0 <= sym.value <= 7:
+            # Map value to register name
+            for reg, val in REGS.items():
+                if val == sym.value:
+                    return reg
+        return None
+
+    def resolve_regpair_alias(self, name, regpair_dict):
+        """
+        DRI extension: Resolve a register pair name or alias.
+        If name is a direct register pair in regpair_dict, return it.
+        If name is a symbol with EQU value matching a pair encoding, return the pair.
+        Also handles single register -> register pair mapping for DRI compatibility:
+        - B(0)/C(1) -> BC, D(2)/E(3) -> DE, H(4)/L(5) -> HL
+        Returns the register pair name or None if not valid.
+        """
+        name = name.upper()
+        if name in regpair_dict:
+            return name
+        # Check if it's a symbol with a register pair value
+        sym = self.symbols.get(name)
+        if sym and sym.defined:
+            val = sym.value
+            # First, try direct match with register pair encoding (0-3)
+            for rp, rpval in regpair_dict.items():
+                if rpval == val:
+                    return rp
+            # DRI extension: single register value -> register pair
+            # B(0)/C(1) -> BC(0), D(2)/E(3) -> DE(1), H(4)/L(5) -> HL(2)
+            if val in (0, 1):  # B or C -> BC
+                if 'B' in regpair_dict or 'BC' in regpair_dict:
+                    return 'B' if 'B' in regpair_dict else 'BC'
+            elif val in (2, 3):  # D or E -> DE
+                if 'D' in regpair_dict or 'DE' in regpair_dict:
+                    return 'D' if 'D' in regpair_dict else 'DE'
+            elif val in (4, 5):  # H or L -> HL
+                if 'H' in regpair_dict or 'HL' in regpair_dict:
+                    return 'H' if 'H' in regpair_dict else 'HL'
+        return None
+
     def assemble_instruction(self, operator, operands):
         """Assemble a CPU instruction."""
         operator = operator.upper()
@@ -739,9 +880,10 @@ class Assembler:
             if len(ops) != 2:
                 self.error("MOV requires two operands")
                 return True
-            dst, src = ops[0].upper(), ops[1].upper()
-            if dst not in REGS or src not in REGS:
-                self.error(f"Invalid register for MOV: {dst}, {src}")
+            dst = self.resolve_register_alias(ops[0])
+            src = self.resolve_register_alias(ops[1])
+            if dst is None or src is None:
+                self.error(f"Invalid register for MOV: {ops[0]}, {ops[1]}")
                 return True
             if dst == 'M' and src == 'M':
                 self.error("MOV M,M is invalid (HLT)")
@@ -756,9 +898,9 @@ class Assembler:
             if len(ops) != 2:
                 self.error("MVI requires two operands")
                 return True
-            reg = ops[0].upper()
-            if reg not in REGS:
-                self.error(f"Invalid register for MVI: {reg}")
+            reg = self.resolve_register_alias(ops[0])
+            if reg is None:
+                self.error(f"Invalid register for MVI: {ops[0]}")
                 return True
             val, seg, ext, name = self.parse_expression(ops[1])
             if ext:
@@ -774,9 +916,9 @@ class Assembler:
             if len(ops) != 2:
                 self.error("LXI requires two operands")
                 return True
-            rp = ops[0].upper()
-            if rp not in REGPAIRS:
-                self.error(f"Invalid register pair for LXI: {rp}")
+            rp = self.resolve_regpair_alias(ops[0], REGPAIRS)
+            if rp is None:
+                self.error(f"Invalid register pair for LXI: {ops[0]}")
                 return True
             self.emit_byte(LXI_BASE | (REGPAIRS[rp] << 4))
             val, seg, ext, name = self.parse_expression(ops[1])
@@ -791,9 +933,9 @@ class Assembler:
             if len(ops) != 1:
                 self.error(f"{operator} requires one operand")
                 return True
-            reg = ops[0].upper()
-            if reg not in REGS:
-                self.error(f"Invalid register for {operator}: {reg}")
+            reg = self.resolve_register_alias(ops[0])
+            if reg is None:
+                self.error(f"Invalid register for {operator}: {ops[0]}")
                 return True
             if operator == 'INR':
                 code = encode_inr(reg)
@@ -808,9 +950,9 @@ class Assembler:
             if len(ops) != 1:
                 self.error(f"{operator} requires one operand")
                 return True
-            rp = ops[0].upper()
-            if rp not in REGPAIRS:
-                self.error(f"Invalid register pair for {operator}: {rp}")
+            rp = self.resolve_regpair_alias(ops[0], REGPAIRS)
+            if rp is None:
+                self.error(f"Invalid register pair for {operator}: {ops[0]}")
                 return True
             if operator == 'INX':
                 code = encode_inx(rp)
@@ -827,9 +969,9 @@ class Assembler:
             if len(ops) != 1:
                 self.error(f"{operator} requires one operand")
                 return True
-            rp = ops[0].upper()
-            if rp not in REGPAIRS_LDAX:
-                self.error(f"Invalid register pair for {operator}: {rp} (must be B or D)")
+            rp = self.resolve_regpair_alias(ops[0], REGPAIRS_LDAX)
+            if rp is None:
+                self.error(f"Invalid register pair for {operator}: {ops[0]} (must be B or D)")
                 return True
             if operator == 'LDAX':
                 code = encode_ldax(rp)
@@ -844,9 +986,14 @@ class Assembler:
             if len(ops) != 1:
                 self.error(f"{operator} requires one operand")
                 return True
-            rp = ops[0].upper()
-            if rp not in REGPAIRS_PUSHPOP:
-                self.error(f"Invalid register pair for {operator}: {rp}")
+            # DRI extension: PUSH A / POP A is alias for PUSH PSW / POP PSW
+            op_upper = ops[0].strip().upper()
+            if op_upper == 'A':
+                rp = 'PSW'
+            else:
+                rp = self.resolve_regpair_alias(ops[0], REGPAIRS_PUSHPOP)
+            if rp is None:
+                self.error(f"Invalid register pair for {operator}: {ops[0]}")
                 return True
             if operator == 'PUSH':
                 code = encode_push(rp)
@@ -861,9 +1008,9 @@ class Assembler:
             if len(ops) != 1:
                 self.error(f"{operator} requires one operand")
                 return True
-            reg = ops[0].upper()
-            if reg not in REGS:
-                self.error(f"Invalid register for {operator}: {reg}")
+            reg = self.resolve_register_alias(ops[0])
+            if reg is None:
+                self.error(f"Invalid register for {operator}: {ops[0]}")
                 return True
             code = encode_alu_reg(operator, reg)
             for b in code:
@@ -1748,6 +1895,19 @@ class Assembler:
             if len(ops) != 1:
                 self.error("EQU requires one operand")
                 return True
+            # DRI extension: allow register names as EQU values
+            # e.g., "MR EQU B" means MR is an alias for register B (value 0)
+            op_upper = ops[0].strip().upper()
+            if op_upper in REGS:
+                self.define_symbol(label, REGS[op_upper], ADDR_ABSOLUTE)
+                return True
+            # Also support register pairs
+            if op_upper in REGPAIRS:
+                self.define_symbol(label, REGPAIRS[op_upper], ADDR_ABSOLUTE)
+                return True
+            if op_upper in REGPAIRS_PUSHPOP:
+                self.define_symbol(label, REGPAIRS_PUSHPOP[op_upper], ADDR_ABSOLUTE)
+                return True
             val, seg, ext, name = self.parse_expression(ops[0], allow_undefined=(self.pass_num == 1))
             if ext:
                 self.error("Cannot use external in EQU")
@@ -1763,10 +1923,19 @@ class Assembler:
             if len(ops) != 1:
                 self.error(f"{operator} requires one operand")
                 return True
-            val, seg, ext, name = self.parse_expression(ops[0], allow_undefined=(self.pass_num == 1))
-            if ext:
-                self.error(f"Cannot use external in {operator}")
-                return True
+            # DRI extension: allow register names as values
+            op_upper = ops[0].strip().upper()
+            if op_upper in REGS:
+                val, seg = REGS[op_upper], ADDR_ABSOLUTE
+            elif op_upper in REGPAIRS:
+                val, seg = REGPAIRS[op_upper], ADDR_ABSOLUTE
+            elif op_upper in REGPAIRS_PUSHPOP:
+                val, seg = REGPAIRS_PUSHPOP[op_upper], ADDR_ABSOLUTE
+            else:
+                val, seg, ext, name = self.parse_expression(ops[0], allow_undefined=(self.pass_num == 1))
+                if ext:
+                    self.error(f"Cannot use external in {operator}")
+                    return True
             # SET/DEFL allows redefinition
             sym = self.lookup_symbol(label)
             sym.value = val
@@ -2238,6 +2407,25 @@ class Assembler:
         self.line_num += 1
         self._start_listing_line()
 
+        # DRI extension: split on '!' separator for multi-statement lines
+        # Only do this when not collecting macro or repeat bodies
+        if self.collecting_macro is None and not self.repeat_stack:
+            statements = self.split_on_exclamation(line)
+            if len(statements) > 1:
+                # Process first statement normally (with label if any)
+                self._process_single_statement(statements[0])
+                # Process subsequent statements (they can't have labels from original line)
+                for stmt in statements[1:]:
+                    # Add leading space to prevent treating first word as label
+                    if stmt and not stmt[0].isspace():
+                        stmt = '        ' + stmt.strip()
+                    self._process_single_statement(stmt)
+                return
+        # Fall through to normal processing (single statement or macro/repeat body)
+        self._process_single_statement(line)
+
+    def _process_single_statement(self, line):
+        """Process a single statement (internal helper for ! separator support)."""
         label, operator, operands, comment = self.parse_line(line)
         upper_op = operator.upper() if operator else ''
 
@@ -2750,7 +2938,7 @@ class Assembler:
             return False
 
         # Pass 2: Generate code
-        self.output = RELWriter()
+        self.output = RELWriter(truncate_symbols=self.truncate_symbols)
         self.ext_chains = {}
 
         # Write module header
@@ -2834,6 +3022,8 @@ def main():
                         help='Add include search path (can be used multiple times)')
     parser.add_argument('-g', '--globals', action='store_true',
                         help='Export all symbols as PUBLIC (for debug symbol files)')
+    parser.add_argument('-t', '--truncate', action='store_true',
+                        help='Truncate symbols to 8 chars (M80 compatible)')
 
     args = parser.parse_args()
 
@@ -2858,7 +3048,8 @@ def main():
                 predefined[defn.upper()] = 1
 
     # Create assembler and run
-    asm = Assembler(predefined=predefined, export_all_symbols=args.globals)
+    asm = Assembler(predefined=predefined, export_all_symbols=args.globals,
+                    truncate_symbols=args.truncate)
     if args.include:
         asm.include_paths = args.include
     if args.listing:

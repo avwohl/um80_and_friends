@@ -161,8 +161,9 @@ LINK_END_FILE = 15
 class RELWriter:
     """Write Microsoft REL format relocatable object files."""
 
-    def __init__(self):
+    def __init__(self, truncate_symbols=False):
         self.bits = BitWriter()
+        self.truncate_symbols = truncate_symbols  # If True, truncate to 8 chars like M80
 
     def write_absolute_byte(self, value):
         """Write an absolute byte (0 + 8 bits)."""
@@ -192,13 +193,18 @@ class RELWriter:
     def _write_b_field(self, name):
         """Write B-field: 3-bit length + characters.
 
-        Extended format for symbols > 8 chars:
+        Extended format for symbols > 8 chars (unless truncate_symbols is set):
         - 3-bit length = 0
         - First byte = 0xFF (marker for extended mode)
         - Second byte = actual length (9-255)
         - Then the characters
         """
         name = name.upper()
+
+        if self.truncate_symbols:
+            # M80 compatible: truncate to 8 chars
+            name = name[:8]
+
         length = len(name)
 
         if length <= 8:
