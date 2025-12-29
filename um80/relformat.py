@@ -190,15 +190,31 @@ class RELWriter:
         self.bits.write_word(value)
 
     def _write_b_field(self, name):
-        """Write B-field: 3-bit length + characters."""
-        # Only first 6 chars significant per M80 spec, but we store up to 8
-        name = name.upper()[:8]
+        """Write B-field: 3-bit length + characters.
+
+        Extended format for symbols > 8 chars:
+        - 3-bit length = 0
+        - First byte = 0xFF (marker for extended mode)
+        - Second byte = actual length (9-255)
+        - Then the characters
+        """
+        name = name.upper()
         length = len(name)
-        if length == 8:
-            length = 0  # 0 means 8 characters
-        self.bits.write_bits(length, 3)
-        for ch in name:
-            self.bits.write_byte(ord(ch))
+
+        if length <= 8:
+            # Standard format
+            if length == 8:
+                length = 0  # 0 means 8 characters in standard format
+            self.bits.write_bits(length, 3)
+            for ch in name:
+                self.bits.write_byte(ord(ch))
+        else:
+            # Extended format for symbols > 8 chars
+            self.bits.write_bits(0, 3)  # Length field = 0
+            self.bits.write_byte(0xFF)  # Extended mode marker
+            self.bits.write_byte(length)  # Actual length (up to 255)
+            for ch in name:
+                self.bits.write_byte(ord(ch))
 
     def _write_special(self, control, a_field=None, b_field=None):
         """Write a special LINK item."""
@@ -303,14 +319,36 @@ class RELReader:
         return (addr_type, value)
 
     def _read_b_field(self):
-        """Read B-field, return symbol name (uppercased for L80 compatibility)."""
+        """Read B-field, return symbol name (uppercased for L80 compatibility).
+
+        Extended format detection:
+        - If 3-bit length = 0 and first byte = 0xFF, use extended format
+        - Extended: next byte is actual length (9-255), then characters
+        - Standard: length 0 means 8 chars
+        """
         length = self.bits.read_bits(3)
         if length == 0:
-            length = 8
-        name = ''
-        for _ in range(length):
-            name += chr(self.bits.read_byte())
-        return name.upper()
+            # Could be standard 8-char or extended format
+            first_byte = self.bits.read_byte()
+            if first_byte == 0xFF:
+                # Extended format: next byte is actual length
+                length = self.bits.read_byte()
+                name = ''
+                for _ in range(length):
+                    name += chr(self.bits.read_byte())
+                return name.upper()
+            else:
+                # Standard 8-char format, first_byte is first char
+                name = chr(first_byte)
+                for _ in range(7):
+                    name += chr(self.bits.read_byte())
+                return name.upper()
+        else:
+            # Standard format with explicit length 1-7
+            name = ''
+            for _ in range(length):
+                name += chr(self.bits.read_byte())
+            return name.upper()
 
     def read_item(self):
         """
