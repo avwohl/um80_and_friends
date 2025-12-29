@@ -36,6 +36,7 @@ um80 program.mac                    # Creates program.rel
 um80 -o output.rel program.mac      # Specify output name
 um80 -l listing.prn program.mac     # Generate listing file
 um80 -g program.mac                 # Export all symbols as PUBLIC (for debug)
+um80 -t program.mac                 # Truncate symbols to 8 chars (M80 compat)
 ```
 
 ### Link object files
@@ -223,6 +224,103 @@ These tools aim for compatibility with the original Microsoft tools while runnin
 - File names are case-insensitive for symbols (converted to uppercase)
 - Default origin is 0100h (standard CP/M load address)
 - Output files are binary-compatible with original CP/M tools
+
+## Extended Symbol Names
+
+The original Microsoft REL format limits symbol names to 8 characters. um80/ul80 extend this to support symbols up to 255 characters, which is essential for:
+
+- External references with offsets (e.g., `MEMSEGTBL+2` stays intact instead of truncating to `MEMSEGTB`)
+- Long descriptive symbol names in modern code
+- Compatibility with source code written for other assemblers
+
+Use `-t` or `--truncate` to disable this extension for strict M80 compatibility.
+
+See [docs/EXTENSIONS.md](docs/EXTENSIONS.md) for technical details on the extended REL format.
+
+## DRI Extensions
+
+um80 supports several Digital Research (DRI) assembly syntax extensions commonly found in CP/M and MP/M source code. These extensions are compatible with DRI's ASM, MAC, and RMAC assemblers.
+
+### Multi-Statement Lines (`!` separator)
+
+Multiple instructions can be placed on a single line, separated by `!`:
+
+```asm
+        PUSH H! PUSH D! PUSH B      ; Save registers
+        POP B! POP D! POP H         ; Restore registers
+        MOV A,B! ORA A! RZ          ; Test and return if zero
+```
+
+### LOW and HIGH Operators
+
+Extract the low or high byte of a 16-bit value using function-call syntax:
+
+```asm
+        MVI L,LOW(BUFFER)           ; Load low byte of address
+        MVI H,HIGH(BUFFER)          ; Load high byte of address
+        MVI A,LOW(1234H)            ; A = 34H
+        MVI B,HIGH(1234H)           ; B = 12H
+```
+
+Both `LOW(expr)` and `HIGH(expr)` syntax (with parentheses) and `LOW expr` / `HIGH expr` syntax (with space) are supported.
+
+### Digit Separators in Numbers (`$`)
+
+The `$` character can be used as a visual separator within numeric literals for readability:
+
+```asm
+        MVI A,1111$0000B            ; Binary with separator
+        LXI H,1$0000H               ; Hex: 10000H
+        MVI B,1$000D                ; Decimal: 1000
+```
+
+The `$` characters are ignored during parsing and do not affect the numeric value.
+
+### Register Aliases via EQU
+
+Symbols can be defined with EQU to represent registers, then used in place of register names:
+
+```asm
+; Define register aliases using register names
+UR      EQU     B                   ; UR is an alias for register B
+LR      EQU     C                   ; LR is an alias for register C
+MR      EQU     E                   ; MR is an alias for register E
+KR      EQU     H                   ; KR is an alias for register H (or HL for pairs)
+
+; Use aliases in instructions
+        MVI MR,0                    ; Same as MVI E,0
+        MOV A,UR                    ; Same as MOV A,B
+        INR LR                      ; Same as INR C
+        LXI KR,0                    ; Same as LXI H,0 (H maps to HL for pairs)
+```
+
+For register pair instructions, single register aliases are automatically promoted:
+- B or C → BC
+- D or E → DE
+- H or L → HL
+
+### PUSH A / POP A
+
+DRI assemblers allowed `PUSH A` and `POP A` as synonyms for `PUSH PSW` and `POP PSW`:
+
+```asm
+        PUSH A                      ; Same as PUSH PSW (push A and flags)
+        POP A                       ; Same as POP PSW (pop A and flags)
+```
+
+Register number assignments (when using numeric values):
+| Number | 8-bit Register | 16-bit Pair |
+|--------|----------------|-------------|
+| 0 | B | BC |
+| 1 | C | DE |
+| 2 | D | HL |
+| 3 | E | SP |
+| 4 | H | - |
+| 5 | L | - |
+| 6 | M (memory) | - |
+| 7 | A | - |
+
+For more details on these extensions and compatibility notes, see [docs/EXTENSIONS.md](docs/EXTENSIONS.md).
 
 ## Documentation
 
