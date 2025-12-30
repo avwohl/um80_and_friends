@@ -67,10 +67,13 @@ class Macro:
 class Assembler:
     """MACRO-80 compatible assembler."""
 
-    def __init__(self, predefined=None, export_all_symbols=False, truncate_symbols=False):
+    def __init__(self, predefined=None, export_all_symbols=False, truncate_symbols=False,
+                 strict_jr=False):
         self.symbols = {}  # Symbol table
         self.export_all_symbols = export_all_symbols  # -g flag: export all as PUBLIC
         self.truncate_symbols = truncate_symbols  # -t flag: truncate symbols to 8 chars
+        self.strict_jr = strict_jr  # --strict flag: error on out-of-range JR instead of promoting to JP
+        self.promoted_jr = set()  # Line numbers where JR/DJNZ was promoted to JP
         self.macros = {}   # Macro definitions
         self.segments = {
             'ASEG': Segment('ASEG', ADDR_ABSOLUTE),
@@ -107,11 +110,13 @@ class Assembler:
         self.entry_point = None  # END address if specified
         self.module_name = None
 
+        # Save predefined symbols for pass iterations
+        self.predefined = predefined or {}
+
         # Add predefined symbols from command line
-        if predefined:
-            for name, value in predefined.items():
-                sym = Symbol(name, value, ADDR_ABSOLUTE, defined=True)
-                self.symbols[name] = sym
+        for name, value in self.predefined.items():
+            sym = Symbol(name, value, ADDR_ABSOLUTE, defined=True)
+            self.symbols[name] = sym
 
         # External reference chains
         self.ext_chains = {}  # name -> list of (seg, offset, expr_offset) references
@@ -1702,14 +1707,42 @@ class Assembler:
             self.error("JP requires one or two operands")
             return True
 
-        # JR - relative jumps
+        # JR - relative jumps (with automatic promotion to JP if out of range)
         if operator == 'JR':
+            # Check range only after first iteration (when all symbols are defined)
+            # or on pass 2. On pass 1 iteration 0, forward refs are undefined.
+            can_check_range = (self.pass_num == 2 or
+                               (self.pass_num == 1 and getattr(self, 'pass1_iteration', 0) > 0))
+
             if len(ops) == 1:
                 # Unconditional JR
                 val, seg, ext, name = self.parse_expression(ops[0])
+                # For forward refs on pass 1 iter>0, use prev_symbols if available
+                if can_check_range and val == 0 and self.pass_num == 1:
+                    expr = ops[0].strip().upper()
+                    prev_syms = getattr(self, 'prev_symbols', {})
+                    if expr in prev_syms:
+                        val, seg = prev_syms[expr]
+                # Check if already promoted to JP
+                if self.line_num in self.promoted_jr:
+                    # Emit JP instead (3 bytes)
+                    self.emit_byte(0xC3)
+                    self.emit_word(val, seg)
+                    return True
+                # Calculate offset assuming JR (2 bytes)
                 offset = val - (self.loc + 2)
-                if self.pass_num == 2 and (offset < -128 or offset > 127):
-                    self.error(f"JR offset out of range: {offset}")
+                if can_check_range and (offset < -128 or offset > 127):
+                    if self.strict_jr:
+                        if self.pass_num == 2:
+                            self.error(f"JR offset out of range: {offset}")
+                        self.emit_byte(0x18)
+                        self.emit_byte(offset & 0xFF)
+                    else:
+                        # Promote to JP
+                        self.promoted_jr.add(self.line_num)
+                        self.emit_byte(0xC3)
+                        self.emit_word(val, seg)
+                    return True
                 self.emit_byte(0x18)
                 self.emit_byte(offset & 0xFF)
                 return True
@@ -1719,9 +1752,35 @@ class Assembler:
                     self.error(f"Invalid condition for JR (only NZ,Z,NC,C): {cond}")
                     return True
                 val, seg, ext, name = self.parse_expression(ops[1])
+                # For forward refs on pass 1 iter>0, use prev_symbols if available
+                if can_check_range and val == 0 and self.pass_num == 1:
+                    expr = ops[1].strip().upper()
+                    prev_syms = getattr(self, 'prev_symbols', {})
+                    if expr in prev_syms:
+                        val, seg = prev_syms[expr]
+                # Check if already promoted to JP
+                if self.line_num in self.promoted_jr:
+                    # Emit JP cc instead (3 bytes)
+                    c = Z80_CONDITIONS[cond]  # Same codes for NZ,Z,NC,C
+                    self.emit_byte(0xC2 | (c << 3))
+                    self.emit_word(val, seg)
+                    return True
+                # Calculate offset assuming JR (2 bytes)
                 offset = val - (self.loc + 2)
-                if self.pass_num == 2 and (offset < -128 or offset > 127):
-                    self.error(f"JR offset out of range: {offset}")
+                if can_check_range and (offset < -128 or offset > 127):
+                    if self.strict_jr:
+                        if self.pass_num == 2:
+                            self.error(f"JR offset out of range: {offset}")
+                        c = Z80_JR_CONDITIONS[cond]
+                        self.emit_byte(0x20 | (c << 3))
+                        self.emit_byte(offset & 0xFF)
+                    else:
+                        # Promote to JP
+                        self.promoted_jr.add(self.line_num)
+                        c = Z80_CONDITIONS[cond]
+                        self.emit_byte(0xC2 | (c << 3))
+                        self.emit_word(val, seg)
+                    return True
                 c = Z80_JR_CONDITIONS[cond]
                 self.emit_byte(0x20 | (c << 3))
                 self.emit_byte(offset & 0xFF)
@@ -1729,15 +1788,44 @@ class Assembler:
             self.error("JR requires one or two operands")
             return True
 
-        # DJNZ
+        # DJNZ (with automatic promotion to DEC B + JP NZ if out of range)
         if operator == 'DJNZ':
             if len(ops) != 1:
                 self.error("DJNZ requires one operand")
                 return True
+            # Check range only after first iteration (when all symbols are defined)
+            can_check_range = (self.pass_num == 2 or
+                               (self.pass_num == 1 and getattr(self, 'pass1_iteration', 0) > 0))
+
             val, seg, ext, name = self.parse_expression(ops[0])
+            # For forward refs on pass 1 iter>0, use prev_symbols if available
+            if can_check_range and val == 0 and self.pass_num == 1:
+                expr = ops[0].strip().upper()
+                prev_syms = getattr(self, 'prev_symbols', {})
+                if expr in prev_syms:
+                    val, seg = prev_syms[expr]
+            # Check if already promoted
+            if self.line_num in self.promoted_jr:
+                # Emit DEC B + JP NZ instead (4 bytes)
+                self.emit_byte(0x05)  # DEC B
+                self.emit_byte(0xC2)  # JP NZ
+                self.emit_word(val, seg)
+                return True
+            # Calculate offset assuming DJNZ (2 bytes)
             offset = val - (self.loc + 2)
-            if self.pass_num == 2 and (offset < -128 or offset > 127):
-                self.error(f"DJNZ offset out of range: {offset}")
+            if can_check_range and (offset < -128 or offset > 127):
+                if self.strict_jr:
+                    if self.pass_num == 2:
+                        self.error(f"DJNZ offset out of range: {offset}")
+                    self.emit_byte(0x10)
+                    self.emit_byte(offset & 0xFF)
+                else:
+                    # Promote to DEC B + JP NZ
+                    self.promoted_jr.add(self.line_num)
+                    self.emit_byte(0x05)  # DEC B
+                    self.emit_byte(0xC2)  # JP NZ
+                    self.emit_word(val, seg)
+                return True
             self.emit_byte(0x10)
             self.emit_byte(offset & 0xFF)
             return True
@@ -2931,8 +3019,57 @@ class Assembler:
         lines = text.split('\n')
         self.source_lines = lines
 
-        # Pass 1: Build symbol table
-        self.assemble_pass(lines, 1)
+        # Pass 1: Build symbol table (iterate until JR/DJNZ promotions stabilize)
+        # We need multiple iterations because:
+        # - Iteration 0: Build symbol table; can't check JR range (forward refs undefined)
+        # - Iteration 1+: Use symbol table from previous iteration for range checking
+        # - Keep iterating until no new promotions (sizes stabilize)
+        max_iterations = 10  # Prevent infinite loops
+        prev_symbols = {}  # Symbol table from previous iteration for forward refs
+        for iteration in range(max_iterations):
+            self.pass1_iteration = iteration  # Track iteration for JR range checking
+            self.prev_symbols = prev_symbols  # Make available for JR range checking
+            # Reset state for pass 1
+            for seg in self.segments.values():
+                seg.loc = 0
+                seg.org = 0
+                seg.org_set = False
+            for com in self.common_blocks.values():
+                com.loc = 0
+            self.current_seg = 'CSEG'
+            self.current_common = None
+            self.errors = []  # Clear errors between iterations
+            # Clear symbol definitions (but keep promoted_jr)
+            # We need to rebuild symbol table each time
+            # since addresses change when JR->JP promotion happens
+            self.symbols = {}
+            for name, value in self.predefined.items():
+                sym = Symbol(name, value, ADDR_ABSOLUTE, defined=True)
+                self.symbols[name] = sym
+
+            prev_promotions = len(self.promoted_jr)
+            self.assemble_pass(lines, 1)
+
+            if self.errors:
+                return False
+
+            # Save symbol table for next iteration
+            prev_symbols = {name: (sym.value, sym.seg_type) for name, sym in self.symbols.items() if sym.defined}
+
+            # Always run at least 2 iterations:
+            # - Iteration 0 builds symbol table (can't check range yet)
+            # - Iteration 1 checks range with symbol values from iteration 0
+            # After that, check if promotions have stabilized
+            if iteration >= 1 and len(self.promoted_jr) == prev_promotions:
+                break  # Stable - no new promotions
+
+            # Warn about promotions on last iteration
+            if iteration == max_iterations - 1:
+                self.warnings.append(f"Warning: JR/DJNZ promotion did not stabilize after {max_iterations} iterations")
+
+        # Report promotions
+        if self.promoted_jr and not self.strict_jr:
+            self.warnings.append(f"Note: {len(self.promoted_jr)} JR/DJNZ instruction(s) promoted to JP due to range")
 
         if self.errors:
             return False
@@ -3024,6 +3161,8 @@ def main():
                         help='Export all symbols as PUBLIC (for debug symbol files)')
     parser.add_argument('-t', '--truncate', action='store_true',
                         help='Truncate symbols to 8 chars (M80 compatible)')
+    parser.add_argument('-s', '--strict', action='store_true',
+                        help='Strict mode: error on out-of-range JR/DJNZ instead of promoting to JP')
 
     args = parser.parse_args()
 
@@ -3049,7 +3188,7 @@ def main():
 
     # Create assembler and run
     asm = Assembler(predefined=predefined, export_all_symbols=args.globals,
-                    truncate_symbols=args.truncate)
+                    truncate_symbols=args.truncate, strict_jr=args.strict)
     if args.include:
         asm.include_paths = args.include
     if args.listing:
