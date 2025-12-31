@@ -1971,8 +1971,10 @@ class Assembler:
                 seg_obj.org = val
                 seg_obj.org_set = True
             if self.pass_num == 2:
-                # Use the expression's segment type (absolute for absolute ORG values)
-                self.output.write_set_location(expr_seg_type, val)
+                # ORG sets the location counter within the current segment.
+                # For relocatable segments (CSEG/DSEG), the segment type doesn't change.
+                # Only use ASEG if we're actually in ASEG.
+                self.output.write_set_location(self.seg_type, val)
             return True
 
         # EQU - equate symbol to value
