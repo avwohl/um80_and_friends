@@ -1965,9 +1965,12 @@ class Assembler:
                 self.error("Cannot use external in ORG")
                 return True
             self.loc = val
-            # Track first ORG as segment origin
+            # Track first ORG as segment origin, but ONLY for ASEG (absolute segment).
+            # For relocatable segments (CSEG/DSEG), ORG just sets the location counter
+            # without affecting symbol relocation. This handles "org $-1" patterns
+            # correctly - they just back up the location counter, not set segment base.
             seg_obj = self.segments[self.current_seg]
-            if not seg_obj.org_set:
+            if not seg_obj.org_set and self.current_seg == 'ASEG':
                 seg_obj.org = val
                 seg_obj.org_set = True
             if self.pass_num == 2:
