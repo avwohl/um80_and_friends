@@ -2,6 +2,13 @@
 
 All notable changes to the um80 toolchain are documented here.
 
+## [0.3.24] - 2025-12-31
+
+### Fixed
+- um80 assembler: Fixed ORG tracking to only apply to ASEG (absolute segment).
+  ORG in CSEG/DSEG now correctly just sets the location counter without affecting
+  segment origin. Fixes `org $-1` patterns in relocatable code that broke in 0.3.5.
+
 ## [0.3.20] - 2025-12-28
 
 ### Changed
