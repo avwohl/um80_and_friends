@@ -186,11 +186,20 @@ class Linker:
             elif item_type == 'SET_LOC':
                 a_field = item[1]
                 addr_type, value = a_field
-                # If advancing location counter forward (DS directive), emit zeros
-                if self.emit_ds_zeros and addr_type == current_seg and value > current_loc:
-                    while current_loc < value:
-                        write_byte_to_seg(0)
-                        current_loc += 1
+                # If emit_ds_zeros is enabled, fill gaps with zeros
+                # This handles DS directives which advance without emitting bytes
+                if self.emit_ds_zeros and value > 0:
+                    # Switch to target segment first to write to correct buffer
+                    current_seg = addr_type
+                    # Get current buffer size for this segment
+                    buf = get_seg_buffer()
+                    fill_from = len(buf)
+                    if value > fill_from:
+                        # Fill zeros from current buffer end to new position
+                        current_loc = fill_from
+                        while current_loc < value:
+                            write_byte_to_seg(0)
+                            current_loc += 1
                 current_loc = value
                 current_seg = addr_type
                 # Track the first absolute location as code_start
@@ -389,11 +398,20 @@ class Linker:
             elif item_type == 'SET_LOC':
                 a_field = item[1]
                 addr_type, value = a_field
-                # If advancing location counter forward (DS directive), emit zeros
-                if self.emit_ds_zeros and addr_type == current_seg and value > current_loc:
-                    while current_loc < value:
-                        write_byte_to_seg(0)
-                        current_loc += 1
+                # If emit_ds_zeros is enabled, fill gaps with zeros
+                # This handles DS directives which advance without emitting bytes
+                if self.emit_ds_zeros and value > 0:
+                    # Switch to target segment first to write to correct buffer
+                    current_seg = addr_type
+                    # Get current buffer size for this segment
+                    buf = get_seg_buffer()
+                    fill_from = len(buf)
+                    if value > fill_from:
+                        # Temporarily set current_loc to fill position
+                        current_loc = fill_from
+                        while current_loc < value:
+                            write_byte_to_seg(0)
+                            current_loc += 1
                 current_loc = value
                 current_seg = addr_type
                 # Track the first absolute location as code_start

@@ -925,8 +925,9 @@ class Assembler:
             if rp is None:
                 self.error(f"Invalid register pair for LXI: {ops[0]}")
                 return True
-            self.emit_byte(LXI_BASE | (REGPAIRS[rp] << 4))
+            # Parse expression BEFORE emit so $ evaluates to instruction start
             val, seg, ext, name = self.parse_expression(ops[1])
+            self.emit_byte(LXI_BASE | (REGPAIRS[rp] << 4))
             if ext:
                 self.emit_external_ref(name, val)
             else:
@@ -1041,8 +1042,9 @@ class Assembler:
             if len(ops) != 1:
                 self.error("JMP requires one operand")
                 return True
-            self.emit_byte(JMP)
+            # Parse expression BEFORE emit so $ evaluates to instruction start
             val, seg, ext, name = self.parse_expression(ops[0])
+            self.emit_byte(JMP)
             if ext:
                 self.emit_external_ref(name, val)
             else:
@@ -1055,8 +1057,9 @@ class Assembler:
                 self.error(f"{operator} requires one operand")
                 return True
             cond = get_cond_from_mnemonic(operator)
-            self.emit_byte(COND_JMP_BASE | (CONDITIONS[cond] << 3))
+            # Parse expression BEFORE emit so $ evaluates to instruction start
             val, seg, ext, name = self.parse_expression(ops[0])
+            self.emit_byte(COND_JMP_BASE | (CONDITIONS[cond] << 3))
             if ext:
                 self.emit_external_ref(name, val)
             else:
@@ -1068,8 +1071,9 @@ class Assembler:
             if len(ops) != 1:
                 self.error("CALL requires one operand")
                 return True
-            self.emit_byte(CALL)
+            # Parse expression BEFORE emit so $ evaluates to instruction start
             val, seg, ext, name = self.parse_expression(ops[0])
+            self.emit_byte(CALL)
             if ext:
                 self.emit_external_ref(name, val)
             else:
@@ -1082,8 +1086,9 @@ class Assembler:
                 self.error(f"{operator} requires one operand")
                 return True
             cond = get_cond_from_mnemonic(operator)
-            self.emit_byte(COND_CALL_BASE | (CONDITIONS[cond] << 3))
+            # Parse expression BEFORE emit so $ evaluates to instruction start
             val, seg, ext, name = self.parse_expression(ops[0])
+            self.emit_byte(COND_CALL_BASE | (CONDITIONS[cond] << 3))
             if ext:
                 self.emit_external_ref(name, val)
             else:
@@ -1109,6 +1114,8 @@ class Assembler:
             if len(ops) != 1:
                 self.error(f"{operator} requires one operand")
                 return True
+            # Parse expression BEFORE emit so $ evaluates to instruction start
+            val, seg, ext, name = self.parse_expression(ops[0])
             if operator == 'LDA':
                 self.emit_byte(LDA)
             elif operator == 'STA':
@@ -1117,7 +1124,6 @@ class Assembler:
                 self.emit_byte(LHLD)
             else:
                 self.emit_byte(SHLD)
-            val, seg, ext, name = self.parse_expression(ops[0])
             if ext:
                 self.emit_external_ref(name, val)
             else:
@@ -2109,15 +2115,27 @@ class Assembler:
 
         # CSEG/DSEG/ASEG - segment selection
         if operator == 'CSEG':
-            self.current_seg = 'CSEG'
+            if self.current_seg != 'CSEG':
+                self.current_seg = 'CSEG'
+                # Emit SET_LOC so linker knows to switch segments
+                if self.pass_num == 2:
+                    self.output.write_set_location(self.seg_type, self.loc)
             self.current_common = None
             return True
         if operator == 'DSEG':
-            self.current_seg = 'DSEG'
+            if self.current_seg != 'DSEG':
+                self.current_seg = 'DSEG'
+                # Emit SET_LOC so linker knows to switch segments
+                if self.pass_num == 2:
+                    self.output.write_set_location(self.seg_type, self.loc)
             self.current_common = None
             return True
         if operator == 'ASEG':
-            self.current_seg = 'ASEG'
+            if self.current_seg != 'ASEG':
+                self.current_seg = 'ASEG'
+                # Emit SET_LOC so linker knows to switch segments
+                if self.pass_num == 2:
+                    self.output.write_set_location(self.seg_type, self.loc)
             self.current_common = None
             return True
 
