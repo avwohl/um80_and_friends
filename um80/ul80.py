@@ -74,6 +74,11 @@ class Linker:
         self.entry_point = None  # (value, seg_type) or None
 
         self.errors = []
+
+        # When True, emit zeros for DS (reserve space) directives instead of
+        # treating them as BSS. Required for PRL/SPR format where all segments
+        # must be contiguous in the output. Default is True for compatibility.
+        self.emit_ds_zeros = True
         self.warnings = []
 
     def error(self, msg):
@@ -181,6 +186,11 @@ class Linker:
             elif item_type == 'SET_LOC':
                 a_field = item[1]
                 addr_type, value = a_field
+                # If advancing location counter forward (DS directive), emit zeros
+                if self.emit_ds_zeros and addr_type == current_seg and value > current_loc:
+                    while current_loc < value:
+                        write_byte_to_seg(0)
+                        current_loc += 1
                 current_loc = value
                 current_seg = addr_type
                 # Track the first absolute location as code_start
@@ -379,6 +389,11 @@ class Linker:
             elif item_type == 'SET_LOC':
                 a_field = item[1]
                 addr_type, value = a_field
+                # If advancing location counter forward (DS directive), emit zeros
+                if self.emit_ds_zeros and addr_type == current_seg and value > current_loc:
+                    while current_loc < value:
+                        write_byte_to_seg(0)
+                        current_loc += 1
                 current_loc = value
                 current_seg = addr_type
                 # Track the first absolute location as code_start
@@ -828,6 +843,8 @@ def main():
     parser.add_argument('-o', '--output', help='Output file (default: first input with .com)')
     parser.add_argument('-x', '--hex', action='store_true', help='Output Intel HEX format')
     parser.add_argument('--prl', action='store_true', help='Output MP/M .PRL (Page Relocatable) format')
+    parser.add_argument('--no-ds-zeros', action='store_true',
+                       help='Do not emit zeros for DS (reserve space) directives (default: emit zeros)')
     parser.add_argument('-s', '--sym', action='store_true', help='Generate .SYM symbol file')
     parser.add_argument('-S', '--sym-file', metavar='FILE', help='Generate .SYM symbol file with specified name')
     parser.add_argument('-p', '--origin', type=lambda x: int(x, 16) if not x.startswith(('0x', '0X', '0o', '0O', '0b', '0B')) else int(x, 0), default=None,
@@ -840,6 +857,10 @@ def main():
     if args.origin is None:
         args.origin = 0 if args.prl else 0x100
     linker.code_base = args.origin
+
+    # Emit zeros for DS directives (default: True)
+    if args.no_ds_zeros:
+        linker.emit_ds_zeros = False
 
     # Separate .rel and .lib files
     rel_files = []
