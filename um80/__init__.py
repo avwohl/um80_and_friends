@@ -12,4 +12,9 @@ development tools from Microsoft:
 - ux80: 8080 to Z80 assembly translator
 """
 
-__version__ = "0.3.24"
+from importlib.metadata import version, PackageNotFoundError
+
+try:
+    __version__ = version("um80")
+except PackageNotFoundError:
+    __version__ = "unknown"
