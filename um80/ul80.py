@@ -686,8 +686,8 @@ class Linker:
                             self.output[abs_offset] = target_addr & 0xFF
                             self.output[abs_offset + 1] = (target_addr >> 8) & 0xFF
 
-                            # For PRL: external refs to CSEG symbols need relocation
-                            if target_seg_type == ADDR_PROGRAM_REL:
+                            # Track for PRL relocation if target is relocatable
+                            if target_seg_type in (ADDR_PROGRAM_REL, ADDR_DATA_REL, ADDR_COMMON_REL):
                                 self.external_relocations.append(abs_offset)
 
                             if value == 0:
