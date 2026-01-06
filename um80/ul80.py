@@ -75,6 +75,11 @@ class Linker:
 
         self.errors = []
 
+        # External relocations: output offsets (low byte position) that need
+        # relocation due to external symbol resolution to CSEG symbols.
+        # Populated by resolve_externals(), used by save_prl().
+        self.external_relocations = []
+
         # When True, emit zeros for DS (reserve space) directives instead of
         # treating them as BSS. Required for PRL/SPR format where all segments
         # must be contiguous in the output. Default is True for compatibility.
@@ -681,6 +686,10 @@ class Linker:
                             self.output[abs_offset] = target_addr & 0xFF
                             self.output[abs_offset + 1] = (target_addr >> 8) & 0xFF
 
+                            # For PRL: external refs to CSEG symbols need relocation
+                            if target_seg_type == ADDR_PROGRAM_REL:
+                                self.external_relocations.append(abs_offset)
+
                             if value == 0:
                                 # End of chain
                                 break
@@ -800,6 +809,14 @@ class Linker:
                     byte_idx = high_byte_offset // 8
                     bit_idx = 7 - (high_byte_offset % 8)
                     bitmap[byte_idx] |= (1 << bit_idx)
+
+        # Also include external relocations (resolved refs to CSEG symbols)
+        for abs_offset in self.external_relocations:
+            high_byte_offset = abs_offset + 1
+            if 0 <= high_byte_offset < code_length:
+                byte_idx = high_byte_offset // 8
+                bit_idx = 7 - (high_byte_offset % 8)
+                bitmap[byte_idx] |= (1 << bit_idx)
 
         # Build header (256 bytes)
         # MP/M II PRL format (verified from PRLCM.PLM):
