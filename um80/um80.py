@@ -3020,10 +3020,45 @@ class Assembler:
                         f.write(f"       {cont_addr:04X}  {bytes_str}\n")
                         cont_addr += len(chunk)
 
-    def assemble(self, source_file):
-        """Assemble a source file."""
+    def assemble(self, source_file, pre_items=None):
+        """Assemble a source file.
+
+        Args:
+            source_file: Path to the main source file
+            pre_items: List of (type, value) tuples where type is 'e' for inline code
+                      or 'pre' for pre-include file. Processed in order before main source.
+        """
         # Set base path for include file resolution
         self.base_path = os.path.dirname(os.path.abspath(source_file))
+
+        # Process pre-items (inline code and pre-include files)
+        pre_lines = []
+        if pre_items:
+            for item_type, item_value in pre_items:
+                if item_type == 'e':
+                    # Inline code - split on ! for multiple statements (DRI notation)
+                    statements = item_value.split('!')
+                    pre_lines.extend(statements)
+                elif item_type == 'pre':
+                    # Pre-include file - read and add its lines
+                    filepath = self.find_include_file(item_value)
+                    if filepath is None:
+                        self.error(f"Pre-include file not found: {item_value}")
+                        return False
+                    try:
+                        with open(filepath, 'rb') as f:
+                            data = f.read()
+                        # Handle CP/M format
+                        eof_pos = data.find(0x1A)
+                        if eof_pos >= 0:
+                            data = data[:eof_pos]
+                        text = data.decode('ascii', errors='replace')
+                        text = text.replace('\r\n', '\n').replace('\r', '\n')
+                        text = text.rstrip('\x00')
+                        pre_lines.extend(text.split('\n'))
+                    except IOError as e:
+                        self.error(f"Cannot read pre-include file {filepath}: {e}")
+                        return False
 
         # Read source - handle CP/M format (CR/LF, ^Z EOF, 128-byte records)
         with open(source_file, 'rb') as f:
@@ -3039,7 +3074,7 @@ class Assembler:
         text = text.replace('\r\n', '\n').replace('\r', '\n')  # Normalize line endings
         text = text.rstrip('\x00')  # Strip padding nulls
 
-        lines = text.split('\n')
+        lines = pre_lines + text.split('\n')
         self.source_lines = lines
 
         # Pass 1: Build symbol table (iterate until JR/DJNZ promotions stabilize)
@@ -3170,6 +3205,16 @@ class Assembler:
         return True
 
 
+class PreAction(argparse.Action):
+    """Custom action to collect -e and --pre in order."""
+    def __call__(self, parser, namespace, values, option_string=None):
+        if not hasattr(namespace, 'pre_items') or namespace.pre_items is None:
+            namespace.pre_items = []
+        # Tag with 'e' for execute or 'pre' for pre-include
+        tag = 'e' if option_string in ('-e', '--execute') else 'pre'
+        namespace.pre_items.append((tag, values))
+
+
 def main():
     parser = argparse.ArgumentParser(description='um80 - MACRO-80 compatible assembler')
     parser.add_argument('-v', '--version', action='version', version=f'%(prog)s {__version__}')
@@ -3180,6 +3225,10 @@ def main():
                         help='Define symbol (can be used multiple times)')
     parser.add_argument('-I', '--include', action='append', metavar='PATH',
                         help='Add include search path (can be used multiple times)')
+    parser.add_argument('-e', '--execute', action=PreAction, metavar='CODE',
+                        help='Execute assembly code before source (can be repeated, use ! for multiple statements)')
+    parser.add_argument('--pre', action=PreAction, metavar='FILE',
+                        help='Include file before source (can be repeated)')
     parser.add_argument('-g', '--globals', action='store_true',
                         help='Export all symbols as PUBLIC (for debug symbol files)')
     parser.add_argument('-t', '--truncate', action='store_true',
@@ -3216,7 +3265,8 @@ def main():
         asm.include_paths = args.include
     if args.listing:
         asm.generate_listing = True
-    success = asm.assemble(args.input)
+    pre_items = getattr(args, 'pre_items', None) or []
+    success = asm.assemble(args.input, pre_items=pre_items)
 
     # Report errors and warnings
     for err in asm.errors:
