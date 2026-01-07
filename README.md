@@ -37,6 +37,8 @@ um80 -o output.rel program.mac      # Specify output name
 um80 -l listing.prn program.mac     # Generate listing file
 um80 -g program.mac                 # Export all symbols as PUBLIC (for debug)
 um80 -t program.mac                 # Truncate symbols to 8 chars (M80 compat)
+um80 -e ".z80" program.mac          # Execute code before source (set Z80 mode)
+um80 --pre macros.mac program.mac   # Include file before source
 ```
 
 ### Link object files
@@ -98,6 +100,29 @@ Microsoft MACRO-80 compatible assembler supporting:
 - PUBLIC/EXTRN for module linking
 - Include files
 - All standard directives (ORG, EQU, SET, DB, DW, DS, etc.)
+
+#### Command-Line Pre-Execution (`-e` and `--pre`)
+
+Code can be injected before the main source file using `-e` (inline code) and `--pre` (include file). Both options can be repeated and are processed in the order specified:
+
+```bash
+# Set Z80 mode from command line
+um80 -e ".z80" program.mac
+
+# Multiple statements using ! separator (DRI notation)
+um80 -e ".z80!DEBUG equ 1!BUFSIZE equ 256" program.mac
+
+# Include a file of macros before the main source
+um80 --pre stdmacros.mac program.mac
+
+# Combine both, processed left to right
+um80 -e ".z80" --pre macros.mac -e "MYVAL equ 42" program.mac
+```
+
+This is useful for:
+- Switching CPU mode (`.z80` or `.8080`) without modifying source files
+- Defining conditional assembly symbols (`DEBUG equ 1`)
+- Including project-wide macro libraries
 
 See `man um80` for full documentation, or refer to the original [Microsoft M80 Manual](docs/external/m80.pdf).
 
