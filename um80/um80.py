@@ -584,8 +584,13 @@ class Assembler:
                 if ch == string_char:
                     in_string = False
             elif ch in "'\"":
-                in_string = True
-                string_char = ch
+                # Don't treat ' as string start if preceded by alphanumeric
+                # (handles Z80 AF' register)
+                if ch == "'" and i > 0 and line[i-1].isalnum():
+                    pass  # Not a string start
+                else:
+                    in_string = True
+                    string_char = ch
             elif ch == ';':
                 comment = line[i+1:]
                 line = line[:i]
@@ -651,15 +656,20 @@ class Assembler:
         in_string = False
         string_char = None
 
-        for ch in operands:
+        for i, ch in enumerate(operands):
             if in_string:
                 current += ch
                 if ch == string_char:
                     in_string = False
             elif ch in "'\"":
-                in_string = True
-                string_char = ch
-                current += ch
+                # Don't treat ' as string start if preceded by alphanumeric
+                # (handles Z80 AF' register)
+                if ch == "'" and current and current[-1].isalnum():
+                    current += ch  # Just add it, not a string start
+                else:
+                    in_string = True
+                    string_char = ch
+                    current += ch
             elif ch == '(':
                 paren_depth += 1
                 current += ch
@@ -3097,6 +3107,7 @@ class Assembler:
             self.current_seg = 'CSEG'
             self.current_common = None
             self.errors = []  # Clear errors between iterations
+            self.local_counter = 0  # Reset LOCAL symbol counter for consistent naming
             # Clear symbol definitions (but keep promoted_jr)
             # We need to rebuild symbol table each time
             # since addresses change when JR->JP promotion happens
@@ -3133,6 +3144,7 @@ class Assembler:
             return False
 
         # Pass 2: Generate code
+        self.local_counter = 0  # Reset LOCAL symbol counter for pass 2
         self.output = RELWriter(truncate_symbols=self.truncate_symbols)
         self.ext_chains = {}
 
