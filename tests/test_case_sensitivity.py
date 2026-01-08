@@ -27,7 +27,7 @@ class TestRELFormatCaseSensitivity:
         item = reader.read_item()
 
         assert item[0] == 'ENTRY_SYMBOL'
-        assert item[1] == 'LOWERCAS'  # Truncated to 8 chars, uppercased
+        assert item[1] == 'LOWERCASE'  # Uppercased (no truncation by default)
 
     def test_mixed_case_symbols_normalized(self):
         """Verify mixed case symbols are normalized to uppercase."""
@@ -40,7 +40,7 @@ class TestRELFormatCaseSensitivity:
         item = reader.read_item()
 
         assert item[0] == 'ENTRY_SYMBOL'
-        assert item[1] == 'MIXEDCAS'
+        assert item[1] == 'MIXEDCASE'
 
     def test_already_uppercase_unchanged(self):
         """Verify uppercase symbols pass through correctly."""
