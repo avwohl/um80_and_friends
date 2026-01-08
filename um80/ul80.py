@@ -614,31 +614,53 @@ class Linker:
         # Determine output base address (lowest module address)
         self.output_base = min(m.code_base for m in self.modules)
 
-        # Calculate total output size - use actual buffer length which includes
-        # both CSEG and initialized DSEG data (DB/DW in DSEG)
+        # Calculate total output size - must cover both CSEG and DSEG regions
+        # CSEG and DSEG have separate base addresses and must be placed correctly
         total_size = 0
         for module in self.modules:
-            # Actual bytes to output = full code buffer minus code_start offset
-            actual_bytes = len(module.code) - module.code_start
-            end_addr = module.code_base + actual_bytes - self.output_base
-            if end_addr > total_size:
-                total_size = end_addr
+            # CSEG end address
+            cseg_bytes = module.code_size if module.code_size else len(module.code)
+            cseg_end = module.code_base + cseg_bytes - self.output_base
+            if cseg_end > total_size:
+                total_size = cseg_end
+
+            # DSEG end address (initialized data from code buffer after code_size)
+            if module.data_size > 0:
+                # Initialized DSEG = buffer bytes after code_size
+                buffer_len = len(module.code) - module.code_start
+                initialized_dseg = buffer_len - (module.code_size if module.code_size else buffer_len)
+                if initialized_dseg > 0:
+                    dseg_end = module.data_base + initialized_dseg - self.output_base
+                    if dseg_end > total_size:
+                        total_size = dseg_end
 
         self.output = bytearray(total_size)
 
         # Copy and relocate each module
         for module in self.modules:
-            # Copy all bytes in the code buffer (CSEG + initialized DSEG)
-            actual_bytes = len(module.code) - module.code_start
-            dest_offset = module.code_base - self.output_base
-
-            # Copy code bytes from the code_start position in the source buffer
-            # (accounts for absolute ORG where code is stored at offset > 0)
             src_start = module.code_start
-            for i in range(actual_bytes):
+
+            # Determine CSEG size (declared or inferred from buffer)
+            cseg_size = module.code_size if module.code_size else len(module.code) - src_start
+
+            # Copy CSEG bytes to code_base
+            cseg_dest = module.code_base - self.output_base
+            for i in range(cseg_size):
                 src_idx = src_start + i
-                if src_idx < len(module.code) and dest_offset + i < len(self.output):
-                    self.output[dest_offset + i] = module.code[src_idx]
+                if src_idx < len(module.code) and cseg_dest + i < len(self.output):
+                    self.output[cseg_dest + i] = module.code[src_idx]
+
+            # Copy initialized DSEG bytes to data_base (separate from CSEG)
+            if module.data_size > 0:
+                buffer_len = len(module.code) - src_start
+                initialized_dseg = buffer_len - cseg_size
+                if initialized_dseg > 0:
+                    dseg_src = src_start + cseg_size
+                    dseg_dest = module.data_base - self.output_base
+                    for i in range(initialized_dseg):
+                        src_idx = dseg_src + i
+                        if src_idx < len(module.code) and dseg_dest + i < len(self.output):
+                            self.output[dseg_dest + i] = module.code[src_idx]
 
         # Fix up external references
         for mod_idx, module in enumerate(self.modules):
