@@ -34,7 +34,8 @@ class AssemblerError(Exception):
 class Symbol:
     """Symbol table entry."""
     def __init__(self, name, value=0, seg_type=ADDR_ABSOLUTE,
-                 defined=False, public=False, external=False):
+                 defined=False, public=False, external=False,
+                 ext_alias_base=None, ext_alias_offset=0):
         self.name = name.upper()
         self.value = value
         self.seg_type = seg_type  # ADDR_ABSOLUTE, ADDR_PROGRAM_REL, etc.
@@ -42,6 +43,9 @@ class Symbol:
         self.public = public
         self.external = external
         self.references = []  # Line numbers where referenced
+        # For symbols defined as EQU external+offset
+        self.ext_alias_base = ext_alias_base  # Name of external symbol, or None
+        self.ext_alias_offset = ext_alias_offset  # Offset to add
 
 
 class Segment:
@@ -554,6 +558,9 @@ class Assembler:
             sym = self.lookup_symbol(expr)
             if sym.external:
                 return (0, ADDR_ABSOLUTE, True, sym.name)
+            # Check if symbol is an alias to external+offset
+            if sym.ext_alias_base:
+                return (sym.ext_alias_offset, ADDR_ABSOLUTE, True, sym.ext_alias_base)
             if not sym.defined and not allow_undefined:
                 if self.pass_num == 2:
                     self.error(f"Undefined symbol '{expr}'")
@@ -2017,9 +2024,20 @@ class Assembler:
             if op_upper in REGPAIRS_PUSHPOP:
                 self.define_symbol(label, REGPAIRS_PUSHPOP[op_upper], ADDR_ABSOLUTE)
                 return True
-            val, seg, ext, name = self.parse_expression(ops[0], allow_undefined=(self.pass_num == 1))
+            val, seg, ext, ext_name = self.parse_expression(ops[0], allow_undefined=(self.pass_num == 1))
             if ext:
-                self.error("Cannot use external in EQU")
+                # External alias: SYMBOL EQU EXTERNAL+offset
+                # Track as an alias symbol that will be resolved at link time
+                sym_name = label.upper()
+                if sym_name not in self.symbols:
+                    sym = Symbol(sym_name, val, ADDR_ABSOLUTE, defined=True,
+                                 ext_alias_base=ext_name, ext_alias_offset=val)
+                    self.symbols[sym_name] = sym
+                else:
+                    sym = self.symbols[sym_name]
+                    sym.defined = True
+                    sym.ext_alias_base = ext_name
+                    sym.ext_alias_offset = val
                 return True
             self.define_symbol(label, val, seg)
             return True
@@ -3167,12 +3185,23 @@ class Assembler:
         # For relocatable symbols, subtract segment ORG so linker can add its base
         for sym in self.symbols.values():
             if (sym.public or self.export_all_symbols) and sym.defined:
-                value = sym.value
-                if sym.seg_type == ADDR_PROGRAM_REL and self.segments['CSEG'].org_set:
-                    value -= self.segments['CSEG'].org
-                elif sym.seg_type == ADDR_DATA_REL and self.segments['DSEG'].org_set:
-                    value -= self.segments['DSEG'].org
-                self.output.write_define_entry_point(sym.seg_type, value, sym.name)
+                # Check if this is an external alias (EQU external+offset)
+                if sym.ext_alias_base:
+                    # Emit aliased entry point with special name format:
+                    # "NEWNAME=EXTERNAL" or "NEWNAME=EXTERNAL+N"
+                    if sym.ext_alias_offset != 0:
+                        alias_name = f"{sym.name}={sym.ext_alias_base}+{sym.ext_alias_offset}"
+                    else:
+                        alias_name = f"{sym.name}={sym.ext_alias_base}"
+                    # Use ADDR_ABSOLUTE with value 0 since actual value is determined at link time
+                    self.output.write_define_entry_point(ADDR_ABSOLUTE, 0, alias_name)
+                else:
+                    value = sym.value
+                    if sym.seg_type == ADDR_PROGRAM_REL and self.segments['CSEG'].org_set:
+                        value -= self.segments['CSEG'].org
+                    elif sym.seg_type == ADDR_DATA_REL and self.segments['DSEG'].org_set:
+                        value -= self.segments['DSEG'].org
+                    self.output.write_define_entry_point(sym.seg_type, value, sym.name)
 
         # Write external chains
         # The chain head is the LAST reference; linker walks backward through chain

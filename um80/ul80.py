@@ -37,6 +37,10 @@ class Module:
         # Symbols defined in this module
         self.publics = {}  # name -> (value, seg_type)
 
+        # Aliased entry points: SYMBOL EQU EXTERNAL+offset made PUBLIC
+        # These are resolved after all externals are resolved
+        self.aliased_publics = {}  # new_name -> (base_external, offset)
+
         # External references (chains to be fixed up)
         self.externals = {}  # name -> list of (offset_in_module, seg_type)
 
@@ -180,7 +184,23 @@ class Linker:
                 # PUBLIC symbol definition
                 a_field, name = item[1], item[2]
                 addr_type, value = a_field
-                module.publics[name] = (value, addr_type)
+                # Check for aliased entry (format: "NEWNAME=EXTERNAL" or "NEWNAME=EXTERNAL+N")
+                if '=' in name:
+                    new_name, alias_spec = name.split('=', 1)
+                    # Parse the alias spec: "EXTERNAL" or "EXTERNAL+N"
+                    if '+' in alias_spec:
+                        base_ext, offset_str = alias_spec.rsplit('+', 1)
+                        try:
+                            offset = int(offset_str)
+                        except ValueError:
+                            offset = 0
+                            base_ext = alias_spec
+                    else:
+                        base_ext = alias_spec
+                        offset = 0
+                    module.aliased_publics[new_name] = (base_ext, offset)
+                else:
+                    module.publics[name] = (value, addr_type)
 
             elif item_type == 'CHAIN_EXTERNAL':
                 # External reference chain - store segment-relative for now
@@ -392,7 +412,23 @@ class Linker:
                 # PUBLIC symbol definition
                 a_field, sym_name = item[1], item[2]
                 addr_type, value = a_field
-                module.publics[sym_name] = (value, addr_type)
+                # Check for aliased entry (format: "NEWNAME=EXTERNAL" or "NEWNAME=EXTERNAL+N")
+                if '=' in sym_name:
+                    new_name, alias_spec = sym_name.split('=', 1)
+                    # Parse the alias spec: "EXTERNAL" or "EXTERNAL+N"
+                    if '+' in alias_spec:
+                        base_ext, offset_str = alias_spec.rsplit('+', 1)
+                        try:
+                            offset = int(offset_str)
+                        except ValueError:
+                            offset = 0
+                            base_ext = alias_spec
+                    else:
+                        base_ext = alias_spec
+                        offset = 0
+                    module.aliased_publics[new_name] = (base_ext, offset)
+                else:
+                    module.publics[sym_name] = (value, addr_type)
 
             elif item_type == 'CHAIN_EXTERNAL':
                 # External reference chain - store segment-relative for now
@@ -562,6 +598,34 @@ class Linker:
             return False
         return True
 
+    def resolve_aliased_publics(self):
+        """Resolve aliased public symbols (EQU external+offset made PUBLIC).
+
+        These are symbols defined as SYMBOL EQU EXTERNAL+N and exported.
+        After all externals are resolved, we can compute the actual addresses
+        for these aliased symbols and add them to the global table.
+        """
+        for mod_idx, module in enumerate(self.modules):
+            for new_name, (base_ext, offset) in module.aliased_publics.items():
+                # Look up the base external symbol
+                if base_ext not in self.globals:
+                    self.error(f"Aliased symbol '{new_name}' references undefined external '{base_ext}'")
+                    continue
+
+                base_mod_idx, base_value, base_seg_type, is_defined = self.globals[base_ext]
+                if not is_defined:
+                    self.error(f"Aliased symbol '{new_name}' references undefined external '{base_ext}'")
+                    continue
+
+                # The new symbol's value is base_value + offset, same segment type
+                new_value = base_value + offset
+                # Register the aliased symbol in globals
+                if new_name in self.globals and self.globals[new_name][3]:
+                    self.warning(f"Multiple definition of '{new_name}'")
+                else:
+                    # Use the same module index as the base external
+                    self.globals[new_name] = (base_mod_idx, new_value, base_seg_type, True)
+
     def calculate_addresses(self):
         """Calculate base addresses for all modules."""
         # Calculate total code size
@@ -605,6 +669,10 @@ class Linker:
 
     def link(self):
         """Link all loaded modules."""
+        # Resolve aliased public symbols first (EQU external+offset made PUBLIC)
+        # These need to be in globals before resolve_externals() checks references
+        self.resolve_aliased_publics()
+
         if not self.resolve_externals():
             return False
 

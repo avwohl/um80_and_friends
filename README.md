@@ -345,6 +345,35 @@ Register number assignments (when using numeric values):
 | 6 | M (memory) | - |
 | 7 | A | - |
 
+### External Symbol Aliases (EQU external+offset)
+
+Symbols can be defined as aliases to external symbols with an optional offset, then exported as PUBLIC:
+
+```asm
+; In library module - define entry points
+        EXTRN   ADD10           ; External symbol from another module
+        PUBLIC  ADD10_SKIP      ; Export the alias
+
+; Define alias: ADD10_SKIP is ADD10+2 (skip first instruction)
+ADD10_SKIP  EQU ADD10+2
+```
+
+This is useful for:
+- Defining alternate entry points into routines (skipping initialization code)
+- Creating symbolic offsets into data structures defined in other modules
+- Porting code from assemblers that support this feature (like z88dk)
+
+The alias is resolved at link time:
+
+```asm
+; In main module - use both symbols
+        EXTRN   ADD10
+        EXTRN   ADD10_SKIP
+
+START:  CALL    ADD10           ; Call full routine
+        CALL    ADD10_SKIP      ; Call at offset (skips first 2 bytes)
+```
+
 For more details on these extensions and compatibility notes, see [docs/EXTENSIONS.md](docs/EXTENSIONS.md).
 
 ## Documentation

@@ -175,6 +175,65 @@ ENDIF                               ; ENDIF is a directive
 
 This matches DRI assembler behavior where `IF`, `ELSE`, `ENDIF`, `IFDEF`, `IFNDEF`, etc. do not require indentation.
 
+### External Symbol Aliases (EQU external+offset)
+
+um80 supports defining symbols as aliases to external symbols with an optional offset:
+
+```asm
+        EXTRN   ROUTINE         ; External symbol
+        PUBLIC  ROUTINE_ALT     ; Export the alias
+
+; Define alias as external + offset
+ROUTINE_ALT EQU ROUTINE+2       ; ROUTINE_ALT = ROUTINE + 2
+```
+
+**Use cases:**
+
+1. **Alternate entry points:** Skip initialization code in a routine:
+   ```asm
+   ; Library module defines:
+   ROUTINE:
+           LD  A,10            ; 2 bytes - initialization
+   ROUTINE_ENTRY:              ; Actual entry point
+           ADD A,B
+           RET
+
+   ; Another module creates alias:
+           EXTRN   ROUTINE
+           PUBLIC  ROUTINE_ENTRY
+   ROUTINE_ENTRY EQU ROUTINE+2
+   ```
+
+2. **Structure field offsets:** Access fields in structures defined elsewhere:
+   ```asm
+           EXTRN   BUFFER
+           PUBLIC  BUF_LEN
+           PUBLIC  BUF_DATA
+   BUF_LEN  EQU BUFFER          ; Length at offset 0
+   BUF_DATA EQU BUFFER+2        ; Data at offset 2
+   ```
+
+3. **z88dk compatibility:** The z88dk project uses this pattern extensively in its math libraries:
+   ```asm
+   ; z88dk pattern for alternate return points
+           EXTRN   mm48__add10
+           PUBLIC  am48_dpopret
+   am48_dpopret EQU mm48__add10+1
+   ```
+
+**How it works:**
+
+- When `EQU` is given an external symbol (with optional offset), um80 tracks it as an "external alias"
+- When the alias is used in code, it emits an external reference with the combined offset
+- When the alias is declared PUBLIC, it emits a special entry point format: `NEWNAME=EXTERNAL+N`
+- The linker (ul80) detects this format and resolves the alias after loading all modules
+
+**Limitations:**
+
+- The base external symbol must be defined in another module being linked
+- Aliases cannot be chained (ALIAS2 EQU ALIAS1+N where ALIAS1 is also an alias)
+- The offset must be a constant expression
+
 ---
 
 ## ul80 Linker Extensions
@@ -217,23 +276,25 @@ PRL files contain:
 
 ## Compatibility Matrix
 
-| Feature | M80/L80 | um80/ul80 | ASM/MAC/RMAC |
-|---------|---------|-----------|--------------|
-| 8-char symbols | ✓ | ✓ | ✓ |
-| Extended symbols (>8) | ✗ | ✓ | ✗ |
-| `!` separator | ✗ | ✓ | ✓ |
-| `HIGH(expr)` syntax | ✗ | ✓ | ✓ |
-| `HIGH expr` syntax | ✓ | ✓ | ✓ |
-| `$` digit separator | ✗ | ✓ | ✓ |
-| Register EQU aliases | ✗ | ✓ | ✓ |
-| PUSH A / POP A | ✗ | ✓ | ✓ |
-| `__END__` symbol | ✗ | ✓ | ✗ |
-| PRL output | ✗ | ✓ | (RMAC) |
+| Feature | M80/L80 | um80/ul80 | ASM/MAC/RMAC | z88dk |
+|---------|---------|-----------|--------------|-------|
+| 8-char symbols | ✓ | ✓ | ✓ | ✓ |
+| Extended symbols (>8) | ✗ | ✓ | ✗ | ✓ |
+| `!` separator | ✗ | ✓ | ✓ | ✗ |
+| `HIGH(expr)` syntax | ✗ | ✓ | ✓ | ✓ |
+| `HIGH expr` syntax | ✓ | ✓ | ✓ | ✓ |
+| `$` digit separator | ✗ | ✓ | ✓ | ✗ |
+| Register EQU aliases | ✗ | ✓ | ✓ | ✗ |
+| PUSH A / POP A | ✗ | ✓ | ✓ | ✗ |
+| EQU external+offset | ✗ | ✓ | ✗ | ✓ |
+| `__END__` symbol | ✗ | ✓ | ✗ | ✗ |
+| PRL output | ✗ | ✓ | (RMAC) | ✗ |
 
 ---
 
 ## Version History
 
+- **0.3.33** — External symbol aliases (EQU external+offset) for z88dk compatibility
 - **0.3.21** — Extended REL format for long symbols, `-t/--truncate` switch
 - **0.3.20** — DRI extensions (!, HIGH(), $, register aliases, PUSH A)
 - Earlier versions focused on M80/L80 compatibility
