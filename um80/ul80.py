@@ -279,10 +279,11 @@ class Linker:
                 code_bytes.extend(seg_buffers[seg_type])
 
         # Convert segment-relative relocations to buffer offsets
+        # Store (buf_offset, reloc_type, ref_seg_type) where ref_seg_type is which segment the reference is in
         for seg_type, seg_offset, reloc_type in pending_relocations:
             if seg_type in seg_buf_start:
                 buf_offset = seg_buf_start[seg_type] + seg_offset
-                module.relocations.append((buf_offset, reloc_type))
+                module.relocations.append((buf_offset, reloc_type, seg_type))
 
         # Convert pending externals to buffer offsets
         for name, addr_type, head in pending_externals:
@@ -507,10 +508,11 @@ class Linker:
                 code_bytes.extend(seg_buffers[seg_type])
 
         # Convert segment-relative relocations to buffer offsets
+        # Store (buf_offset, reloc_type, ref_seg_type) where ref_seg_type is which segment the reference is in
         for seg_type, seg_offset, reloc_type in pending_relocations:
             if seg_type in seg_buf_start:
                 buf_offset = seg_buf_start[seg_type] + seg_offset
-                module.relocations.append((buf_offset, reloc_type))
+                module.relocations.append((buf_offset, reloc_type, seg_type))
 
         # Convert pending externals to buffer offsets
         for sym_name, addr_type, head in pending_externals:
@@ -758,12 +760,19 @@ class Linker:
                 for head, ref_seg_type in refs:
                     # Follow the chain and fix up each reference
                     # head is now a buffer offset, convert to output offset
-                    offset = head - src_start
+                    # Use appropriate base for the reference's segment type
+                    if ref_seg_type == ADDR_DATA_REL:
+                        ref_dest_offset = module.data_base - self.output_base
+                        seg_offset = head - module.seg_buf_start.get(ADDR_DATA_REL, 0)
+                    else:
+                        ref_dest_offset = dest_offset
+                        seg_offset = head - src_start
                     seg_base = module.seg_buf_start.get(ref_seg_type, 0)
+                    offset = seg_offset
                     visited = set()  # Prevent infinite loops
                     while offset not in visited and offset >= 0:
                         visited.add(offset)
-                        abs_offset = dest_offset + offset
+                        abs_offset = ref_dest_offset + offset
                         if abs_offset + 1 < len(self.output) and abs_offset >= 0:
                             # Get value at this location (this is the next chain link)
                             # For ADDR_ABSOLUTE, values are absolute addresses
@@ -785,22 +794,36 @@ class Linker:
                                 break
                             else:
                                 # Follow chain to previous reference
-                                # Convert segment-relative value to output offset using seg_buf_start
-                                offset = seg_base + value - src_start
+                                # Value is segment-relative, convert to segment offset
+                                offset = value
                         else:
                             break
 
         # Apply relocations for program-relative, data-relative, and common-relative addresses
         for module in self.modules:
-            dest_offset = module.code_base - self.output_base
             src_start = module.code_start  # For absolute ORG adjustment
-            for buf_offset, seg_type in module.relocations:
-                # buf_offset is now a buffer offset, convert to output offset
-                abs_offset = dest_offset + (buf_offset - src_start)
+            for reloc_entry in module.relocations:
+                # Handle both old 2-tuple and new 3-tuple format
+                if len(reloc_entry) == 3:
+                    buf_offset, seg_type, ref_seg_type = reloc_entry
+                else:
+                    buf_offset, seg_type = reloc_entry
+                    ref_seg_type = ADDR_PROGRAM_REL  # Default to CSEG for compatibility
+
+                # Calculate output offset based on which segment the reference is in
+                if ref_seg_type == ADDR_DATA_REL:
+                    # Reference is in DSEG
+                    dseg_start = module.seg_buf_start.get(ADDR_DATA_REL, 0)
+                    seg_offset = buf_offset - dseg_start
+                    abs_offset = (module.data_base - self.output_base) + seg_offset
+                else:
+                    # Reference is in CSEG (or other)
+                    abs_offset = (module.code_base - self.output_base) + (buf_offset - src_start)
+
                 if abs_offset >= 0 and abs_offset + 1 < len(self.output):
                     # Read current value
                     value = self.output[abs_offset] | (self.output[abs_offset + 1] << 8)
-                    # Apply relocation based on segment type
+                    # Apply relocation based on what the value points to
                     if seg_type == ADDR_PROGRAM_REL:
                         value += module.code_base
                     elif seg_type == ADDR_DATA_REL:
@@ -887,10 +910,22 @@ class Linker:
             dest_offset = module.code_base - self.output_base
             src_start = module.code_start
 
-            for buf_offset, seg_type in module.relocations:
-                # buf_offset is buffer offset, points to low byte of 16-bit address
-                # high byte is at buf_offset + 1
-                abs_offset = dest_offset + (buf_offset - src_start)
+            for reloc_entry in module.relocations:
+                # Handle both old 2-tuple and new 3-tuple format
+                if len(reloc_entry) == 3:
+                    buf_offset, seg_type, ref_seg_type = reloc_entry
+                else:
+                    buf_offset, seg_type = reloc_entry
+                    ref_seg_type = ADDR_PROGRAM_REL
+
+                # Calculate output offset based on which segment the reference is in
+                if ref_seg_type == ADDR_DATA_REL:
+                    dseg_start = module.seg_buf_start.get(ADDR_DATA_REL, 0)
+                    seg_offset = buf_offset - dseg_start
+                    abs_offset = (module.data_base - self.output_base) + seg_offset
+                else:
+                    abs_offset = dest_offset + (buf_offset - src_start)
+
                 high_byte_offset = abs_offset + 1
 
                 if 0 <= high_byte_offset < code_length:
