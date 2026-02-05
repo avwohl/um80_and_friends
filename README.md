@@ -428,7 +428,6 @@ man docs/man/um80.1
 - [ioscpm](https://github.com/avwohl/ioscpm) - CP/M emulator for iOS/macOS
 - [learn-ada-z80](https://github.com/avwohl/learn-ada-z80) - Ada programming examples for Z80/CP/M
 - [uada80](https://github.com/avwohl/uada80) - Ada compiler for Z80/CP/M
-- [uc80](https://github.com/avwohl/uc80) - C compiler for Z80/CP/M
 - [upeepz80](https://github.com/avwohl/upeepz80) - Peephole optimizer for Z80 assembly
 - [uplm80](https://github.com/avwohl/uplm80) - PL/M-80 compiler for Z80
 - [z80cpmw](https://github.com/avwohl/z80cpmw) - CP/M emulator for Windows
