@@ -733,6 +733,10 @@ class Linker:
                             self.output[dseg_dest + i] = module.code[src_idx]
 
         # Fix up external references
+        # Track which (module_index, buf_offset) pairs are resolved externally
+        # so Phase 2 relocation doesn't double-apply segment bases
+        resolved_external_locs = set()
+
         for mod_idx, module in enumerate(self.modules):
             dest_offset = module.code_base - self.output_base
             src_start = module.code_start  # For absolute ORG adjustment
@@ -758,6 +762,9 @@ class Linker:
                 target_addr += expr_offset  # Add expression offset (e.g., +1 for SYMBOL+1)
 
                 for head, ref_seg_type in refs:
+                    # Mark this location as externally resolved so Phase 2 skips it
+                    resolved_external_locs.add((mod_idx, head))
+
                     # Follow the chain and fix up each reference
                     # head is now a buffer offset, convert to output offset
                     # Use appropriate base for the reference's segment type
@@ -800,7 +807,7 @@ class Linker:
                             break
 
         # Apply relocations for program-relative, data-relative, and common-relative addresses
-        for module in self.modules:
+        for mod_idx, module in enumerate(self.modules):
             src_start = module.code_start  # For absolute ORG adjustment
             for reloc_entry in module.relocations:
                 # Handle both old 2-tuple and new 3-tuple format
@@ -809,6 +816,10 @@ class Linker:
                 else:
                     buf_offset, seg_type = reloc_entry
                     ref_seg_type = ADDR_PROGRAM_REL  # Default to CSEG for compatibility
+
+                # Skip locations already resolved by external reference fixup
+                if (mod_idx, buf_offset) in resolved_external_locs:
+                    continue
 
                 # Calculate output offset based on which segment the reference is in
                 if ref_seg_type == ADDR_DATA_REL:

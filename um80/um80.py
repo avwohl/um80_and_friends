@@ -804,24 +804,22 @@ class Assembler:
         so RNDX and RNDX+1 have independent chains.
         """
         name = name.upper()
-        # Key by (name, expr_offset) so different offsets get separate chains
-        chain_key = (name, offset)
+        # Key by (name, expr_offset, seg_type) so different offsets AND segments
+        # get separate chains. Cross-segment chains would corrupt the linker's
+        # chain-following since chain link values are segment-relative offsets.
+        chain_key = (name, offset, self.seg_type)
         if chain_key not in self.ext_chains:
             self.ext_chains[chain_key] = []
 
-        # Get the previous reference location (for chain link) or 0 if first
+        # Each reference is emitted independently (no chaining).
+        # Chaining uses 0 as end-of-chain marker, but a reference at segment
+        # offset 0 would be indistinguishable from end-of-chain.
+        # Instead, we emit a separate CHAIN_EXTERNAL record per reference.
         chain = self.ext_chains[chain_key]
-        if chain:
-            prev_seg, prev_offset = chain[-1]
-            chain_link = prev_offset
-        else:
-            chain_link = 0
-
-        # Record this reference location (will be the new head)
         chain.append((self.seg_type, self.loc))
 
-        # Emit chain link (0 for first reference, else previous offset)
-        self.emit_word(chain_link)
+        # Emit 0 placeholder (linker will overwrite with resolved address)
+        self.emit_word(0)
 
     def resolve_register_alias(self, name):
         """
@@ -2971,19 +2969,19 @@ class Assembler:
                 self.output.write_define_entry_point(sym.seg_type, value, sym.name)
 
         # Write external chains
-        # The chain head is the LAST reference; linker walks backward through chain
-        # Key is (name, expr_offset), so we emit separate entries for RNDX vs RNDX+1
-        for (name, expr_offset), refs in self.ext_chains.items():
+        # Each reference gets its own CHAIN_EXTERNAL record (no chaining).
+        # This avoids the offset-0 ambiguity where a reference at segment
+        # offset 0 would be confused with the end-of-chain marker.
+        for (name, expr_offset, _seg_type), refs in self.ext_chains.items():
             if refs:
-                # Get the last reference (head of chain)
-                seg, offset = refs[-1]
                 # For non-zero offsets, append "+N" to symbol name
-                # Linker will parse this and add the offset to resolved address
                 if expr_offset != 0:
                     sym_name = f"{name}+{expr_offset}"
                 else:
                     sym_name = name
-                self.output.write_chain_external(seg, offset, sym_name)
+                # Emit one record per reference
+                for seg, offset in refs:
+                    self.output.write_chain_external(seg, offset, sym_name)
 
         # Write segment sizes (actual bytes, not location counter value)
         cseg = self.segments['CSEG']
@@ -3204,19 +3202,19 @@ class Assembler:
                     self.output.write_define_entry_point(sym.seg_type, value, sym.name)
 
         # Write external chains
-        # The chain head is the LAST reference; linker walks backward through chain
-        # Key is (name, expr_offset), so we emit separate entries for RNDX vs RNDX+1
-        for (name, expr_offset), refs in self.ext_chains.items():
+        # Each reference gets its own CHAIN_EXTERNAL record (no chaining).
+        # This avoids the offset-0 ambiguity where a reference at segment
+        # offset 0 would be confused with the end-of-chain marker.
+        for (name, expr_offset, _seg_type), refs in self.ext_chains.items():
             if refs:
-                # Get the last reference (head of chain)
-                seg, offset = refs[-1]
                 # For non-zero offsets, append "+N" to symbol name
-                # Linker will parse this and add the offset to resolved address
                 if expr_offset != 0:
                     sym_name = f"{name}+{expr_offset}"
                 else:
                     sym_name = name
-                self.output.write_chain_external(seg, offset, sym_name)
+                # Emit one record per reference
+                for seg, offset in refs:
+                    self.output.write_chain_external(seg, offset, sym_name)
 
         # Write segment sizes (actual bytes, not location counter value)
         cseg = self.segments['CSEG']
