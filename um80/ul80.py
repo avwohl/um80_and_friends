@@ -66,9 +66,11 @@ class Linker:
         self.globals = {}  # name -> (module_idx, value, seg_type, is_defined)
         self.commons = {}  # name -> size (largest wins)
 
-        # Pre-define __END__ symbol (value computed in calculate_addresses)
+        # Pre-define linker symbols (values computed in calculate_addresses)
         # mod_idx=0 is placeholder, value will be absolute address
         self.globals['__END__'] = (0, 0, ADDR_ABSOLUTE, True)
+        self.globals['__BSS_START'] = (0, 0, ADDR_ABSOLUTE, True)
+        self.globals['__BSS_END'] = (0, 0, ADDR_ABSOLUTE, True)
 
         self.code_base = 0x0103  # Default CP/M load address + 3 for JMP
         self.data_base = None  # Will be after code if not specified
@@ -657,6 +659,10 @@ class Linker:
         end_addr = self.common_base + total_common
         self.globals['__END__'] = (0, end_addr, ADDR_ABSOLUTE, True)
 
+        # BSS region = COMMON area (uninitialized data, zeroed by crt0)
+        self.globals['__BSS_START'] = (0, self.common_base, ADDR_ABSOLUTE, True)
+        self.globals['__BSS_END'] = (0, end_addr, ADDR_ABSOLUTE, True)
+
     def relocate_value(self, module, value, seg_type):
         """Relocate a value based on its segment type."""
         if seg_type == ADDR_ABSOLUTE:
@@ -694,15 +700,21 @@ class Linker:
             if cseg_end > total_size:
                 total_size = cseg_end
 
-            # DSEG end address (initialized data from code buffer after code_size)
+            # DSEG end address
             if module.data_size > 0:
-                # Initialized DSEG = buffer bytes after code_size
-                buffer_len = len(module.code) - module.code_start
-                initialized_dseg = buffer_len - (module.code_size if module.code_size else buffer_len)
-                if initialized_dseg > 0:
-                    dseg_end = module.data_base + initialized_dseg - self.output_base
+                if self.emit_ds_zeros:
+                    # Include full declared DSEG (DS directives filled with zeros)
+                    dseg_end = module.data_base + module.data_size - self.output_base
                     if dseg_end > total_size:
                         total_size = dseg_end
+                else:
+                    # Only include actually-initialized DSEG bytes (DB/DW, not DS)
+                    buffer_len = len(module.code) - module.code_start
+                    initialized_dseg = buffer_len - (module.code_size if module.code_size else buffer_len)
+                    if initialized_dseg > 0:
+                        dseg_end = module.data_base + initialized_dseg - self.output_base
+                        if dseg_end > total_size:
+                            total_size = dseg_end
 
         self.output = bytearray(total_size)
 

@@ -149,13 +149,13 @@ class Assembler:
     @property
     def loc(self):
         """Current location counter."""
-        if self.current_common:
+        if self.current_common is not None:
             return self.common_blocks[self.current_common].loc
         return self.segments[self.current_seg].loc
 
     @loc.setter
     def loc(self, value):
-        if self.current_common:
+        if self.current_common is not None:
             self.common_blocks[self.current_common].loc = value
         else:
             self.segments[self.current_seg].loc = value
@@ -163,7 +163,7 @@ class Assembler:
     @property
     def seg_type(self):
         """Current segment type."""
-        if self.current_common:
+        if self.current_common is not None:
             return ADDR_COMMON_REL
         return self.segments[self.current_seg].seg_type
 
