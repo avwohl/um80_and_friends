@@ -2,6 +2,13 @@
 
 All notable changes to the um80 toolchain are documented here.
 
+## [0.3.37] - 2026-03-29
+
+### Fixed
+- ud80 disassembler: Fixed incorrect bit pattern comments for DCX and LDAX opcodes.
+- ux80 translator: Fixed ALU mapping comments that incorrectly described output format.
+- ucref80, ux80: Removed unreachable dead code (try/except around decode with errors='replace').
+
 ## [0.3.24] - 2025-12-31
 
 ### Fixed

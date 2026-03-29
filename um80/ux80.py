@@ -87,13 +87,13 @@ class Translator:
         # Conditional calls: C<cond> -> CALL <cond>
         self.cond_calls = {'CNZ', 'CZ', 'CNC', 'CC', 'CPO', 'CPE', 'CP', 'CM'}
 
-        # ALU register operations: <op> r -> <z80_op> A,r
+        # ALU register operations: <op> r -> <z80_op> r (M80 short form, A implicit)
         self.alu_reg_map = {
             'ADD': 'ADD', 'ADC': 'ADC', 'SUB': 'SUB', 'SBB': 'SBC',
             'ANA': 'AND', 'XRA': 'XOR', 'ORA': 'OR', 'CMP': 'CP',
         }
 
-        # ALU immediate operations: <op>I n -> <z80_op> A,n
+        # ALU immediate operations: <op>I n -> <z80_op> n (M80 short form, A implicit)
         self.alu_imm_map = {
             'ADI': 'ADD', 'ACI': 'ADC', 'SUI': 'SUB', 'SBI': 'SBC',
             'ANI': 'AND', 'XRI': 'XOR', 'ORI': 'OR', 'CPI': 'CP',
@@ -529,10 +529,7 @@ class Translator:
             data = data[:data.index(b'\x1a')]
 
         # Decode
-        try:
-            text = data.decode('utf-8', errors='replace')
-        except:
-            text = data.decode('latin-1', errors='replace')
+        text = data.decode('utf-8', errors='replace')
 
         # Normalize line endings
         lines = text.replace('\r\n', '\n').replace('\r', '\n').split('\n')

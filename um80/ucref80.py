@@ -213,10 +213,7 @@ class CrossReference:
             data = data[:data.index(b'\x1a')]
 
         # Decode and split into lines
-        try:
-            text = data.decode('utf-8', errors='replace')
-        except:
-            text = data.decode('latin-1', errors='replace')
+        text = data.decode('utf-8', errors='replace')
 
         lines = text.replace('\r\n', '\n').replace('\r', '\n').split('\n')
 

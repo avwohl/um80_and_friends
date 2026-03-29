@@ -90,7 +90,7 @@ for rp in range(4):
     op = 0x03 | (rp << 4)
     OPCODES[op] = ('INX', 1, ('rp',))
 
-# DCX rp (00 rp0 011)
+# DCX rp (00 rp1 011)
 for rp in range(4):
     op = 0x0B | (rp << 4)
     OPCODES[op] = ('DCX', 1, ('rp',))
@@ -100,7 +100,7 @@ for rp in range(4):
     op = 0x09 | (rp << 4)
     OPCODES[op] = ('DAD', 1, ('rp',))
 
-# LDAX rp (00 rp0 010) - only BC,DE
+# LDAX rp (00 rp1 010) - only BC,DE
 for rp in range(2):
     op = 0x0A | (rp << 4)
     OPCODES[op] = ('LDAX', 1, ('rp',))
