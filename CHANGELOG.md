@@ -2,6 +2,15 @@
 
 All notable changes to the um80 toolchain are documented here.
 
+## [0.3.38] - 2026-04-08
+
+### Added
+- um80 assembler: Added `ASET` directive (M80-compatible alias for `SET`/`DEFL`).
+
+### Fixed
+- um80 assembler: Fixed `EQU` with forward references incorrectly triggering "multiply defined"
+  error on pass 2 when the symbol value changed due to forward reference resolution.
+
 ## [0.3.37] - 2026-03-29
 
 ### Fixed

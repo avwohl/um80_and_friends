@@ -40,6 +40,7 @@ class Symbol:
         self.value = value
         self.seg_type = seg_type  # ADDR_ABSOLUTE, ADDR_PROGRAM_REL, etc.
         self.defined = defined
+        self.defined_pass = 0  # Track which pass defined this symbol
         self.public = public
         self.external = external
         self.references = []  # Line numbers where referenced
@@ -201,17 +202,19 @@ class Assembler:
 
         if name in self.symbols:
             sym = self.symbols[name]
-            if sym.defined and sym.value != value and not sym.external:
-                if self.pass_num == 2:
-                    self.error(f"Symbol '{name}' multiply defined")
+            if sym.defined and sym.defined_pass == self.pass_num and sym.value != value and not sym.external:
+                self.error(f"Symbol '{name}' multiply defined")
                 return
             sym.value = value
             sym.seg_type = seg_type
             sym.defined = True
+            sym.defined_pass = self.pass_num
             if public:
                 sym.public = True
         else:
-            self.symbols[name] = Symbol(name, value, seg_type, defined=True, public=public)
+            sym = Symbol(name, value, seg_type, defined=True, public=public)
+            sym.defined_pass = self.pass_num
+            self.symbols[name] = sym
 
     def lookup_symbol(self, name):
         """Look up a symbol, creating undefined entry if needed."""
@@ -2040,8 +2043,8 @@ class Assembler:
             self.define_symbol(label, val, seg)
             return True
 
-        # SET/DEFL - like EQU but redefinable
-        if operator == 'SET' or operator == 'DEFL':
+        # SET/DEFL/ASET - like EQU but redefinable
+        if operator in ('SET', 'DEFL', 'ASET'):
             if not label:
                 self.error(f"{operator} requires a label")
                 return True
@@ -2643,7 +2646,7 @@ class Assembler:
             return
 
         # Define label if present
-        if label and upper_op not in ('EQU', 'SET', 'DEFL', 'MACRO'):
+        if label and upper_op not in ('EQU', 'SET', 'DEFL', 'ASET', 'MACRO'):
             self.define_symbol(label, self.loc, self.seg_type)
 
         if not operator:
@@ -2652,7 +2655,8 @@ class Assembler:
 
         # In Z80 mode, SET with a label is the directive, not the instruction
         # (Z80 SET instruction is "SET bit,reg" which doesn't have a label)
-        if self.z80_mode and upper_op == 'SET' and label:
+        # ASET is always a directive (no Z80 instruction conflict)
+        if self.z80_mode and upper_op in ('SET', 'ASET') and label:
             if self.assemble_pseudo_op(operator, operands, label):
                 self._save_listing_entry(line)
                 return
