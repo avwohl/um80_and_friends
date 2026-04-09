@@ -108,7 +108,7 @@ class Linker:
 
         current_loc = 0  # Position within current segment
         current_seg = ADDR_PROGRAM_REL  # Default to code segment
-        first_loc_set = False  # Track if we've seen the first location
+        first_abs_data = False  # Track if actual data bytes written to ASEG
 
         # Use separate buffers for each segment to avoid overwrites when
         # switching between segments (e.g., CSEG -> DSEG -> CSEG)
@@ -144,11 +144,15 @@ class Linker:
             item_type = item[0]
 
             if item_type == 'ABSOLUTE_BYTE':
+                if not first_abs_data and current_seg == ADDR_ABSOLUTE:
+                    first_abs_data = True
                 write_byte_to_seg(item[1])
                 current_loc += 1
 
             elif item_type == 'PROGRAM_REL':
                 # 16-bit program-relative value - needs relocation
+                if not first_abs_data and current_seg == ADDR_ABSOLUTE:
+                    first_abs_data = True
                 value = item[1]
                 write_byte_to_seg(value & 0xFF)
                 # Record relocation at low byte position
@@ -159,6 +163,8 @@ class Linker:
 
             elif item_type == 'DATA_REL':
                 # 16-bit data-relative value - needs relocation
+                if not first_abs_data and current_seg == ADDR_ABSOLUTE:
+                    first_abs_data = True
                 value = item[1]
                 write_byte_to_seg(value & 0xFF)
                 pending_relocations.append((current_seg, current_loc, ADDR_DATA_REL))
@@ -168,6 +174,8 @@ class Linker:
 
             elif item_type == 'COMMON_REL':
                 # 16-bit common-relative value - needs relocation
+                if not first_abs_data and current_seg == ADDR_ABSOLUTE:
+                    first_abs_data = True
                 value = item[1]
                 write_byte_to_seg(value & 0xFF)
                 pending_relocations.append((current_seg, current_loc, ADDR_COMMON_REL))
@@ -229,10 +237,13 @@ class Linker:
                             current_loc += 1
                 current_loc = value
                 current_seg = addr_type
-                # Track the first absolute location as code_start
-                if not first_loc_set and addr_type == ADDR_ABSOLUTE:
-                    module.code_start = value
-                    first_loc_set = True
+                # Track the lowest non-zero ASEG SET_LOC as code_start, until
+                # actual data is written.  SET_LOC(ABS, 0) is skipped because it
+                # is typically just a segment switch (ASEG directive) and the
+                # default code_start of 0 already covers code-at-address-0.
+                if not first_abs_data and addr_type == ADDR_ABSOLUTE:
+                    if value > 0 and (module.code_start == 0 or value < module.code_start):
+                        module.code_start = value
 
             elif item_type == 'CHAIN_ADDRESS':
                 # Internal forward reference chain - store segment-relative
@@ -265,7 +276,7 @@ class Linker:
 
             elif item_type == 'END_PROGRAM':
                 # End of module
-                pass
+                break
 
             elif item_type == 'END_FILE':
                 break
@@ -337,7 +348,7 @@ class Linker:
 
         current_loc = 0  # Position within current segment
         current_seg = ADDR_PROGRAM_REL  # Default to code segment
-        first_loc_set = False  # Track if we've seen the first location
+        first_abs_data = False  # Track if actual data bytes written to ASEG
 
         # Use separate buffers for each segment to avoid overwrites when
         # switching between segments (e.g., CSEG -> DSEG -> CSEG)
@@ -373,11 +384,15 @@ class Linker:
             item_type = item[0]
 
             if item_type == 'ABSOLUTE_BYTE':
+                if not first_abs_data and current_seg == ADDR_ABSOLUTE:
+                    first_abs_data = True
                 write_byte_to_seg(item[1])
                 current_loc += 1
 
             elif item_type == 'PROGRAM_REL':
                 # 16-bit program-relative value - needs relocation
+                if not first_abs_data and current_seg == ADDR_ABSOLUTE:
+                    first_abs_data = True
                 value = item[1]
                 write_byte_to_seg(value & 0xFF)
                 # Record relocation at low byte position
@@ -388,6 +403,8 @@ class Linker:
 
             elif item_type == 'DATA_REL':
                 # 16-bit data-relative value - needs relocation
+                if not first_abs_data and current_seg == ADDR_ABSOLUTE:
+                    first_abs_data = True
                 value = item[1]
                 write_byte_to_seg(value & 0xFF)
                 pending_relocations.append((current_seg, current_loc, ADDR_DATA_REL))
@@ -397,6 +414,8 @@ class Linker:
 
             elif item_type == 'COMMON_REL':
                 # 16-bit common-relative value - needs relocation
+                if not first_abs_data and current_seg == ADDR_ABSOLUTE:
+                    first_abs_data = True
                 value = item[1]
                 write_byte_to_seg(value & 0xFF)
                 pending_relocations.append((current_seg, current_loc, ADDR_COMMON_REL))
@@ -458,10 +477,13 @@ class Linker:
                             current_loc += 1
                 current_loc = value
                 current_seg = addr_type
-                # Track the first absolute location as code_start
-                if not first_loc_set and addr_type == ADDR_ABSOLUTE:
-                    module.code_start = value
-                    first_loc_set = True
+                # Track the lowest non-zero ASEG SET_LOC as code_start, until
+                # actual data is written.  SET_LOC(ABS, 0) is skipped because it
+                # is typically just a segment switch (ASEG directive) and the
+                # default code_start of 0 already covers code-at-address-0.
+                if not first_abs_data and addr_type == ADDR_ABSOLUTE:
+                    if value > 0 and (module.code_start == 0 or value < module.code_start):
+                        module.code_start = value
 
             elif item_type == 'CHAIN_ADDRESS':
                 # Internal forward reference chain - store segment-relative
@@ -494,7 +516,7 @@ class Linker:
 
             elif item_type == 'END_PROGRAM':
                 # End of module
-                pass
+                break
 
             elif item_type == 'END_FILE':
                 break
@@ -636,7 +658,7 @@ class Linker:
         total_code = 0
         for module in self.modules:
             module.code_base = self.code_base + total_code
-            total_code += module.code_size if module.code_size else len(module.code)
+            total_code += module.code_size if module.code_size else (len(module.code) - module.code_start)
 
         # Data follows code
         if self.data_base is None:
@@ -695,7 +717,7 @@ class Linker:
         total_size = 0
         for module in self.modules:
             # CSEG end address
-            cseg_bytes = module.code_size if module.code_size else len(module.code)
+            cseg_bytes = module.code_size if module.code_size else (len(module.code) - module.code_start)
             cseg_end = module.code_base + cseg_bytes - self.output_base
             if cseg_end > total_size:
                 total_size = cseg_end
