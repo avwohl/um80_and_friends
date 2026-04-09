@@ -2125,6 +2125,9 @@ class Assembler:
             return True
 
         # DS - define space
+        # M80 supports an optional fill-value operand: DEFS count[,fill]
+        # Without fill, just advance the location counter (leaves zeros in the
+        # linker's output buffer). With fill, emit `count` bytes of that value.
         if operator in ('DS', 'DEFS'):
             if len(ops) < 1:
                 self.error("DS requires size operand")
@@ -2133,13 +2136,21 @@ class Assembler:
             if ext:
                 self.error("Cannot use external in DS")
                 return True
-            # Just advance location counter (don't emit anything for DS)
-            if self.pass_num == 2:
-                # For REL format, we need to advance by emitting zeros or using set_location
-                # Using set_location to skip over the space
-                new_loc = self.loc + val
-                self.output.write_set_location(self.seg_type, new_loc)
-            self.loc += val
+            if len(ops) >= 2:
+                fill_val, _, fill_ext, _ = self.parse_expression(ops[1])
+                if fill_ext:
+                    self.error("Cannot use external in DS fill value")
+                    return True
+                for _ in range(val):
+                    self.emit_byte(fill_val)
+            else:
+                # Just advance location counter (don't emit anything for DS)
+                if self.pass_num == 2:
+                    # For REL format, we need to advance by emitting zeros or using set_location
+                    # Using set_location to skip over the space
+                    new_loc = self.loc + val
+                    self.output.write_set_location(self.seg_type, new_loc)
+                self.loc += val
             return True
 
         # CSEG/DSEG/ASEG - segment selection

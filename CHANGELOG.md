@@ -2,6 +2,18 @@
 
 All notable changes to the um80 toolchain are documented here.
 
+## [0.3.40] - 2026-04-09
+
+### Fixed
+- um80 assembler: Fixed `DEFS count,fill` ignoring the fill-value operand and
+  emitting zero bytes instead of `count` bytes of the fill value (issue #2).
+
+## [0.3.39] - 2026-04-09
+
+### Fixed
+- ul80 linker: Fixed ASEG `.COM` output including 256 leading null bytes when
+  the source had `ASEG` followed by `ORG 0100H` (issue #2).
+
 ## [0.3.38] - 2026-04-08
 
 ### Added
