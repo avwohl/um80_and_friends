@@ -330,7 +330,7 @@ class Linker:
         mod_idx = len(self.modules) - 1
         for name, (value, seg_type) in module.publics.items():
             if name in self.globals and self.globals[name][3]:
-                self.warning(f"Multiple definition of '{name}'")
+                self.error(f"Multiply defined global '{name}'")
             else:
                 self.globals[name] = (mod_idx, value, seg_type, True)
 
@@ -570,7 +570,7 @@ class Linker:
         mod_idx = len(self.modules) - 1
         for sym_name, (value, seg_type) in module.publics.items():
             if sym_name in self.globals and self.globals[sym_name][3]:
-                self.warning(f"Multiple definition of '{sym_name}'")
+                self.error(f"Multiply defined global '{sym_name}'")
             else:
                 self.globals[sym_name] = (mod_idx, value, seg_type, True)
 
@@ -647,7 +647,7 @@ class Linker:
                 new_value = base_value + offset
                 # Register the aliased symbol in globals
                 if new_name in self.globals and self.globals[new_name][3]:
-                    self.warning(f"Multiple definition of '{new_name}'")
+                    self.error(f"Multiply defined global '{new_name}'")
                 else:
                     # Use the same module index as the base external
                     self.globals[new_name] = (base_mod_idx, new_value, base_seg_type, True)
