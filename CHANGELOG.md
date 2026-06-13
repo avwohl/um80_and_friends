@@ -33,6 +33,12 @@ genuine MACRO-80 / LINK-80 3.44 binaries running under cpmemu.
   symbol and an EQU/label symbol cannot redefine each other (multiply defined).
 - ul80 linker: A multiply-defined PUBLIC global is now an error (was a warning),
   matching L80's `%Mult. Def. Global`.
+- ul80 linker: Reworked segment placement so absolute (ASEG) code is emitted at
+  its absolute address instead of being rebased to the relocatable load address
+  (resolves docs/ISSUES.md #1). A module mixing CSEG and ASEG now keeps the CSEG
+  relocatable while emitting the ASEG block at its ORG (previously the CSEG was
+  silently dropped), and a module contributing only a COMMON block no longer
+  has its bytes miscounted as program code. Verified against LINK-80 3.44.
 
 ## [0.3.41] - 2026-06-13
 

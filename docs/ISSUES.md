@@ -2,7 +2,11 @@
 
 ## 1. REL Format: Absolute ORG Representation
 
-**Status:** Open
+**Status:** Resolved (0.3.42) — the linker now places ASEG (absolute) segments
+at their absolute address and never relocates them, verified against LINK-80
+3.44. A module may mix relocatable CSEG with an absolute ASEG block (e.g. an
+interrupt/RST vector) and each is placed correctly. The relocatable-CSEG-with-
+`ORG` + `-p` approach still works as before for code like `cpm22.asm`.
 **Component:** um80 assembler / ul80 linker
 
 ### Problem

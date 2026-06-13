@@ -652,13 +652,58 @@ class Linker:
                     # Use the same module index as the base external
                     self.globals[new_name] = (base_mod_idx, new_value, base_seg_type, True)
 
+    def _segment_ranges(self, module):
+        """Yield (seg_type, buf_start, buf_end) for each segment buffer."""
+        starts = sorted(module.seg_buf_start.items(), key=lambda kv: kv[1])
+        for i, (seg, start) in enumerate(starts):
+            end = starts[i + 1][1] if i + 1 < len(starts) else len(module.code)
+            yield seg, start, end
+
+    def _cseg_len(self, module):
+        """Program-size contribution of a module to the relocatable counter.
+
+        Uses the module's declared DEFINE_PROG_SIZE when present (which covers
+        CSEG, and ASEG program size for an absolute module). Falls back to the
+        CSEG buffer length, which is 0 for a module that contributes only a
+        COMMON or DSEG block (so those don't inflate the code counter).
+        """
+        if module.code_size:
+            return module.code_size
+        if ADDR_PROGRAM_REL not in module.seg_buf_start:
+            return 0
+        start = module.seg_buf_start[ADDR_PROGRAM_REL]
+        end = len(module.code)
+        for s, st in module.seg_buf_start.items():
+            if st > start and st < end:
+                end = st
+        return end - start
+
+    def _buf_offset_addr(self, module, buf_offset):
+        """Absolute output address for a module.code buffer offset.
+
+        ASEG buffer index == absolute address; CSEG/DSEG/COMMON offsets are
+        rebased onto code_base/data_base/common_base respectively.
+        """
+        seg, seg_start = ADDR_PROGRAM_REL, 0
+        for s, st in module.seg_buf_start.items():
+            if st <= buf_offset and st >= seg_start:
+                seg, seg_start = s, st
+        rel = buf_offset - seg_start
+        if seg == ADDR_ABSOLUTE:
+            return buf_offset
+        if seg == ADDR_DATA_REL:
+            return module.data_base + rel
+        if seg == ADDR_COMMON_REL:
+            return self.common_base + rel
+        return module.code_base + rel
+
     def calculate_addresses(self):
         """Calculate base addresses for all modules."""
-        # Calculate total code size
+        # Calculate total code size (CSEG/program-relative bytes only)
         total_code = 0
         for module in self.modules:
             module.code_base = self.code_base + total_code
-            total_code += module.code_size if module.code_size else (len(module.code) - module.code_start)
+            total_code += self._cseg_len(module)
 
         # Data follows code
         if self.data_base is None:
@@ -708,63 +753,53 @@ class Linker:
 
         self.calculate_addresses()
 
-        # Build output starting at origin (code_base of first module)
-        # Determine output base address (lowest module address)
-        self.output_base = min(m.code_base for m in self.modules)
+        # Place each module's segments at their output addresses. ASEG bytes go
+        # to their absolute address; CSEG -> code_base; DSEG -> data_base.
+        # COMMON is BSS and is not emitted. The leading zero padding of an ASEG
+        # buffer (from offset 0 up to its ORG) is skipped. output_base is the
+        # lowest address actually written; the output size covers the highest.
+        lo = None
+        hi = 0
 
-        # Calculate total output size - must cover both CSEG and DSEG regions
-        # CSEG and DSEG have separate base addresses and must be placed correctly
-        total_size = 0
+        def _span(addr_start, addr_end):
+            nonlocal lo, hi
+            if addr_end <= addr_start:
+                return
+            if lo is None or addr_start < lo:
+                lo = addr_start
+            if addr_end > hi:
+                hi = addr_end
+
+        placements = []  # (addr, source bytes iterable as (out_addr, byte))
         for module in self.modules:
-            # CSEG end address
-            cseg_bytes = module.code_size if module.code_size else (len(module.code) - module.code_start)
-            cseg_end = module.code_base + cseg_bytes - self.output_base
-            if cseg_end > total_size:
-                total_size = cseg_end
+            for seg, start, end in self._segment_ranges(module):
+                if seg == ADDR_COMMON_REL:
+                    continue  # COMMON is uninitialized (BSS), not emitted
+                begin = max(start, module.code_start) if seg == ADDR_ABSOLUTE else start
+                if begin < end:
+                    _span(self._buf_offset_addr(module, begin),
+                          self._buf_offset_addr(module, end - 1) + 1)
+            # Account for declared sizes beyond the materialized buffer
+            if ADDR_PROGRAM_REL in module.seg_buf_start:
+                _span(module.code_base, module.code_base + self._cseg_len(module))
+            if module.data_size > 0 and self.emit_ds_zeros:
+                _span(module.data_base, module.data_base + module.data_size)
 
-            # DSEG end address
-            if module.data_size > 0:
-                if self.emit_ds_zeros:
-                    # Include full declared DSEG (DS directives filled with zeros)
-                    dseg_end = module.data_base + module.data_size - self.output_base
-                    if dseg_end > total_size:
-                        total_size = dseg_end
-                else:
-                    # Only include actually-initialized DSEG bytes (DB/DW, not DS)
-                    buffer_len = len(module.code) - module.code_start
-                    initialized_dseg = buffer_len - (module.code_size if module.code_size else buffer_len)
-                    if initialized_dseg > 0:
-                        dseg_end = module.data_base + initialized_dseg - self.output_base
-                        if dseg_end > total_size:
-                            total_size = dseg_end
+        if lo is None:
+            lo = self.code_base
+            hi = self.code_base
+        self.output_base = lo
+        self.output = bytearray(max(0, hi - lo))
 
-        self.output = bytearray(total_size)
-
-        # Copy and relocate each module
         for module in self.modules:
-            src_start = module.code_start
-
-            # Determine CSEG size (declared or inferred from buffer)
-            cseg_size = module.code_size if module.code_size else len(module.code) - src_start
-
-            # Copy CSEG bytes to code_base
-            cseg_dest = module.code_base - self.output_base
-            for i in range(cseg_size):
-                src_idx = src_start + i
-                if src_idx < len(module.code) and cseg_dest + i < len(self.output):
-                    self.output[cseg_dest + i] = module.code[src_idx]
-
-            # Copy initialized DSEG bytes to data_base (separate from CSEG)
-            if module.data_size > 0:
-                buffer_len = len(module.code) - src_start
-                initialized_dseg = buffer_len - cseg_size
-                if initialized_dseg > 0:
-                    dseg_src = src_start + cseg_size
-                    dseg_dest = module.data_base - self.output_base
-                    for i in range(initialized_dseg):
-                        src_idx = dseg_src + i
-                        if src_idx < len(module.code) and dseg_dest + i < len(self.output):
-                            self.output[dseg_dest + i] = module.code[src_idx]
+            for seg, start, end in self._segment_ranges(module):
+                if seg == ADDR_COMMON_REL:
+                    continue
+                begin = max(start, module.code_start) if seg == ADDR_ABSOLUTE else start
+                for o in range(begin, end):
+                    out = self._buf_offset_addr(module, o) - self.output_base
+                    if 0 <= out < len(self.output):
+                        self.output[out] = module.code[o]
 
         # Fix up external references
         # Track which (module_index, buf_offset) pairs are resolved externally
@@ -772,9 +807,6 @@ class Linker:
         resolved_external_locs = set()
 
         for mod_idx, module in enumerate(self.modules):
-            dest_offset = module.code_base - self.output_base
-            src_start = module.code_start  # For absolute ORG adjustment
-
             for name, refs in module.externals.items():
                 # Parse "SYMBOL+N" format for expression offsets
                 expr_offset = 0
@@ -799,50 +831,28 @@ class Linker:
                     # Mark this location as externally resolved so Phase 2 skips it
                     resolved_external_locs.add((mod_idx, head))
 
-                    # Follow the chain and fix up each reference
-                    # head is now a buffer offset, convert to output offset
-                    # Use appropriate base for the reference's segment type
-                    if ref_seg_type == ADDR_DATA_REL:
-                        ref_dest_offset = module.data_base - self.output_base
-                        seg_offset = head - module.seg_buf_start.get(ADDR_DATA_REL, 0)
-                    else:
-                        ref_dest_offset = dest_offset
-                        seg_offset = head - src_start
+                    # Follow the chain of references. head is a buffer offset;
+                    # each chain link holds the segment-relative offset of the
+                    # previous reference (0 ends the chain).
                     seg_base = module.seg_buf_start.get(ref_seg_type, 0)
-                    offset = seg_offset
+                    cur_buf = head
                     visited = set()  # Prevent infinite loops
-                    while offset not in visited and offset >= 0:
-                        visited.add(offset)
-                        abs_offset = ref_dest_offset + offset
-                        if abs_offset + 1 < len(self.output) and abs_offset >= 0:
-                            # Get value at this location (this is the next chain link)
-                            # For ADDR_ABSOLUTE, values are absolute addresses
-                            # For relative segments, values are segment-relative offsets
-                            value = self.output[abs_offset] | (self.output[abs_offset + 1] << 8)
-
-                            # Chain format: each link points to previous reference
-                            # End of chain is marked by value 0
-                            # Resolve this location with target address
-                            self.output[abs_offset] = target_addr & 0xFF
-                            self.output[abs_offset + 1] = (target_addr >> 8) & 0xFF
-
-                            # Track for PRL relocation if target is relocatable
-                            if target_seg_type in (ADDR_PROGRAM_REL, ADDR_DATA_REL, ADDR_COMMON_REL):
-                                self.external_relocations.append(abs_offset)
-
-                            if value == 0:
-                                # End of chain
-                                break
-                            else:
-                                # Follow chain to previous reference
-                                # Value is segment-relative, convert to segment offset
-                                offset = value
-                        else:
+                    while cur_buf is not None and cur_buf not in visited:
+                        visited.add(cur_buf)
+                        abs_offset = self._buf_offset_addr(module, cur_buf) - self.output_base
+                        if abs_offset < 0 or abs_offset + 1 >= len(self.output):
                             break
+                        value = self.output[abs_offset] | (self.output[abs_offset + 1] << 8)
+                        self.output[abs_offset] = target_addr & 0xFF
+                        self.output[abs_offset + 1] = (target_addr >> 8) & 0xFF
+                        if target_seg_type in (ADDR_PROGRAM_REL, ADDR_DATA_REL, ADDR_COMMON_REL):
+                            self.external_relocations.append(abs_offset)
+                        if value == 0:
+                            break
+                        cur_buf = seg_base + value
 
         # Apply relocations for program-relative, data-relative, and common-relative addresses
         for mod_idx, module in enumerate(self.modules):
-            src_start = module.code_start  # For absolute ORG adjustment
             for reloc_entry in module.relocations:
                 # Handle both old 2-tuple and new 3-tuple format
                 if len(reloc_entry) == 3:
@@ -855,15 +865,8 @@ class Linker:
                 if (mod_idx, buf_offset) in resolved_external_locs:
                     continue
 
-                # Calculate output offset based on which segment the reference is in
-                if ref_seg_type == ADDR_DATA_REL:
-                    # Reference is in DSEG
-                    dseg_start = module.seg_buf_start.get(ADDR_DATA_REL, 0)
-                    seg_offset = buf_offset - dseg_start
-                    abs_offset = (module.data_base - self.output_base) + seg_offset
-                else:
-                    # Reference is in CSEG (or other)
-                    abs_offset = (module.code_base - self.output_base) + (buf_offset - src_start)
+                # Output offset for the reference (ASEG absolute, CSEG/DSEG rebased)
+                abs_offset = self._buf_offset_addr(module, buf_offset) - self.output_base
 
                 if abs_offset >= 0 and abs_offset + 1 < len(self.output):
                     # Read current value
