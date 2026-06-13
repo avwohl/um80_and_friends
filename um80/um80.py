@@ -342,6 +342,56 @@ class Assembler:
             i -= 1
         return (-1, 0)
 
+    # Word operators that may directly precede a '+'/'-' that is therefore a
+    # unary sign on the following term, not a binary add/subtract.
+    _PRECEDING_WORD_OPS = frozenset({
+        'MOD', 'SHL', 'SHR', 'AND', 'OR', 'XOR', 'NOT',
+        'EQ', 'NE', 'LT', 'LE', 'GT', 'GE', 'HIGH', 'LOW', 'NUL', 'TYPE',
+    })
+
+    def find_binary_addsub(self, expr):
+        """Rightmost binary '+'/'-' at paren level 0, skipping unary signs.
+
+        A '+'/'-' is unary (and skipped) when it begins the expression or
+        immediately follows another operator or a word operator (e.g. the '-'
+        in 3*-2, 5--3, 2 SHL -1). Returns (index, op_char) or (-1, '').
+        """
+        in_string = [False] * len(expr)
+        i = 0
+        while i < len(expr):
+            if expr[i] in "'\"":
+                quote_char = expr[i]
+                start = i
+                i += 1
+                while i < len(expr) and expr[i] != quote_char:
+                    i += 1
+                if i < len(expr):
+                    for j in range(start, i + 1):
+                        in_string[j] = True
+                i += 1
+            else:
+                i += 1
+
+        level = 0
+        i = len(expr) - 1
+        while i >= 0:
+            if in_string[i]:
+                i -= 1
+                continue
+            ch = expr[i]
+            if ch == ')':
+                level += 1
+            elif ch == '(':
+                level -= 1
+            elif level == 0 and ch in '+-':
+                left = expr[:i].rstrip()
+                if left and left[-1] not in '+-*/(<,':
+                    m = re.search(r'([A-Za-z]+)$', left)
+                    if not (m and m.group(1).upper() in self._PRECEDING_WORD_OPS):
+                        return (i, ch)
+            i -= 1
+        return (-1, '')
+
     def parse_expression(self, expr, allow_undefined=False):
         """
         Parse an expression, return (value, seg_type, is_external, ext_name).
@@ -355,64 +405,11 @@ class Assembler:
         if expr == '$':
             return (self.loc, self.seg_type, False, None)
 
-        # Handle unary operators first
+        # Operators are split lowest-precedence-first (recursive descent) in
+        # M80 precedence order. Unary operators (NOT; unary +/-; HIGH/LOW/NUL/
+        # TYPE) are handled at their own precedence level further down, NOT at
+        # the top, so e.g. -2+3 = (-2)+3 and NOT 1 AND 2 = (NOT 1) AND 2.
         upper = expr.upper()
-
-        # NUL operator - returns true (0FFFFh) if argument is null/empty
-        if upper.startswith('NUL '):
-            arg = expr[4:].strip()
-            if not arg or arg == '<>' or arg == "''":
-                return (0xFFFF, ADDR_ABSOLUTE, False, None)
-            return (0, ADDR_ABSOLUTE, False, None)
-
-        # DRI extension: HIGH(expr) and LOW(expr) function-call syntax
-        if upper.startswith('HIGH(') and expr.endswith(')'):
-            # Find matching closing paren
-            inner = expr[5:-1]  # Extract content between HIGH( and )
-            val, seg, ext, name = self.parse_expression(inner, allow_undefined)
-            return ((val >> 8) & 0xFF, ADDR_ABSOLUTE, ext, name)
-        if upper.startswith('LOW(') and expr.endswith(')'):
-            inner = expr[4:-1]  # Extract content between LOW( and )
-            val, seg, ext, name = self.parse_expression(inner, allow_undefined)
-            return (val & 0xFF, ADDR_ABSOLUTE, ext, name)
-        # Original M80 syntax: HIGH expr and LOW expr (with space)
-        if upper.startswith('HIGH '):
-            val, seg, ext, name = self.parse_expression(expr[5:], allow_undefined)
-            return ((val >> 8) & 0xFF, ADDR_ABSOLUTE, ext, name)
-        if upper.startswith('LOW '):
-            val, seg, ext, name = self.parse_expression(expr[4:], allow_undefined)
-            return (val & 0xFF, ADDR_ABSOLUTE, ext, name)
-        if upper.startswith('NOT '):
-            val, seg, ext, name = self.parse_expression(expr[4:], allow_undefined)
-            return ((~val) & 0xFFFF, ADDR_ABSOLUTE, False, None)
-
-        # TYPE operator - returns byte describing expression characteristics
-        # Lower 2 bits: mode (0=abs, 1=prog rel, 2=data rel, 3=common rel)
-        # Bit 5 (20H): defined
-        # Bit 7 (80H): external
-        if upper.startswith('TYPE '):
-            arg = expr[5:].strip()
-            # Check if it's a valid symbol
-            if re.match(r'^[A-Za-z_@?][A-Za-z0-9_@?$.]*$', arg):
-                sym = self.symbols.get(arg.upper())
-                if sym:
-                    result = sym.seg_type & 0x03  # Mode bits
-                    if sym.defined:
-                        result |= 0x20
-                    if sym.external:
-                        result |= 0x80
-                    return (result, ADDR_ABSOLUTE, False, None)
-            # If not a symbol or not found, return 0
-            return (0, ADDR_ABSOLUTE, False, None)
-
-        # Handle unary minus at start (but not subtraction)
-        if expr.startswith('-') and len(expr) > 1:
-            val, seg, ext, name = self.parse_expression(expr[1:], allow_undefined)
-            return ((-val) & 0xFFFF, seg, ext, name)
-
-        # Handle unary plus at start
-        if expr.startswith('+') and len(expr) > 1:
-            return self.parse_expression(expr[1:], allow_undefined)
 
         # Handle parenthesized expression - check if balanced outer parens
         if expr.startswith('('):
@@ -451,6 +448,11 @@ class Assembler:
             right_val, _, _, _ = self.parse_expression(expr[idx+oplen:], allow_undefined)
             return ((left_val & right_val) & 0xFFFF, ADDR_ABSOLUTE, False, None)
 
+        # NOT (unary): binds tighter than AND/OR/XOR, looser than relational.
+        if upper.startswith('NOT '):
+            val, _, _, _ = self.parse_expression(expr[4:], allow_undefined)
+            return ((~val) & 0xFFFF, ADDR_ABSOLUTE, False, None)
+
         # Comparison operators: EQ, NE, LT, LE, GT, GE
         idx, oplen = self.find_op_at_level0(expr, [' EQ ', ' NE ', ' LT ', ' LE ', ' GT ', ' GE '])
         if idx >= 0:
@@ -473,14 +475,14 @@ class Assembler:
                 result = 0
             return (result, ADDR_ABSOLUTE, False, None)
 
-        # Addition and subtraction (lowest arithmetic precedence, right to left)
-        idx, oplen = self.find_op_at_level0(expr, ['+', '-'])
+        # Binary addition and subtraction (left-associative). Only split at a
+        # '+'/'-' in binary context; a unary sign (e.g. in 3*-2 or 5--3) is
+        # left for the unary handler / higher-precedence operand parsing.
+        idx, op = self.find_binary_addsub(expr)
         if idx >= 0:
-            op = expr[idx:idx+oplen]
             left = expr[:idx].strip()
-            right = expr[idx+oplen:].strip()
+            right = expr[idx+1:].strip()
 
-            # Don't split if left side is empty (unary operator case handled above)
             if left:
                 left_val, left_seg, left_ext, left_name = self.parse_expression(left, allow_undefined)
                 right_val, right_seg, right_ext, right_name = self.parse_expression(right, allow_undefined)
@@ -510,6 +512,14 @@ class Assembler:
 
                 return (result & 0xFFFF, result_seg, False, None)
 
+        # Unary minus / plus: binds tighter than binary +/- but looser than
+        # the multiplicative operators (so 3*-2 = 3*(-2), -2*3 = -(2*3)).
+        if expr.startswith('-') and len(expr) > 1:
+            val, seg, ext, name = self.parse_expression(expr[1:], allow_undefined)
+            return ((-val) & 0xFFFF, seg, ext, name)
+        if expr.startswith('+') and len(expr) > 1:
+            return self.parse_expression(expr[1:], allow_undefined)
+
         # Multiplication, division, MOD, SHL, SHR
         idx, oplen = self.find_op_at_level0(expr, ['*', '/', ' MOD ', ' SHL ', ' SHR '])
         if idx >= 0:
@@ -532,6 +542,61 @@ class Assembler:
                 return ((left_val << right_val) & 0xFFFF, ADDR_ABSOLUTE, False, None)
             elif op == 'SHR':
                 return ((left_val >> right_val) & 0xFFFF, ADDR_ABSOLUTE, False, None)
+
+        # Highest-precedence operators (bind tightest, just below parentheses):
+        # HIGH/LOW, the DRI HIGH(...)/LOW(...) function form, NUL and TYPE.
+        # DRI HIGH(expr)/LOW(expr): only the function form when the matching
+        # close paren is at end-of-expression (otherwise a binary operator
+        # above would already have split, e.g. HIGH(1234H)+1).
+        if upper.startswith('HIGH(') or upper.startswith('LOW('):
+            opn = 5 if upper.startswith('HIGH(') else 4  # index of '(' + 1
+            depth = 0
+            match_end = -1
+            for i in range(opn - 1, len(expr)):
+                if expr[i] == '(':
+                    depth += 1
+                elif expr[i] == ')':
+                    depth -= 1
+                    if depth == 0:
+                        match_end = i
+                        break
+            if match_end == len(expr) - 1:
+                inner = expr[opn:match_end]
+                val, seg, ext, name = self.parse_expression(inner, allow_undefined)
+                if upper.startswith('HIGH('):
+                    return ((val >> 8) & 0xFF, ADDR_ABSOLUTE, ext, name)
+                return (val & 0xFF, ADDR_ABSOLUTE, ext, name)
+        # Original M80 syntax: HIGH expr and LOW expr (with space)
+        if upper.startswith('HIGH '):
+            val, seg, ext, name = self.parse_expression(expr[5:], allow_undefined)
+            return ((val >> 8) & 0xFF, ADDR_ABSOLUTE, ext, name)
+        if upper.startswith('LOW '):
+            val, seg, ext, name = self.parse_expression(expr[4:], allow_undefined)
+            return (val & 0xFF, ADDR_ABSOLUTE, ext, name)
+
+        # NUL operator - true (0FFFFh) if its argument is null/empty. The empty
+        # case (a macro arg omitted, leaving a bare 'NUL') is its primary use.
+        if upper == 'NUL' or upper.startswith('NUL '):
+            arg = expr[3:].strip() if len(expr) > 3 else ''
+            if not arg or arg == '<>' or arg == "''":
+                return (0xFFFF, ADDR_ABSOLUTE, False, None)
+            return (0, ADDR_ABSOLUTE, False, None)
+
+        # TYPE operator - returns byte describing expression characteristics
+        # Lower 2 bits: mode (0=abs, 1=prog rel, 2=data rel, 3=common rel)
+        # Bit 5 (20H): defined; Bit 7 (80H): external
+        if upper.startswith('TYPE '):
+            arg = expr[5:].strip()
+            if re.match(r'^[A-Za-z_@?][A-Za-z0-9_@?$.]*$', arg):
+                sym = self.symbols.get(arg.upper())
+                if sym:
+                    result = sym.seg_type & 0x03
+                    if sym.defined:
+                        result |= 0x20
+                    if sym.external:
+                        result |= 0x80
+                    return (result, ADDR_ABSOLUTE, False, None)
+            return (0, ADDR_ABSOLUTE, False, None)
 
         # Handle ## suffix (6-character truncation operator, implies external)
         if expr.endswith('##'):
