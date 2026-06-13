@@ -2778,6 +2778,14 @@ class Assembler:
                 self._save_listing_entry(line)
                 return
 
+        # A user macro shadows a built-in instruction or pseudo-op of the same
+        # name (M80 resolves the macro table before the instruction/pseudo-op
+        # tables). Checked after the SET/ASET directive disambiguation above.
+        if upper_op in self.macros:
+            self.expand_macro(upper_op, operands)
+            self._save_listing_entry(line)
+            return
+
         # Try CPU instruction
         if self.z80_mode:
             if self.assemble_z80_instruction(operator, operands):
@@ -2790,12 +2798,6 @@ class Assembler:
 
         # Try pseudo-op
         if self.assemble_pseudo_op(operator, operands, label):
-            self._save_listing_entry(line)
-            return
-
-        # Check if it's a macro call
-        if upper_op in self.macros:
-            self.expand_macro(upper_op, operands)
             self._save_listing_entry(line)
             return
 
@@ -2820,8 +2822,104 @@ class Assembler:
                 i += 1
         return ''.join(result)
 
+    def _string_spans(self, line):
+        """Return (start, end) index spans of quoted '...'/"..." literals.
+
+        Honors M80 doubled-quote ('') escapes. A "'" preceded by an
+        alphanumeric is not treated as a string start (Z80 AF' register, the
+        same rule used by parse_line/split_operands).
+        """
+        spans = []
+        i = 0
+        n = len(line)
+        while i < n:
+            c = line[i]
+            if c == "'" and i > 0 and line[i - 1].isalnum():
+                i += 1
+                continue
+            if c in "'\"":
+                q = c
+                start = i
+                i += 1
+                while i < n:
+                    if line[i] == q:
+                        if i + 1 < n and line[i + 1] == q:
+                            i += 2  # doubled quote = escaped, stays in string
+                            continue
+                        i += 1  # closing quote
+                        break
+                    i += 1
+                spans.append((start, i))
+            else:
+                i += 1
+        return spans
+
+    def _sub_outside_strings(self, line, pattern, repl):
+        """Apply pattern.sub(repl, ...) only outside quoted string literals."""
+        spans = self._string_spans(line)
+        if not spans:
+            return pattern.sub(repl, line)
+        result = []
+        pos = 0
+        for (s, e) in spans:
+            result.append(pattern.sub(repl, line[pos:s]))
+            result.append(line[s:e])
+            pos = e
+        result.append(pattern.sub(repl, line[pos:]))
+        return ''.join(result)
+
+    def substitute_macro_params(self, line, subst):
+        """Substitute macro parameters, honoring '&' concatenation and strings.
+
+        Outside quoted strings a parameter is replaced wherever it appears as a
+        token (bare, or adjacent to '&'); an adjacent '&' is removed. Inside a
+        quoted string a parameter is replaced ONLY in the leading-'&' form
+        (&param), with the '&' removed (verified against real M80: "&name"
+        substitutes, but "a&b" -> "aCD", "pfx&_x" -> "pfx&_x", and a bare
+        parameter name in a string stays literal). Parameter names fold case;
+        longest first so a parameter that is a prefix of another wins.
+        """
+        names = sorted((n for n in subst if n), key=len, reverse=True)
+        if not names:
+            return line
+        alt = '|'.join(re.escape(n) for n in names)
+        out_pat = re.compile(r'&?\b(' + alt + r')\b&?', re.IGNORECASE)
+        in_pat = re.compile(r'&\b(' + alt + r')\b', re.IGNORECASE)
+
+        def out_repl(m):
+            return subst[m.group(1).upper()]
+
+        def in_repl(m):
+            return subst[m.group(1).upper()]
+
+        spans = self._string_spans(line)
+        if not spans:
+            return out_pat.sub(out_repl, line)
+        result = []
+        pos = 0
+        for (s, e) in spans:
+            result.append(out_pat.sub(out_repl, line[pos:s]))
+            result.append(in_pat.sub(in_repl, line[s:e]))
+            pos = e
+        result.append(out_pat.sub(out_repl, line[pos:]))
+        return ''.join(result)
+
     def process_percent_operator(self, line):
-        """Process % operator in a line, converting expressions to numbers."""
+        """Process % operator (expression -> number), skipping quoted strings."""
+        spans = self._string_spans(line)
+        if not spans:
+            return self._percent_segment(line)
+        result = []
+        pos = 0
+        for (s, e) in spans:
+            result.append(self._percent_segment(line[pos:s]))
+            result.append(line[s:e])
+            pos = e
+        result.append(self._percent_segment(line[pos:]))
+        return ''.join(result)
+
+    def _percent_segment(self, line):
+        """Process % operator within a string-free segment."""
         result = []
         i = 0
         while i < len(line):
@@ -2904,30 +3002,19 @@ class Assembler:
                     for sym in opnds.split(','):
                         local_syms.add(sym.strip().upper())
                 continue
-            if op and op.upper() == 'EXITM':
-                # Exit macro expansion early
+            if op and op.upper() == 'EXITM' and self.cond_false_depth == 0:
+                # Exit macro expansion early. Ignored inside a false conditional
+                # branch (the canonical IF cond / EXITM / ENDIF idiom).
                 break
 
-            # Substitute parameters. M80 '&' is the macro concatenation
-            # operator: an '&' directly adjacent to a parameter (on either
-            # side) is removed during expansion. Substitute every parameter in
-            # a single pass so a single '&' shared between two parameters
-            # (A&B) is consumed once while both are still substituted, and so a
-            # parameter's value is not rescanned for other parameter names.
-            # Parameter names fold case; longest first so a parameter that is a
-            # prefix of another is not shadowed.
-            expanded = body_line
-            names = sorted((n for n in subst if n), key=len, reverse=True)
-            if names:
-                param_pat = re.compile(
-                    r'&?\b(' + '|'.join(re.escape(n) for n in names) + r')\b&?',
-                    re.IGNORECASE)
-                expanded = param_pat.sub(lambda m: subst[m.group(1).upper()], expanded)
+            # Substitute parameters (M80 '&' concatenation, string-aware).
+            expanded = self.substitute_macro_params(body_line, subst)
 
-            # Replace local symbols with unique versions
+            # Replace local symbols with unique versions (outside strings only).
             for local_sym in local_syms:
-                expanded = re.sub(r'\b' + re.escape(local_sym) + r'\b',
-                                  local_sym + local_suffix, expanded, flags=re.IGNORECASE)
+                pat = re.compile(r'\b' + re.escape(local_sym) + r'\b', re.IGNORECASE)
+                expanded = self._sub_outside_strings(
+                    expanded, pat, local_sym + local_suffix)
 
             # Process % operator (convert expressions to numbers)
             expanded = self.process_percent_operator(expanded)

@@ -48,8 +48,12 @@ mk      MACRO  name
     assert ord('&') not in out
 
 
-def test_trailing_ampersand_concatenation():
-    """``pfx&_x`` appends literal text to the parameter and drops the '&'."""
+def test_trailing_ampersand_in_string_is_literal():
+    """Inside a string, trailing ``pfx&_x`` does NOT substitute (real M80 3.44).
+
+    Only the leading-'&' form substitutes inside a string, so "pfx&_x" stays
+    exactly "pfx&_x" (the parameter before the '&' and the '&' are literal).
+    """
     src = """\
         .Z80
         ASEG
@@ -61,8 +65,25 @@ mk      MACRO  pfx
         END
 """
     _, out = _assemble_and_link(src)
-    assert out[0:5] == b"FOO_x"
-    assert ord('&') not in out
+    assert out[0:6] == b"pfx&_x"
+
+
+def test_trailing_ampersand_concatenation_outside_string():
+    """Outside a string, ``pfx&_x`` appends literal text and drops the '&'."""
+    src = """\
+        .Z80
+        ASEG
+        ORG 100H
+mk      MACRO  pfx
+pfx&_x: DB 0
+        ENDM
+        mk FOO
+        END
+"""
+    asm, _ = _assemble_and_link(src)
+    syms = {s.upper() for s in asm.symbols}
+    assert "FOO_X" in syms
+    assert not any('&' in s for s in syms)
 
 
 def test_trailing_ampersand_in_label():
@@ -84,8 +105,31 @@ pfx&_end:
     assert not any('&' in s for s in syms)
 
 
-def test_shared_ampersand_between_two_params():
-    """``a&b`` concatenates both parameters' values, consuming the single '&'."""
+def test_shared_ampersand_outside_string():
+    """Outside a string, ``a&b`` concatenates both parameter values."""
+    src = """\
+        .Z80
+        ASEG
+        ORG 100H
+two     MACRO  a,b
+a&b:
+        DB 0
+        ENDM
+        two FOO,BAR
+        END
+"""
+    asm, _ = _assemble_and_link(src)
+    syms = {s.upper() for s in asm.symbols}
+    assert "FOOBAR" in syms
+    assert not any('&' in s for s in syms)
+
+
+def test_in_string_only_leading_ampersand_substitutes():
+    """Inside a string only &param substitutes (verified vs real M80 3.44).
+
+    "a&b" with a=AB, b=CD -> "aCD": the &b substitutes b and drops the '&',
+    but the leading 'a' (no preceding '&') stays literal.
+    """
     src = """\
         .Z80
         ASEG
@@ -97,8 +141,7 @@ two     MACRO  a,b
         END
 """
     _, out = _assemble_and_link(src)
-    assert out[0:4] == b"ABCD"
-    assert ord('&') not in out
+    assert out[0:3] == b"aCD"
 
 
 def test_literal_ampersand_preserved():
