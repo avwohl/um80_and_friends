@@ -385,6 +385,40 @@ For more details on these extensions and compatibility notes, see [docs/EXTENSIO
   - `cref_lib.pdf` - CREF and LIB-80
   - `8080asm.pdf` - 8080 assembly reference
 
+## Testing
+
+The test suite (126 tests) runs under `pytest`:
+
+```bash
+pip install -e ".[dev]"
+pytest                                    # run everything
+pytest tests/test_expr_precedence.py -v   # one file, verbose
+```
+
+The MACRO-80 compatibility tests below were validated against the genuine
+Microsoft MACRO-80 / LINK-80 3.44 binaries — each expected value was confirmed
+by assembling the same source with the real assembler — so they pin um80/ul80
+to documented M80 behavior:
+
+| File | Covers |
+|------|--------|
+| `test_expr_precedence.py` | Operator precedence (unary `-`/`NOT`/`HIGH`/`LOW`, relational, shifts) |
+| `test_macro_bang_args.py` | DRI `!` separator vs. M80 argument-quote `!`, escaped commas |
+| `test_macro_concat.py` | `&` concatenation: leading/trailing/shared, in-string `&param`, case folding |
+| `test_macro_expansion.py` | EXITM in conditionals, macro shadowing built-ins, string-safe substitution, `NUL` |
+| `test_repeat_blocks.py` | Nested REPT/IRP/IRPC, IRP sublists, EXITM |
+| `test_radix_conditional.py` | Decimal `.RADIX` operand, unterminated / duplicate-`ELSE` diagnostics |
+| `test_symbol_class.py` | SET vs. EQU/label redefinability classes |
+| `test_z80_and_charconst.py` | `LD A,I`/`LD A,R` encoding, two-character constant byte order |
+| `test_linker_segments.py` | Absolute ASEG placement, mixed CSEG+ASEG, COMMON-only modules |
+| `test_linker_dupglobal.py` | Multiply-defined PUBLIC global is a link error |
+
+Further tests cover the toolchain more broadly: `test_ds_org.py` (DS/ORG and
+segment placement), `test_defs_fill.py` (DEFS fill value), `test_end_symbol.py`
+(`END` entry symbol and `__END__`), `test_ext_alias.py` (external aliases),
+`test_jr_promotion.py` (JR/DJNZ out-of-range promotion), and
+`test_case_sensitivity.py`.
+
 ## Example Workflow
 
 ```bash
