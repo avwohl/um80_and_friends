@@ -2,6 +2,38 @@
 
 All notable changes to the um80 toolchain are documented here.
 
+## [0.3.42] - 2026-06-13
+
+A broad M80-compatibility audit. Every fix below was verified against the
+genuine MACRO-80 / LINK-80 3.44 binaries running under cpmemu.
+
+### Fixed
+- um80 assembler: Expression operator precedence now matches M80. The unary
+  operators (NOT, unary minus/plus, HIGH/LOW) were evaluated first, giving them
+  the lowest precedence; they are now at their correct levels, so `-2+3`=1,
+  `NOT 1 AND 2`=2, `3*-2 AND 0FFH`=0FAH, `HIGH 1234H + 1`=13H, `-1 GT 1`=0FFFFH,
+  and `HIGH(1234H)+LOW(5678H)` parses correctly.
+- um80 assembler: A two-character constant places the first character in the
+  high byte (`'AB'`=0x4142), so `DW 'AB'` emits bytes `42 41`.
+- um80 assembler: `LD A,I` / `LD A,R` now encode `ED 57` / `ED 5F` (were emitted
+  as `LD A,0`).
+- um80 assembler: Macro fixes — EXITM is ignored inside a false conditional
+  branch (the IF/EXITM/ENDIF idiom); a user macro shadows a built-in
+  instruction/pseudo-op of the same name; parameter, LOCAL and `%` substitution
+  no longer corrupt quoted string literals; `IF NUL <param>` works with an
+  omitted argument.
+- um80 assembler: REPT/IRP/IRPC fixes — a directly nested repeat block is no
+  longer dropped; `IRP X,<<1,2>,<3,4>>` iterates twice (not four times) and
+  strips one bracket level per item; EXITM terminates a repeat expansion.
+- um80 assembler: `.RADIX` evaluates its operand in decimal regardless of the
+  current radix (so `.RADIX 16` works), and the radix resets each pass.
+- um80 assembler: An unterminated conditional (missing ENDIF) is reported, and
+  a duplicate ELSE for one conditional level is an error.
+- um80 assembler: Cross-class symbol redefinition is rejected — a SET/DEFL/ASET
+  symbol and an EQU/label symbol cannot redefine each other (multiply defined).
+- ul80 linker: A multiply-defined PUBLIC global is now an error (was a warning),
+  matching L80's `%Mult. Def. Global`.
+
 ## [0.3.41] - 2026-06-13
 
 ### Fixed
