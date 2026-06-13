@@ -281,7 +281,8 @@ class Assembler:
             if len(chars) == 1:
                 return (ord(chars), True)
             elif len(chars) == 2:
-                return (ord(chars[0]) | (ord(chars[1]) << 8), True)
+                # M80: first char is the high-order byte ('AB' = 0x4142).
+                return ((ord(chars[0]) << 8) | ord(chars[1]), True)
         return (0, False)
 
     def find_op_at_level0(self, expr, ops):
@@ -1272,6 +1273,15 @@ class Assembler:
                     return True
                 for b in encode_z80_ld_r_r(dst, src):
                     self.emit_byte(b)
+                return True
+
+            # LD A,I and LD A,R (load from interrupt/refresh register). Must
+            # precede the generic 'LD r,n' immediate path below, which would
+            # otherwise treat the bare I/R as an undefined symbol and wrongly
+            # emit LD A,0 (3E 00).
+            if dst_upper == 'A' and src_upper in ('I', 'R'):
+                self.emit_byte(PREFIX_ED)
+                self.emit_byte(0x57 if src_upper == 'I' else 0x5F)
                 return True
 
             # LD r,n (immediate byte) - but NOT if src is (nn) memory access
