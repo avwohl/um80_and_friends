@@ -111,6 +111,7 @@ class Assembler:
 
         # REPT/IRP/IRPC state
         self.repeat_stack = []  # Stack of (type, count/list, body, iter_var)
+        self.repeat_nest_depth = 0  # Nesting depth while collecting a repeat body
 
         self.entry_point = None  # END address if specified
         self.module_name = None
@@ -2620,9 +2621,13 @@ class Assembler:
             param = ops[0].strip().upper()
             # Rest of ops are the list values
             values = ops[1:]
-            # Handle <> enclosed list
+            # Handle <...> enclosed list: strip the outer brackets and split
+            # while respecting nested <...> groups (so <<1,2>,<3,4>> yields two
+            # items, not four). An empty list <> still iterates once with an
+            # empty argument (matches real M80).
             if len(values) == 1 and values[0].startswith('<') and values[0].endswith('>'):
-                values = [v.strip() for v in values[0][1:-1].split(',')]
+                inner = values[0][1:-1]
+                values = self.split_operands(inner) if inner.strip() else ['']
             self.repeat_stack.append(('IRP', values, [], param, label))
             return True
 
@@ -2734,16 +2739,19 @@ class Assembler:
         # If collecting REPT/IRP/IRPC body, handle specially
         if self.repeat_stack:
             if upper_op in ('REPT', 'IRP', 'IRPC'):
-                # Nested repeat - add to body and track nesting
+                # Nested repeat: keep the directive line verbatim in the outer
+                # body and just count the nesting depth. The nested block is
+                # re-collected and executed when execute_repeat replays the
+                # outer body, so its own body must NOT be discarded here.
                 self.repeat_stack[-1][2].append(line)
-                self.repeat_stack.append(('NESTED', 0, [], None, None))
+                self.repeat_nest_depth += 1
             elif upper_op == 'ENDM':
-                if len(self.repeat_stack) > 1 and self.repeat_stack[-1][0] == 'NESTED':
-                    # End of nested repeat
-                    self.repeat_stack.pop()
+                if self.repeat_nest_depth > 0:
+                    # ENDM of a nested block - keep it in the outer body.
+                    self.repeat_nest_depth -= 1
                     self.repeat_stack[-1][2].append(line)
                 else:
-                    # End of outer repeat - execute it
+                    # ENDM of the outer block - execute it.
                     rept_type, param_or_count, body, iter_var, rept_label = self.repeat_stack.pop()
                     self.execute_repeat(rept_type, param_or_count, body, iter_var)
             else:
@@ -3027,43 +3035,44 @@ class Assembler:
     def execute_repeat(self, rept_type, param_or_count, body, iter_var):
         """Execute a REPT/IRP/IRPC block."""
         if rept_type == 'REPT':
-            # Repeat body 'count' times
             count = param_or_count
             for i in range(count):
-                for line in body:
-                    self.process_line(line)
+                if self._run_repeat_iteration(body, iter_var, None):
+                    break
 
         elif rept_type == 'IRP':
-            # Iterate with list of values
-            values = param_or_count
-            for value in values:
-                for line in body:
-                    # Substitute iter_var with value
-                    expanded = line
-                    if iter_var:
-                        # Replace &iter_var with value (for concatenation)
-                        expanded = expanded.replace(f'&{iter_var}', value)
-                        expanded = expanded.replace(f'&{iter_var.lower()}', value)
-                        # Replace standalone iter_var with value
-                        expanded = re.sub(r'\b' + re.escape(iter_var) + r'\b',
-                                          value, expanded, flags=re.IGNORECASE)
-                    self.process_line(expanded)
+            for value in param_or_count:
+                # M80 strips one level of angle brackets from each list item.
+                if len(value) >= 2 and value.startswith('<') and value.endswith('>'):
+                    value = value[1:-1]
+                if self._run_repeat_iteration(body, iter_var, value):
+                    break
 
         elif rept_type == 'IRPC':
-            # Iterate over characters
-            chars = param_or_count
-            for char in chars:
-                for line in body:
-                    # Substitute iter_var with character
-                    expanded = line
-                    if iter_var:
-                        # Replace &iter_var with char (for concatenation)
-                        expanded = expanded.replace(f'&{iter_var}', char)
-                        expanded = expanded.replace(f'&{iter_var.lower()}', char)
-                        # Replace standalone iter_var with char
-                        expanded = re.sub(r'\b' + re.escape(iter_var) + r'\b',
-                                          char, expanded, flags=re.IGNORECASE)
-                    self.process_line(expanded)
+            for char in param_or_count:
+                if self._run_repeat_iteration(body, iter_var, char):
+                    break
+
+    def _run_repeat_iteration(self, body, iter_var, value):
+        """Run one iteration of a repeat body, substituting iter_var with value.
+
+        Returns True if EXITM terminated the expansion (so the caller stops
+        iterating). EXITM is honored only at this level (not while a nested
+        repeat is being collected) and not inside a false conditional branch.
+        """
+        for line in body:
+            expanded = line
+            if iter_var and value is not None:
+                expanded = expanded.replace(f'&{iter_var}', value)
+                expanded = expanded.replace(f'&{iter_var.lower()}', value)
+                expanded = re.sub(r'\b' + re.escape(iter_var) + r'\b',
+                                  value, expanded, flags=re.IGNORECASE)
+            if not self.repeat_stack and self.cond_false_depth == 0:
+                _, op, _, _ = self.parse_line(expanded)
+                if op and op.upper() == 'EXITM':
+                    return True
+            self.process_line(expanded)
+        return False
 
     def find_include_file(self, filename):
         """Find an include file, searching in various locations."""
