@@ -2833,16 +2833,21 @@ class Assembler:
                 # Exit macro expansion early
                 break
 
-            # Substitute parameters and local symbols
+            # Substitute parameters. M80 '&' is the macro concatenation
+            # operator: an '&' directly adjacent to a parameter (on either
+            # side) is removed during expansion. Substitute every parameter in
+            # a single pass so a single '&' shared between two parameters
+            # (A&B) is consumed once while both are still substituted, and so a
+            # parameter's value is not rescanned for other parameter names.
+            # Parameter names fold case; longest first so a parameter that is a
+            # prefix of another is not shadowed.
             expanded = body_line
-            for param, value in subst.items():
-                # Replace &param with value (M80 '&' concatenation operator).
-                # Case-insensitive: parameter names fold case, so a lowercase
-                # &name must match an upper-cased parameter (otherwise the '&'
-                # is left behind and emitted literally).
-                expanded = re.sub(r'&' + re.escape(param), value, expanded, flags=re.IGNORECASE)
-                # Replace standalone param with value
-                expanded = re.sub(r'\b' + re.escape(param) + r'\b', value, expanded, flags=re.IGNORECASE)
+            names = sorted((n for n in subst if n), key=len, reverse=True)
+            if names:
+                param_pat = re.compile(
+                    r'&?\b(' + '|'.join(re.escape(n) for n in names) + r')\b&?',
+                    re.IGNORECASE)
+                expanded = param_pat.sub(lambda m: subst[m.group(1).upper()], expanded)
 
             # Replace local symbols with unique versions
             for local_sym in local_syms:
