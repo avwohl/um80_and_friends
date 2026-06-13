@@ -2,6 +2,24 @@
 
 All notable changes to the um80 toolchain are documented here.
 
+## [0.3.41] - 2026-06-13
+
+### Fixed
+- um80 assembler: Fixed the DRI `!` multi-statement separator corrupting macro
+  invocations. On a macro-call line, `!` is the M80 argument-quote operator
+  (e.g. `head FOO,!!CF` passes the name `!CF`, and `!,` passes a literal comma),
+  not a statement separator, so such lines are no longer split on `!`. Escaped
+  commas in a macro argument list are also kept within their argument (issue #3).
+- um80 assembler: Fixed `&`-concatenation of a macro parameter being
+  case-sensitive, so a lowercase `&name` referencing parameter `name` left a
+  stray `&` in the output instead of substituting the argument (issue #3).
+
+### Removed
+- Removed the stale standalone scripts under `src/` (um80, ul80, ulib80,
+  ucref80, ud80, and the `um80_*opcodes`/`um80_relformat` helpers). They were a
+  pre-package copy that had drifted months out of sync; the installed tools all
+  run from the `um80/` package (see `pyproject.toml` entry points).
+
 ## [0.3.40] - 2026-04-09
 
 ### Fixed

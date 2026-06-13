@@ -75,6 +75,10 @@ This is commonly used in DRI source code to group related operations. The commen
 - The `!` separator is recognized outside of string literals
 - Each statement after the first is processed as if it had no label
 - Works with all instructions and most directives
+- A macro-invocation line is **not** split on `!`. There, `!` retains its M80
+  meaning of quoting the next character in the argument list (e.g.
+  `head FOO,!!CF` passes the name `!CF`, and `!,` passes a literal comma), so
+  the separator never interferes with macro arguments.
 
 ### HIGH and LOW Operators (Function Syntax)
 

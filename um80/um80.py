@@ -654,8 +654,14 @@ class Assembler:
 
         return (label, operator, operands, comment)
 
-    def split_operands(self, operands):
-        """Split operands by comma, respecting strings, parentheses, and angle brackets."""
+    def split_operands(self, operands, escape_bang=False):
+        """Split operands by comma, respecting strings, parentheses, and angle brackets.
+
+        When escape_bang is True (macro argument lists), '!' quotes the
+        following character so an escaped comma/bracket is not treated as a
+        delimiter (M80 macro syntax). The '!' is retained in the returned
+        argument for process_macro_argument() to consume (issue #3).
+        """
         if not operands:
             return []
 
@@ -666,7 +672,15 @@ class Assembler:
         in_string = False
         string_char = None
 
-        for i, ch in enumerate(operands):
+        i = 0
+        n = len(operands)
+        while i < n:
+            ch = operands[i]
+            if escape_bang and ch == '!' and not in_string and i + 1 < n:
+                # '!' quotes the next character in a macro argument list
+                current += ch + operands[i + 1]
+                i += 2
+                continue
             if in_string:
                 current += ch
                 if ch == string_char:
@@ -697,6 +711,7 @@ class Assembler:
                 current = ''
             else:
                 current += ch
+            i += 1
 
         if current.strip():
             result.append(current.strip())
@@ -2553,14 +2568,30 @@ class Assembler:
 
         return False  # Not a pseudo-op
 
+    def _line_invokes_macro(self, line):
+        """Return True if this line's operator is a defined macro name.
+
+        Used to suppress DRI '!' statement-splitting on macro-call lines, where
+        '!' is instead the M80 argument-quote operator (issue #3). The '!' check
+        is a cheap guard so we only parse lines that could be affected.
+        """
+        if '!' not in line:
+            return False
+        operator = self.parse_line(line)[1]
+        return operator is not None and operator in self.macros
+
     def process_line(self, line):
         """Process a single source line."""
         self.line_num += 1
         self._start_listing_line()
 
-        # DRI extension: split on '!' separator for multi-statement lines
-        # Only do this when not collecting macro or repeat bodies
-        if self.collecting_macro is None and not self.repeat_stack:
+        # DRI extension: split on '!' separator for multi-statement lines.
+        # Only do this when not collecting macro or repeat bodies, and not on a
+        # macro-invocation line. On a macro call, '!' is the M80 argument-quote
+        # operator (e.g. head FOO,!!CF) rather than a DRI statement separator;
+        # splitting here would shred the arguments (issue #3).
+        if (self.collecting_macro is None and not self.repeat_stack
+                and not self._line_invokes_macro(line)):
             statements = self.split_on_exclamation(line)
             if len(statements) > 1:
                 # Process first statement normally (with label if any)
@@ -2764,10 +2795,12 @@ class Assembler:
             self.error(f"Undefined macro: {name}")
             return
 
-        # Parse actual arguments, handling ! operator
+        # Parse actual arguments, handling ! operator. '!' quotes the next
+        # character (including an argument-separating comma), so split with
+        # escape_bang and let process_macro_argument() resolve the escapes.
         args = []
         if operands:
-            raw_args = self.split_operands(operands)
+            raw_args = self.split_operands(operands, escape_bang=True)
             args = [self.process_macro_argument(arg) for arg in raw_args]
 
         # Build substitution map
@@ -2803,8 +2836,11 @@ class Assembler:
             # Substitute parameters and local symbols
             expanded = body_line
             for param, value in subst.items():
-                # Replace &param with value (for concatenation)
-                expanded = expanded.replace(f'&{param}', value)
+                # Replace &param with value (M80 '&' concatenation operator).
+                # Case-insensitive: parameter names fold case, so a lowercase
+                # &name must match an upper-cased parameter (otherwise the '&'
+                # is left behind and emitted literally).
+                expanded = re.sub(r'&' + re.escape(param), value, expanded, flags=re.IGNORECASE)
                 # Replace standalone param with value
                 expanded = re.sub(r'\b' + re.escape(param) + r'\b', value, expanded, flags=re.IGNORECASE)
 
