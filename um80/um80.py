@@ -98,6 +98,7 @@ class Assembler:
         self.list_on = True
         self.cond_stack = []  # Conditional assembly stack
         self.cond_false_depth = 0  # Depth of false conditionals
+        self.cond_else_levels = set()  # Conditional depths that have seen an ELSE
 
         self.local_counter = 0  # For LOCAL symbols in macros
         self.expanding_macro = False
@@ -2325,12 +2326,19 @@ class Assembler:
             self.list_on = False
             return True
 
-        # .RADIX - set default radix
+        # .RADIX - set default radix. M80 always evaluates the operand in
+        # decimal, regardless of the current radix, so '.RADIX 16' sets hex
+        # (and re-evaluates correctly on every pass).
         if operator == '.RADIX':
             if len(ops) != 1:
                 self.error(".RADIX requires one operand")
                 return True
-            val, _, _, _ = self.parse_expression(ops[0])
+            saved_radix = self.radix
+            self.radix = 10
+            try:
+                val, _, _, _ = self.parse_expression(ops[0])
+            finally:
+                self.radix = saved_radix
             if val < 2 or val > 16:
                 self.error("Radix must be 2-16")
                 return True
@@ -2519,6 +2527,14 @@ class Assembler:
             if not self.cond_stack:
                 self.error("ELSE without IF")
                 return True
+            # Only one ELSE is allowed per conditional level (M80 flags a
+            # second ELSE as an error). Keep the toggle so the emitted bytes
+            # still match M80, which assembles the duplicate branch anyway.
+            level = len(self.cond_stack)
+            if level in self.cond_else_levels:
+                self.error("Duplicate ELSE")
+            else:
+                self.cond_else_levels.add(level)
             if self.cond_false_depth == 1:
                 self.cond_false_depth = 0
             elif self.cond_false_depth == 0:
@@ -2529,6 +2545,7 @@ class Assembler:
             if not self.cond_stack:
                 self.error(f"{operator} without IF")
                 return True
+            self.cond_else_levels.discard(len(self.cond_stack))
             self.cond_stack.pop()
             if self.cond_false_depth > 0:
                 self.cond_false_depth -= 1
@@ -3150,6 +3167,9 @@ class Assembler:
         self.line_num = 0
         self.cond_stack = []
         self.cond_false_depth = 0
+        self.cond_else_levels = set()
+        self.radix = 10  # Default radix resets each pass (a .RADIX re-applies)
+        self.repeat_nest_depth = 0
 
         # Reset segment locations for pass 2
         if pass_num == 2:
@@ -3162,6 +3182,11 @@ class Assembler:
 
         for line in lines:
             self.process_line(line)
+
+        # An IF/IFx/COND left open at end of pass is an error (M80 reports
+        # "Unterminated Conditional"). Report once, on the final pass.
+        if self.cond_stack and pass_num == 2:
+            self.warning("Unterminated conditional (missing ENDIF)")
 
     def write_output(self):
         """Write the REL file content."""
