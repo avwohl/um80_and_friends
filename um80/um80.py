@@ -41,6 +41,7 @@ class Symbol:
         self.seg_type = seg_type  # ADDR_ABSOLUTE, ADDR_PROGRAM_REL, etc.
         self.defined = defined
         self.defined_pass = 0  # Track which pass defined this symbol
+        self.redefinable = False  # True if defined via SET/DEFL/ASET
         self.public = public
         self.external = external
         self.references = []  # Line numbers where referenced
@@ -204,13 +205,19 @@ class Assembler:
 
         if name in self.symbols:
             sym = self.symbols[name]
-            if sym.defined and sym.defined_pass == self.pass_num and sym.value != value and not sym.external:
-                self.error(f"Symbol '{name}' multiply defined")
-                return
+            if sym.defined and sym.defined_pass == self.pass_num and not sym.external:
+                # Multiply defined if the value changed, or if the symbol was
+                # made redefinable by SET/DEFL/ASET (EQU/label cannot redefine
+                # a SET symbol -- the definition class is fixed by the first
+                # definition).
+                if sym.redefinable or sym.value != value:
+                    self.error(f"Symbol '{name}' multiply defined")
+                    return
             sym.value = value
             sym.seg_type = seg_type
             sym.defined = True
             sym.defined_pass = self.pass_num
+            sym.redefinable = False  # EQU / label is non-redefinable
             if public:
                 sym.public = True
         else:
@@ -2156,11 +2163,18 @@ class Assembler:
                 if ext:
                     self.error(f"Cannot use external in {operator}")
                     return True
-            # SET/DEFL allows redefinition
+            # SET/DEFL/ASET defines a redefinable symbol. It may only redefine
+            # another redefinable (SET-class) symbol; redefining an EQU/label
+            # symbol is multiply-defined (the class is fixed at first definition).
             sym = self.lookup_symbol(label)
+            if sym.defined and sym.defined_pass == self.pass_num and not sym.redefinable:
+                self.error(f"Symbol '{label.upper()}' multiply defined")
+                return True
             sym.value = val
             sym.seg_type = seg
             sym.defined = True
+            sym.defined_pass = self.pass_num
+            sym.redefinable = True
             return True
 
         # DB - define bytes
