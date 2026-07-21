@@ -2,6 +2,20 @@
 
 All notable changes to the um80 toolchain are documented here.
 
+## [0.3.43] - 2026-07-21
+
+### Fixed
+- um80 assembler: The two-operand Z80 ALU forms `ADD/ADC/SBC A,<expr>` no
+  longer uppercase the immediate expression. Both operands are uppercased to
+  match register names (`ADD HL,DE`, `ADC A,B`, ...), and the uppercased COPY
+  of the immediate was fed back into expression evaluation, so `ADD A,'a'`
+  assembled as `ADD A,'A'` (C6 41) and `ADD A,'a'-'A'` as `ADD A,0` (C6 00) -
+  a tolower routine built on it was silently a no-op. Single-operand forms
+  (`SUB 'a'`, `CP 'a'`) and all other mnemonics were unaffected, which is why
+  the wrong bytes assembled without any diagnostic. Register matching remains
+  case-insensitive. Found via a broken lowercase-filename export in the
+  romwbw_emu W8 utility.
+
 ## [0.3.42] - 2026-06-13
 
 A broad M80-compatibility audit. Every fix below was verified against the

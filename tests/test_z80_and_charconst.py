@@ -56,3 +56,61 @@ def test_two_char_constant_low_byte():
 def test_single_char_constant_unchanged():
     src = "\tASEG\n\tORG 100H\n\tDB 'A'\n\tEND\n"
     assert _image(src)[0:1] == bytes([0x41])
+
+
+def test_alu_a_imm_lowercase_char_constant():
+    # The two-operand ADD/ADC/SBC A,<expr> forms uppercase both operands to
+    # match register names (HL, IX, A, ...), and used to feed the uppercased
+    # COPY of the immediate back into expression evaluation - so ADD A,'a'
+    # assembled as ADD A,'A' (C6 41) and ADD A,'a'-'A' as ADD A,0 (C6 00).
+    # A tolower routine built on ADD A,'a'-'A' was silently a no-op.
+    src = (
+        "\t.Z80\n\tASEG\n\tORG 100H\n"
+        "\tADD A,'a'\n"
+        "\tADC A,'a'\n"
+        "\tSBC A,'a'\n"
+        "\tADD A,'a'-'A'\n"
+        "\tEND\n"
+    )
+    out = _image(src)
+    assert out[0:2] == bytes([0xC6, 0x61]), out[0:2].hex()  # ADD A,'a'
+    assert out[2:4] == bytes([0xCE, 0x61]), out[2:4].hex()  # ADC A,'a'
+    assert out[4:6] == bytes([0xDE, 0x61]), out[4:6].hex()  # SBC A,'a'
+    assert out[6:8] == bytes([0xC6, 0x20]), out[6:8].hex()  # ADD A,'a'-'A'
+
+
+def test_alu_a_register_forms_still_match_case_insensitively():
+    # Register matching must stay case-insensitive after the fix: the
+    # lowercase spellings of the register and 16-bit pair forms.
+    src = (
+        "\t.Z80\n\tASEG\n\tORG 100H\n"
+        "\tadd a,b\n"
+        "\tadc a,(hl)\n"
+        "\tsbc a,c\n"
+        "\tadd hl,de\n"
+        "\tadc hl,bc\n"
+        "\tsbc hl,sp\n"
+        "\tEND\n"
+    )
+    out = _image(src)
+    assert out[0:1] == bytes([0x80]), out.hex()          # ADD A,B
+    assert out[1:2] == bytes([0x8E]), out.hex()          # ADC A,(HL)
+    assert out[2:3] == bytes([0x99]), out.hex()          # SBC A,C
+    assert out[3:4] == bytes([0x19]), out.hex()          # ADD HL,DE
+    assert out[4:6] == bytes([0xED, 0x4A]), out.hex()    # ADC HL,BC
+    assert out[6:8] == bytes([0xED, 0x72]), out.hex()    # SBC HL,SP
+
+
+def test_single_operand_alu_char_constant_unaffected():
+    # These always evaluated in original case; pin the behavior.
+    src = (
+        "\t.Z80\n\tASEG\n\tORG 100H\n"
+        "\tSUB 'a'\n"
+        "\tAND 'a'\n"
+        "\tCP 'a'\n"
+        "\tEND\n"
+    )
+    out = _image(src)
+    assert out[0:2] == bytes([0xD6, 0x61]), out.hex()
+    assert out[2:4] == bytes([0xE6, 0x61]), out.hex()
+    assert out[4:6] == bytes([0xFE, 0x61]), out.hex()

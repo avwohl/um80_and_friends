@@ -1620,7 +1620,10 @@ class Assembler:
                         self.emit_byte(b)
                     return True
                 if dst == 'A':
-                    ops = [src]  # Process as ADD r
+                    # Process as ADD r. Keep the operand's ORIGINAL case: src
+                    # is an uppercased copy for register matching only, and
+                    # an expression like 'a'-'A' must not become 'A'-'A' (=0).
+                    ops = [ops[1].strip()]
 
             if operator == 'ADC' and len(ops) == 2:
                 dst, src = ops[0].upper().strip(), ops[1].upper().strip()
@@ -1629,7 +1632,7 @@ class Assembler:
                         self.emit_byte(b)
                     return True
                 if dst == 'A':
-                    ops = [src]
+                    ops = [ops[1].strip()]  # original case (see ADD above)
 
             if operator == 'SBC' and len(ops) == 2:
                 dst, src = ops[0].upper().strip(), ops[1].upper().strip()
@@ -1638,7 +1641,7 @@ class Assembler:
                         self.emit_byte(b)
                     return True
                 if dst == 'A':
-                    ops = [src]
+                    ops = [ops[1].strip()]  # original case (see ADD above)
 
             # ALU A,r or ALU A,(HL) or ALU A,(IX+d) or ALU A,n
             op = ops[0].strip()
