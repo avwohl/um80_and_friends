@@ -2,6 +2,42 @@
 
 All notable changes to the um80 toolchain are documented here.
 
+## [0.3.44] - 2026-08-03
+
+### Changed (deliberate divergence from MACRO-80 3.44)
+- um80 assembler: An operand given to an instruction that takes none is now an
+  ERROR, so nothing is written and the exit status is 1. It used to be a
+  warning (or, for the conditional returns, no diagnostic at all) and the
+  operand was thrown away, which silently assembled a different program:
+
+  - `RET NZ` assembled as `C9`, an unconditional RET (Z80: `C0`).
+  - `RLC B` assembled as `07`, RLC A (Z80: `CB 00`).
+  - `RRC C` assembled as `0F`, RRC A (Z80: `CB 09`).
+  - `RZ FOO` assembled as `C8` with no diagnostic at all.
+  - `NOP 5` assembled as `00`.
+
+  All 17 8080 no-operand mnemonics (NOP RLC RRC RAL RAR DAA CMA STC CMC HLT RET
+  PCHL SPHL XCHG XTHL DI EI), all 8 conditional returns (RNZ RZ RNC RC RPO RPE
+  RP RM), and the Z80-mode no-operand and ED-prefix no-operand mnemonics are
+  covered. When the mnemonic and its operand spell a valid Z80 instruction
+  (`RET cc`, `RLC r`, `RRC r`), the message gives the 8080 spelling and points
+  at the `.Z80` directive, which is what makes um80 assemble Z80 mnemonics.
+
+  Genuine MACRO-80 3.44 instead flags these `Q` (questionable), emits the
+  operand-less opcode and still writes the .REL; this is therefore a knowing
+  break with M80 bit-compatibility, made because turning `RET NZ` into an
+  unconditional `RET` is a silent miscompile. Measured blast radius is zero:
+  the 14 original Microsoft MBASIC 8080 sources, the 98 uc80 library modules
+  and every other `*.mac` outside `external/` assemble to byte-identical
+  objects with no new diagnostics.
+
+  8080 mode remains the default (M80 behavior), and the legitimate 8080
+  readings of `JP`/`CP` (jump-if-positive, call-if-plus) are unchanged.
+
+### Fixed
+- um80 assembler: A Z80 ALU mnemonic with three or more operands is now an
+  error. `ADD A,B,C` assembled as `ADD A` and dropped the rest.
+
 ## [0.3.43] - 2026-07-21
 
 ### Fixed

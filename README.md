@@ -250,6 +250,26 @@ These tools aim for compatibility with the original Microsoft tools while runnin
 - Default origin is 0100h (standard CP/M load address)
 - Output files are binary-compatible with original CP/M tools
 
+### 8080 is the default; Z80 mnemonics need `.Z80`
+
+Like M80, um80 assembles 8080 mnemonics until a `.Z80` directive appears (use
+`um80 -e .z80 file.mac` to set the mode from the command line without editing
+the source). Where a Z80 instruction is spelled with an 8080 mnemonic — `RET
+NZ`, `RLC B`, `RRC C` — um80 rejects it in 8080 mode instead of dropping the
+operand:
+
+```
+$ um80 z80source.mac
+Error at line 5: RET takes no operand, but was given 'NZ' RET NZ is Z80 syntax;
+the 8080 spelling is RNZ. Add a .Z80 directive to assemble Z80 mnemonics.
+```
+
+Genuine M80 3.44 only flags these `Q` and emits the operand-less opcode, so
+`RET NZ` assembles as an unconditional `RET` (C9) and the .REL is still
+written. um80 makes it an error because that is a silent miscompile; this is a
+deliberate divergence, recorded in CHANGELOG.md. Nothing is written and the
+exit status is 1, as for any other assembly error.
+
 ## Extended Symbol Names
 
 The original Microsoft REL format limits symbol names to 8 characters. um80/ul80 extend this to support symbols up to 255 characters, which is essential for:
@@ -387,7 +407,7 @@ For more details on these extensions and compatibility notes, see [docs/EXTENSIO
 
 ## Testing
 
-The test suite (126 tests) runs under `pytest`:
+The test suite (143 tests) runs under `pytest`:
 
 ```bash
 pip install -e ".[dev]"
@@ -416,8 +436,9 @@ to documented M80 behavior:
 Further tests cover the toolchain more broadly: `test_ds_org.py` (DS/ORG and
 segment placement), `test_defs_fill.py` (DEFS fill value), `test_end_symbol.py`
 (`END` entry symbol and `__END__`), `test_ext_alias.py` (external aliases),
-`test_jr_promotion.py` (JR/DJNZ out-of-range promotion), and
-`test_case_sensitivity.py`.
+`test_jr_promotion.py` (JR/DJNZ out-of-range promotion),
+`test_no_operand_strict.py` (an operand on a no-operand instruction is an
+error, the one deliberate divergence from M80), and `test_case_sensitivity.py`.
 
 ## Example Workflow
 

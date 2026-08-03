@@ -103,6 +103,35 @@ This is likely a symptom of Issue #2 (stuck in disk routines).
 
 ---
 
+## 4. ulib80 Library Output Is Not Reproducible
+
+**Status:** Open
+**Component:** ulib80
+
+### Problem
+
+`ulib80 -c lib.lib <same .rel files>` produces a different byte stream on every
+run. Three runs over one unchanged set of `.rel` files gave three different
+checksums of the same length; setting `PYTHONHASHSEED` to a fixed value makes
+the output reproducible, so the ordering comes from iterating a `set` or `dict`
+somewhere in the library writer.
+
+### Impact
+
+The archive is functionally correct (the linker resolves the same symbols), but
+builds cannot be checked for reproducibility, and a byte comparison cannot be
+used to tell whether a toolchain change altered a library. Found while checking
+the blast radius of the 0.3.44 no-operand change against the uc80 libraries:
+every one of the 97 `.rel` modules was byte-identical, yet `libc.lib` and
+`runtime.lib` differed on every rebuild.
+
+### Fix direction
+
+Sort every symbol/module iteration in the writer, or iterate the input list
+order that the caller supplied.
+
+---
+
 ## Build Notes
 
 ### Rebuilding CP/M

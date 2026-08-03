@@ -179,6 +179,38 @@ class Assembler:
         """Record a warning."""
         self.warnings.append(f"Warning at line {self.line_num}: {msg}")
 
+    def z80_form_hint(self, operator, ops):
+        """Hint for a Z80 instruction whose mnemonic is an 8080 mnemonic.
+
+        In 8080 mode the operand of 'RET cc', 'RLC r' or 'RRC r' used to be
+        thrown away, which assembled Z80 source into a different program.
+        Returns '' when there is nothing useful to say.
+        """
+        if self.z80_mode or len(ops) != 1:
+            return ''
+        add_z80 = " Add a .Z80 directive to assemble Z80 mnemonics."
+        first = ops[0].strip().upper()
+        if operator == 'RET' and first in CONDITIONS:
+            return (f" RET {first} is Z80 syntax; the 8080 spelling is"
+                    f" R{first}.{add_z80}")
+        if operator in ('RLC', 'RRC') and first in Z80_REGS_M:
+            return (f" {operator} {first} is Z80 syntax; the 8080 {operator}"
+                    f" rotates A only.{add_z80}")
+        return ''
+
+    def error_no_operand(self, operator, ops):
+        """Reject operands given to an instruction that takes none.
+
+        Real MACRO-80 3.44 only flags these 'Q' and assembles the instruction
+        without its operand, so 'RET NZ' becomes an unconditional RET (C9) and
+        'RLC B' becomes RLC A (07).  Dropping an operand changes what the
+        program does, so um80 makes it an error.  This is a deliberate
+        divergence from M80; see CHANGELOG.md.
+        """
+        text = ','.join(op.strip() for op in ops)
+        self.error(f"{operator} takes no operand, but was given '{text}'"
+                   + self.z80_form_hint(operator, ops))
+
     def _start_listing_line(self):
         """Prepare for listing capture at start of line processing."""
         if self.pass_num == 2 and self.generate_listing:
@@ -974,7 +1006,8 @@ class Assembler:
         # No-operand instructions
         if operator in NO_OPERAND:
             if ops:
-                self.warning(f"Operands ignored for {operator}")
+                self.error_no_operand(operator, ops)
+                return True
             code = encode_no_operand(operator)
             for b in code:
                 self.emit_byte(b)
@@ -982,6 +1015,9 @@ class Assembler:
 
         # Conditional returns
         if operator in COND_RETS:
+            if ops:
+                self.error_no_operand(operator, ops)
+                return True
             cond = get_cond_from_mnemonic(operator)
             code = encode_cond_ret(cond)
             for b in code:
@@ -1293,14 +1329,16 @@ class Assembler:
         # No-operand instructions
         if operator in Z80_NO_OPERAND:
             if ops:
-                self.warning(f"Operands ignored for {operator}")
+                self.error_no_operand(operator, ops)
+                return True
             self.emit_byte(Z80_NO_OPERAND[operator])
             return True
 
         # ED-prefix no-operand instructions
         if operator in Z80_ED_NO_OPERAND:
             if ops:
-                self.warning(f"Operands ignored for {operator}")
+                self.error_no_operand(operator, ops)
+                return True
             self.emit_byte(PREFIX_ED)
             self.emit_byte(Z80_ED_NO_OPERAND[operator])
             return True
@@ -1601,8 +1639,10 @@ class Assembler:
 
         # ALU operations: ADD, ADC, SUB, SBC, AND, XOR, OR, CP
         if operator in Z80_ALU_MNEMONICS:
-            if len(ops) < 1:
-                self.error(f"{operator} requires operand(s)")
+            # No ALU form has more than two operands; without the upper bound
+            # 'ADD A,B,C' assembled as ADD A and dropped the rest.
+            if len(ops) < 1 or len(ops) > 2:
+                self.error(f"{operator} requires one or two operands")
                 return True
             # Handle ADD A,r vs ADD HL,ss vs ADD IX,pp etc.
             if operator == 'ADD' and len(ops) == 2:
