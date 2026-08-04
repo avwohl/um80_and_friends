@@ -1132,10 +1132,18 @@ def main():
             # No more symbols can be resolved from libraries
             break
 
-    # Link
-    if not linker.link():
-        for err in linker.errors:
-            print(err, file=sys.stderr)
+    # Link.  Report anything the linker recorded, not only the errors that
+    # made link() give up: L80 keeps going after a multiply-defined global
+    # (it takes the first definition) and so do we, and reporting only on
+    # failure meant that error was recorded and then silently dropped --
+    # exit 0, output written, nothing said.  Two objects each defining the
+    # same PUBLIC linked quietly, which is exactly the case
+    # tests/test_linker_dupglobal.py was written to catch and could not,
+    # because it drives the Linker API rather than this entry point.
+    ok = linker.link()
+    for err in linker.errors:
+        print(err, file=sys.stderr)
+    if not ok:
         sys.exit(1)
 
     # Determine output filename
@@ -1175,6 +1183,13 @@ def main():
     print(f"  Modules: {len(linker.modules)}")
     print(f"  Global symbols: {len(linker.globals)}")
 
+    # A recorded-but-recoverable error leaves the exit status at 0 for now.
+    # L80 keeps the first definition of a multiply-defined global and
+    # produces output, and so do we; making the status non-zero as well is
+    # a policy change that would reject link lines L80 accepts -- including
+    # uc80's own documented one, which passes runtime.lib alongside a module
+    # that has already embedded the runtime, so __sret_buf can arrive twice.
+    # Printing it is the part that was plainly wrong and is fixed above.
     sys.exit(0)
 
 

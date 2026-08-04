@@ -46,3 +46,42 @@ def test_distinct_globals_link_clean():
         linker.load_rel(r2)
         assert linker.link()
         assert linker.errors == []
+
+
+def test_cli_reports_and_fails_on_a_duplicate(tmp_path):
+    """The API recorded the error; the command line threw it away.
+
+    ul80's main() printed linker.errors only when link() returned false.
+    L80 keeps the first definition of a multiply-defined global and links
+    on, so link() succeeds and the recorded error was silently dropped --
+    exit 0, output written, nothing on stderr.  That is what let uc80 emit
+    two different __printf_format_table definitions and have the link
+    order quietly decide which one won.
+    """
+    import subprocess
+    import sys
+
+    r1 = _rel(str(tmp_path), "M1", "\tNAME (M1)\n\tPUBLIC DUP\n\tCSEG\nDUP:\tRET\n\tEND\n")
+    r2 = _rel(str(tmp_path), "M2", "\tNAME (M2)\n\tPUBLIC DUP\n\tCSEG\nDUP:\tNOP\n\tEND\n")
+    out = tmp_path / "dup.com"
+    run = subprocess.run([sys.executable, "-m", "um80.ul80",
+                          r1, r2, "-o", str(out)],
+                         capture_output=True, text=True)
+    assert "Multiply defined global" in run.stderr, run.stderr
+    # L80 keeps the first definition and produces output, and so do we, so
+    # the status stays 0; the diagnostic is the part that was missing.
+    assert out.exists()
+
+
+def test_cli_succeeds_without_a_duplicate(tmp_path):
+    import subprocess
+    import sys
+
+    r1 = _rel(str(tmp_path), "M1", "\tNAME (M1)\n\tPUBLIC ONE\n\tCSEG\nONE:\tRET\n\tEND\n")
+    r2 = _rel(str(tmp_path), "M2", "\tNAME (M2)\n\tPUBLIC TWO\n\tCSEG\nTWO:\tNOP\n\tEND\n")
+    out = tmp_path / "ok.com"
+    run = subprocess.run([sys.executable, "-m", "um80.ul80",
+                          r1, r2, "-o", str(out)],
+                         capture_output=True, text=True)
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "Error" not in run.stderr
