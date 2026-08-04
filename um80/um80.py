@@ -1683,6 +1683,30 @@ class Assembler:
                 if dst == 'A':
                     ops = [ops[1].strip()]  # original case (see ADD above)
 
+            # SUB/AND/XOR/OR/CP take one operand, the accumulator being
+            # implicit -- but `CP A,5` is a common Z80 spelling and the
+            # Zilog syntax every other assembler accepts.  ADD/ADC/SBC
+            # collapse `A,src` above; these five had no such branch, so
+            # ops[0] ("A") was taken as the operand: `CP A,5` assembled as
+            # `CP A` (BF, which always sets Z) and the 5 was dropped
+            # entirely.  Exit 0, no diagnostic, and a comparison that is
+            # always equal.
+            if len(ops) == 2 and operator in ('SUB', 'AND', 'XOR', 'OR', 'CP'):
+                if ops[0].upper().strip() != 'A':
+                    self.error(f"{operator} takes one operand, or "
+                               f"{operator} A,<operand>; "
+                               f"'{ops[0].strip()}' is not the accumulator")
+                    return True
+                ops = [ops[1].strip()]  # original case (see ADD above)
+
+            # Anything still holding two operands reached none of the
+            # forms above -- e.g. `ADD B,C`, which used to assemble as
+            # `ADD B` and drop the C the same way.
+            if len(ops) == 2:
+                self.error(f"Invalid operands for {operator}: "
+                           f"{ops[0].strip()},{ops[1].strip()}")
+                return True
+
             # ALU A,r or ALU A,(HL) or ALU A,(IX+d) or ALU A,n
             op = ops[0].strip()
             op_upper = op.upper()
@@ -3226,6 +3250,14 @@ class Assembler:
         self.cond_false_depth = 0
         self.cond_else_levels = set()
         self.radix = 10  # Default radix resets each pass (a .RADIX re-applies)
+        # Same reasoning as the radix: a .Z80/.8080 re-applies on every
+        # pass, so the mode must start each pass at the default.  Left
+        # over from the previous pass, a .Z80 anywhere in the file made
+        # pass 2 assemble the lines ABOVE it as Z80 -- `JP addr` silently
+        # became C3 instead of the 8080 F2 (jump if positive), and `CP n`
+        # became a two-byte FE instead of a three-byte F4, which moves
+        # every label after it.  Exit 0, no diagnostic.
+        self.z80_mode = False
         self.repeat_nest_depth = 0
 
         # Reset segment locations for pass 2
