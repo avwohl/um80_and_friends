@@ -22,7 +22,7 @@ pip install um80
 ### From source
 
 ```bash
-git clone https://github.com/um80/um80_and_friends.git
+git clone https://github.com/avwohl/um80_and_friends.git
 cd um80_and_friends
 pip install -e .
 ```
@@ -124,7 +124,7 @@ This is useful for:
 - Defining conditional assembly symbols (`DEBUG equ 1`)
 - Including project-wide macro libraries
 
-See `man um80` for full documentation, or refer to the original [Microsoft M80 Manual](docs/external/m80.pdf).
+See `man um80` for full documentation, or refer to the original [Microsoft M80 Manual](https://github.com/avwohl/retro_docs/blob/main/um80_and_friends/m80.pdf).
 
 ### ul80 - Linker
 
@@ -153,7 +153,7 @@ START:  LXI     H,__END__       ; Load end of program
 HEAP:   DW      0               ; Heap pointer
 ```
 
-See `man ul80` for full documentation, or refer to the original [Microsoft L80 Manual](docs/external/l80.pdf).
+See `man ul80` for full documentation, or refer to the original [Microsoft L80 Manual](https://github.com/avwohl/retro_docs/blob/main/um80_and_friends/l80.pdf).
 
 ### ulib80 - Library Manager
 
@@ -163,7 +163,7 @@ LIB-80 compatible library manager for:
 - Listing library contents and public symbols
 - Adding/removing/extracting modules
 
-See `man ulib80` for full documentation, or refer to the original [Microsoft CREF/LIB Manual](docs/external/cref_lib.pdf).
+See `man ulib80` for full documentation, or refer to the original [Microsoft CREF/LIB Manual](https://github.com/avwohl/retro_docs/blob/main/um80_and_friends/cref_lib.pdf).
 
 ### ucref80 - Cross-Reference
 

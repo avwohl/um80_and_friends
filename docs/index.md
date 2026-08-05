@@ -125,23 +125,25 @@ ucref80 -o xref.txt *.mac       # Output to file
 
 ## Microsoft Manual References
 
-The original Microsoft manuals are included in `docs/external/`:
+The original Microsoft manuals are in the
+[retro_docs](https://github.com/avwohl/retro_docs/tree/main/um80_and_friends)
+archive:
 
-- **m80.pdf** - MACRO-80 Assembler Manual
+- **[m80.pdf](https://github.com/avwohl/retro_docs/blob/main/um80_and_friends/m80.pdf)** - MACRO-80 Assembler Manual
   - Complete directive reference
   - Macro programming guide
   - Expression syntax
 
-- **l80.pdf** - LINK-80 Linker Manual
+- **[l80.pdf](https://github.com/avwohl/retro_docs/blob/main/um80_and_friends/l80.pdf)** - LINK-80 Linker Manual
   - Linking process
   - Library searching
   - Memory layout
 
-- **cref_lib.pdf** - CREF and LIB-80 Manual
+- **[cref_lib.pdf](https://github.com/avwohl/retro_docs/blob/main/um80_and_friends/cref_lib.pdf)** - CREF and LIB-80 Manual
   - Cross-reference listing format
   - Library management
 
-- **8080asm.pdf** - 8080 Assembly Language Reference
+- **[8080asm.pdf](https://github.com/avwohl/retro_docs/blob/main/um80_and_friends/8080asm.pdf)** - 8080 Assembly Language Reference
   - Instruction set details
   - Programming techniques
 

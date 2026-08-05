@@ -4,7 +4,8 @@ then use them to build the released mbasic sources.
 The tools to build cp/m os mbasic on 8080 computers.
 Make a replacement set of assembler, linker, library manger, cross ref tool
 that can run on linux.
-See the .pdf files in the docs directory for specifications of what to emulate.
+See the .pdf files in https://github.com/avwohl/retro_docs/tree/main/um80_and_friends
+for specifications of what to emulate.
 Also see the 8080asm.pdf the the 8080 instructions.
 Note: only implement the data in and out to programs, not the command line parsing or
 switches.  For each of the programs use normal linux conventions for the program
