@@ -2,6 +2,45 @@
 
 All notable changes to the um80 toolchain are documented here.
 
+## [0.3.46] - 2026-08-04
+
+### Fixed
+- ul80 linker: An error recorded during an otherwise successful link is now
+  reported. `main()` printed `linker.errors` only when `link()` returned false,
+  but L80 keeps the first definition of a multiply-defined global and links on,
+  so `link()` succeeds and every error recorded along the way was silently
+  thrown away: exit 0, output written, nothing on stderr. This swallowed the
+  multiply-defined PUBLIC error added in 0.3.42 on the command-line path, which
+  went unnoticed because the test for it drives the `Linker` API rather than
+  the entry point — the check worked, only the reporting did not. Both CLI
+  paths are covered now. The exit status stays 0 when the link still succeeded,
+  matching L80, which accepts such link lines and produces output.
+
+## [0.3.45] - 2026-08-04
+
+### Fixed
+- um80 assembler: The two-operand Z80 ALU forms `SUB/AND/XOR/OR/CP A,<operand>`
+  no longer drop the operand. ADD, ADC and SBC each collapse a leading `A,` to
+  the one-operand encoding; these five had no such branch, so `A` was taken as
+  the operand and the real one was discarded — `CP A,5` assembled as `CP A`
+  (BF, which always sets Z) rather than FE 05, `SUB A,5` as 97 rather than
+  D6 05, `AND A,0FH` as A7 rather than E6 0F, and `CP A,(IX+3)` as BF rather
+  than DD BE 03. Exit 0 and no diagnostic, on ordinary Zilog syntax that people
+  write. The upper bound added in 0.3.44 only rejected three or more operands,
+  which is why it did not reach this. A destination that is not the accumulator
+  is now an error rather than a silent drop — for these five and for ADD/ADC/SBC
+  too, since `ADD B,C` fell through to `ADD B` and dropped the C the same way.
+- um80 assembler: `.Z80`/`.8080` mode no longer leaks across passes. The mode
+  was set once in `__init__` and never reset, so the mode pass 1 ended in became
+  pass 2's starting mode, and a `.Z80` anywhere in a file assembled the lines
+  ABOVE it as Z80 on the second pass: `JP addr` silently became C3 instead of
+  the 8080 F2 (jump if positive), and `CP n` a two-byte FE instead of the
+  three-byte F4 (call if plus), which moves every label after it. Exit 0, no
+  diagnostic. The mode now resets each pass exactly as the radix does, since a
+  `.Z80`/`.8080` re-applies on every pass. This undercut the advice in 0.3.44's
+  own error message: a user told to add a `.Z80` directive who put it at the
+  bottom of the file silently changed the meaning of everything above it.
+
 ## [0.3.44] - 2026-08-03
 
 ### Changed (deliberate divergence from MACRO-80 3.44)
