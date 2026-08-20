@@ -12,9 +12,13 @@ All notable changes to the um80 toolchain are documented here.
   thrown away: exit 0, output written, nothing on stderr. This swallowed the
   multiply-defined PUBLIC error added in 0.3.42 on the command-line path, which
   went unnoticed because the test for it drives the `Linker` API rather than
-  the entry point — the check worked, only the reporting did not. Both CLI
-  paths are covered now. The exit status stays 0 when the link still succeeded,
-  matching L80, which accepts such link lines and produces output.
+  the entry point — the check worked, only the reporting did not. On the
+  command line the diagnostic had been missing for two releases: through 0.3.41
+  ul80 printed `Warning: Multiple definition of 'X'`, 0.3.42 made it an error
+  that `main()` never reached, and 0.3.43 shipped that way. It now prints
+  `Error: Multiply defined global 'X'`. Both CLI paths are covered now. The
+  exit status stays 0 when the link still succeeded, matching L80, which
+  accepts such link lines and produces output.
 
 ## [0.3.45] - 2026-08-04
 
@@ -30,6 +34,8 @@ All notable changes to the um80 toolchain are documented here.
   which is why it did not reach this. A destination that is not the accumulator
   is now an error rather than a silent drop — for these five and for ADD/ADC/SBC
   too, since `ADD B,C` fell through to `ADD B` and dropped the C the same way.
+  That last part breaks source that used to assemble: `ADD B,C` and `CP B,5`
+  exited 0 under 0.3.43 and now stop the assembly.
 - um80 assembler: `.Z80`/`.8080` mode no longer leaks across passes. The mode
   was set once in `__init__` and never reset, so the mode pass 1 ended in became
   pass 2's starting mode, and a `.Z80` anywhere in a file assembled the lines
@@ -40,8 +46,36 @@ All notable changes to the um80 toolchain are documented here.
   `.Z80`/`.8080` re-applies on every pass. This undercut the advice in 0.3.44's
   own error message: a user told to add a `.Z80` directive who put it at the
   bottom of the file silently changed the meaning of everything above it.
+- Documentation: the three Microsoft manual links in README.md, the manual list
+  in docs/index.md and the pointer in docs/project.txt all named
+  `docs/external/m80.pdf` and its neighbours. Those PDFs have never been
+  tracked in this repository or shipped in the sdist, so every one of those
+  links was dead for anyone who did not already have a private copy of that
+  directory; they now point at the retro_docs archive. The "From source"
+  instructions in README.md also cloned `github.com/um80/um80_and_friends.git`,
+  an organization that does not exist, so that copy-and-paste clone failed
+  outright; it now names `avwohl`. No code changed for either.
 
 ## [0.3.44] - 2026-08-03
+
+### Added
+- README.md documents that 8080 is the default mode and that Z80 mnemonics need
+  a `.Z80` directive, quotes the text of the new error below, and notes that
+  `um80 -e .z80 file.mac` sets the mode from the command line without editing
+  the source. The change below turns a silent operand drop into a hard error,
+  and someone who hits that error otherwise has no way to learn that the mode
+  is positional or that there is a route that does not involve editing every
+  file. (The Related Projects list in the same file was separately rewritten in
+  Simplified Technical English: wording only, same projects, same links.)
+- docs/ISSUES.md #4 records a ulib80 defect found while measuring the blast
+  radius of that change and NOT fixed here: `ulib80 -c lib.lib` writes a
+  different byte stream on every run over the same unchanged `.rel` inputs,
+  because the library writer iterates a `set` or `dict`; pinning
+  `PYTHONHASHSEED` makes the output reproducible. The archive still links
+  correctly, so nothing built from it is wrong, but a byte comparison cannot be
+  used to tell whether a toolchain change altered a library — across the 0.3.44
+  change every uc80 `.rel` module came out byte-identical while `libc.lib` and
+  `runtime.lib` differed on every rebuild.
 
 ### Changed (deliberate divergence from MACRO-80 3.44)
 - um80 assembler: An operand given to an instruction that takes none is now an
@@ -59,8 +93,10 @@ All notable changes to the um80 toolchain are documented here.
   PCHL SPHL XCHG XTHL DI EI), all 8 conditional returns (RNZ RZ RNC RC RPO RPE
   RP RM), and the Z80-mode no-operand and ED-prefix no-operand mnemonics are
   covered. When the mnemonic and its operand spell a valid Z80 instruction
-  (`RET cc`, `RLC r`, `RRC r`), the message gives the 8080 spelling and points
-  at the `.Z80` directive, which is what makes um80 assemble Z80 mnemonics.
+  (`RET cc`, `RLC r`, `RRC r`), the message names the `.Z80` directive, which is
+  what makes um80 assemble Z80 mnemonics; for `RET cc` it also gives the 8080
+  spelling (`RET NZ` is `RNZ`), and for `RLC r` and `RRC r`, which have no
+  8080 spelling, it says that the 8080 rotate applies to A only.
 
   Genuine MACRO-80 3.44 instead flags these `Q` (questionable), emits the
   operand-less opcode and still writes the .REL; this is therefore a knowing
