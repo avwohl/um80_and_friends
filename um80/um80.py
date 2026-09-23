@@ -529,11 +529,25 @@ class Assembler:
                 right_val, right_seg, right_ext, right_name = self.parse_expression(right, allow_undefined)
 
                 if left_ext or right_ext:
-                    # External reference with offset
-                    ext_name = left_name if left_ext else right_name
-                    offset = right_val if left_ext else left_val
-                    if op == '-' and not left_ext:
-                        offset = -offset
+                    # External reference with offset.  The .REL format can only
+                    # carry `symbol + constant', so the constant is whichever
+                    # side is not the external and the external keeps its sign.
+                    if left_ext and right_ext:
+                        self.error("cannot combine two external symbols: "
+                                   + expr)
+                        return (0, ADDR_ABSOLUTE, True, left_name)
+                    if left_ext:
+                        # SYM+n or SYM-n.
+                        ext_name = left_name
+                        offset = -right_val if op == '-' else right_val
+                    elif op == '-':
+                        # n-SYM negates the symbol, which LINK-80 cannot encode.
+                        self.error("cannot subtract an external symbol: " + expr)
+                        return (0, ADDR_ABSOLUTE, True, right_name)
+                    else:
+                        # n+SYM.
+                        ext_name = right_name
+                        offset = left_val
                     return (offset, ADDR_ABSOLUTE, True, ext_name)
 
                 if op == '+':
