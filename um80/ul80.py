@@ -85,6 +85,10 @@ class Linker:
         # relocation due to external symbol resolution to CSEG symbols.
         # Populated by resolve_externals(), used by save_prl().
         self.external_relocations = []
+        # MP/M relocatable output: page-zero references (BDOS entry, default
+        # FCB, DMA buffer) are relative to the memory segment the program is
+        # loaded into, so they belong in the relocation bitmap too.
+        self.page_zero_relative = False
 
         # When True, emit zeros for DS (reserve space) directives instead of
         # treating them as BSS. Required for PRL/SPR format where all segments
@@ -847,6 +851,13 @@ class Linker:
                         self.output[abs_offset + 1] = (target_addr >> 8) & 0xFF
                         if target_seg_type in (ADDR_PROGRAM_REL, ADDR_DATA_REL, ADDR_COMMON_REL):
                             self.external_relocations.append(abs_offset)
+                        elif (self.page_zero_relative
+                              and target_seg_type == ADDR_ABSOLUTE
+                              and target_addr < 0x100):
+                            # Under MP/M page zero belongs to the memory segment,
+                            # not to absolute address 0, so a resolved reference to
+                            # BDOS/FCB/TBUFF/... relocates like any program address.
+                            self.external_relocations.append(abs_offset)
                         if value == 0:
                             break
                         cur_buf = seg_base + value
@@ -1050,21 +1061,35 @@ def main():
     parser.add_argument('inputs', nargs='+', help='Input .REL and .LIB files')
     parser.add_argument('-o', '--output', help='Output file (default: first input with .com)')
     parser.add_argument('-x', '--hex', action='store_true', help='Output Intel HEX format')
-    parser.add_argument('--prl', action='store_true', help='Output MP/M .PRL (Page Relocatable) format')
+    parser.add_argument('--prl', action='store_true',
+                       help='Output MP/M .PRL (Page Relocatable) transient, linked at 100H')
+    parser.add_argument('--spr', action='store_true',
+                       help='Output MP/M .SPR/.RSP (System Page Relocatable), linked at 0')
     parser.add_argument('--no-ds-zeros', action='store_true',
                        help='Do not emit zeros for DS (reserve space) directives (default: emit zeros)')
     parser.add_argument('-s', '--sym', action='store_true', help='Generate .SYM symbol file')
     parser.add_argument('-S', '--sym-file', metavar='FILE', help='Generate .SYM symbol file with specified name')
     parser.add_argument('-p', '--origin', type=lambda x: int(x, 16) if not x.startswith(('0x', '0X', '0o', '0O', '0b', '0B')) else int(x, 0), default=None,
-                       help='Program origin as hex (e.g., E000, 0xE000, default: 0 for PRL, 100 for COM)')
+                       help='Program origin as hex (e.g., E000, 0xE000; default: 0 for SPR, 100 for PRL and COM)')
 
     args = parser.parse_args()
 
     linker = Linker()
-    # Default origin: 0 for PRL/SPR (page relocatable), 0x100 for COM (CP/M TPA)
+    # Page-relocatable output shares one container format but two origins.
+    #
+    # A .SPR/.RSP is loaded at the base of its memory segment and MP/M adds the
+    # segment's base page to every marked byte, so the image is linked at 0.
+    #
+    # A transient .PRL is loaded at segment_bottom+0100H (CLI.ASM: "base =
+    # segment$bottom + 0100H") while relocate() still adds only the segment base
+    # page.  The extra page has to come from the link, so the image is linked at
+    # 0100H - the same origin a .COM uses.  Linking a .PRL at 0 lands every
+    # relocated address one page below the code.
+    prl_output = args.prl or args.spr
     if args.origin is None:
-        args.origin = 0 if args.prl else 0x100
+        args.origin = 0 if args.spr else 0x100
     linker.code_base = args.origin
+    linker.page_zero_relative = prl_output
 
     # Emit zeros for DS directives (default: True)
     if args.no_ds_zeros:
@@ -1152,8 +1177,8 @@ def main():
     else:
         if args.hex:
             ext = '.hex'
-        elif args.prl:
-            ext = '.prl'
+        elif prl_output:
+            ext = '.spr' if args.spr else '.prl'
         else:
             ext = '.com'
         output_path = Path(args.inputs[0]).with_suffix(ext)
@@ -1161,7 +1186,7 @@ def main():
     # Save output
     if args.hex:
         linker.save_hex(str(output_path))
-    elif args.prl:
+    elif prl_output:
         linker.save_prl(str(output_path))
     else:
         linker.save_com(str(output_path))
