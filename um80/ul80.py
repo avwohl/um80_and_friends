@@ -89,6 +89,10 @@ class Linker:
         # FCB, DMA buffer) are relative to the memory segment the program is
         # loaded into, so they belong in the relocation bitmap too.
         self.page_zero_relative = False
+        # Extra memory a .PRL asks MP/M for beyond its image, for storage the
+        # program places at .MEMORY.  DRI passed this to GENMOD as its third
+        # argument: `genmod pip.hex pip.prl $1000'.
+        self.prl_extra = 0
 
         # When True, emit zeros for DS (reserve space) directives instead of
         # treating them as BSS. Required for PRL/SPR format where all segments
@@ -628,12 +632,21 @@ class Linker:
             return False
         return True
 
-    def resolve_aliased_publics(self):
+    def resolve_aliased_publics(self, refresh: bool = False):
         """Resolve aliased public symbols (EQU external+offset made PUBLIC).
 
         These are symbols defined as SYMBOL EQU EXTERNAL+N and exported.
         After all externals are resolved, we can compute the actual addresses
         for these aliased symbols and add them to the global table.
+
+        Called twice.  The first pass has to run before resolve_externals(), so
+        that a reference to the alias from another module finds the name.  But
+        a symbol the LINKER defines - __END__, __BSS_START, __BSS_END - has no
+        value until calculate_addresses() has placed every segment, so an alias
+        onto one of those would export zero.  PL/M-80's `AT (.MEMORY)' compiles
+        to exactly that: MP/M II's UTIL7/DSE.PLM declares its hash table there
+        and UTIL7/DM.PLM imports it.  The second pass, with refresh set,
+        recomputes the values now that the bases are known.
         """
         for mod_idx, module in enumerate(self.modules):
             for new_name, (base_ext, offset) in module.aliased_publics.items():
@@ -650,7 +663,7 @@ class Linker:
                 # The new symbol's value is base_value + offset, same segment type
                 new_value = base_value + offset
                 # Register the aliased symbol in globals
-                if new_name in self.globals and self.globals[new_name][3]:
+                if new_name in self.globals and self.globals[new_name][3] and not refresh:
                     self.error(f"Multiply defined global '{new_name}'")
                 else:
                     # Use the same module index as the base external
@@ -756,6 +769,10 @@ class Linker:
             return False
 
         self.calculate_addresses()
+
+        # Aliases onto a linker-defined symbol (__END__ and friends) only get a
+        # value once the segments are placed.
+        self.resolve_aliased_publics(refresh=True)
 
         # Place each module's segments at their output addresses. ASEG bytes go
         # to their absolute address; CSEG -> code_base; DSEG -> data_base.
@@ -1014,6 +1031,10 @@ class Linker:
         header[1] = code_length & 0xFF  # Code length low byte
         header[2] = (code_length >> 8) & 0xFF  # Code length high byte
         header[3] = 0  # Reserved
+        # A program that puts storage at .MEMORY needs memory past its image,
+        # and nothing in the object files says how much - PL/M's .MEMORY is
+        # "whatever is left".  DRI named the figure at build time and so do we.
+        bss_size = max(bss_size, self.prl_extra)
         header[4] = bss_size & 0xFF  # BSS size low byte
         header[5] = (bss_size >> 8) & 0xFF  # BSS size high byte
         header[6] = 0  # Always 0
@@ -1065,6 +1086,10 @@ def main():
                        help='Output MP/M .PRL (Page Relocatable) transient, linked at 100H')
     parser.add_argument('--spr', action='store_true',
                        help='Output MP/M .SPR/.RSP (System Page Relocatable), linked at 0')
+    parser.add_argument('--extra', metavar='HEX', default='0',
+                       type=lambda x: int(x, 16) if not x.startswith(('0x', '0X')) else int(x, 0),
+                       help='Extra memory (hex) a .PRL asks MP/M for beyond its '
+                            'image, for storage placed at .MEMORY (GENMOD\'s third argument)')
     parser.add_argument('--no-ds-zeros', action='store_true',
                        help='Do not emit zeros for DS (reserve space) directives (default: emit zeros)')
     parser.add_argument('-s', '--sym', action='store_true', help='Generate .SYM symbol file')
@@ -1090,6 +1115,7 @@ def main():
         args.origin = 0 if args.spr else 0x100
     linker.code_base = args.origin
     linker.page_zero_relative = prl_output
+    linker.prl_extra = args.extra
 
     # Emit zeros for DS directives (default: True)
     if args.no_ds_zeros:
