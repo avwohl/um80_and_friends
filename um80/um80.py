@@ -87,6 +87,11 @@ class Assembler:
             'DSEG': Segment('DSEG', ADDR_DATA_REL),
         }
         self.common_blocks = {}  # COMMON blocks
+        # Which segment a file starts in.  M80 starts in CSEG; Digital
+        # Research's MAC has no relocatable segments at all, so a source
+        # written for it is absolute and its ORG means an absolute address.
+        # MP/M II's assembler, DDT, GENHEX and GENMOD are all MAC sources.
+        self.default_seg = 'CSEG'
         self.current_seg = 'CSEG'  # Default is code segment
         self.current_common = None  # Current COMMON block if any
 
@@ -3294,7 +3299,7 @@ class Assembler:
                 seg.loc = 0
             for com in self.common_blocks.values():
                 com.loc = 0
-            self.current_seg = 'CSEG'
+            self.current_seg = self.default_seg
             self.current_common = None
 
         for line in lines:
@@ -3321,7 +3326,7 @@ class Assembler:
             seg.loc = 0
         for com in self.common_blocks.values():
             com.loc = 0
-        self.current_seg = 'CSEG'
+        self.current_seg = self.default_seg
         self.current_common = None
 
         # Second pass already wrote the code bytes
@@ -3489,7 +3494,7 @@ class Assembler:
                 seg.org_set = False
             for com in self.common_blocks.values():
                 com.loc = 0
-            self.current_seg = 'CSEG'
+            self.current_seg = self.default_seg
             self.current_common = None
             self.errors = []  # Clear errors between iterations
             self.local_counter = 0  # Reset LOCAL symbol counter for consistent naming
@@ -3641,6 +3646,9 @@ def main():
                         help='Export all symbols as PUBLIC (for debug symbol files)')
     parser.add_argument('-t', '--truncate', action='store_true',
                         help='Truncate symbols to 8 chars (M80 compatible)')
+    parser.add_argument('--aseg', action='store_true',
+                       help='Assemble as absolute code, the way DRI\'s MAC does: '
+                            'the file starts in ASEG, so ORG is an absolute address')
     parser.add_argument('-s', '--strict', action='store_true',
                         help='Strict mode: error on out-of-range JR/DJNZ instead of promoting to JP')
 
@@ -3669,6 +3677,9 @@ def main():
     # Create assembler and run
     asm = Assembler(predefined=predefined, export_all_symbols=args.globals,
                     truncate_symbols=args.truncate, strict_jr=args.strict)
+    if args.aseg:
+        asm.default_seg = 'ASEG'
+        asm.current_seg = 'ASEG'
     if args.include:
         asm.include_paths = args.include
     if args.listing:
