@@ -675,8 +675,22 @@ class Assembler:
                 self.error(f"Register '{expr}' used as value")
                 return (0, ADDR_ABSOLUTE, False, None)
 
-            # Check if it's an opcode (usable as one-byte operand per M80 manual p.2-4)
-            if upper in OPCODE_VALUES:
+            # An opcode name stands for its own byte (M80 manual p.2-4, so
+            # `DB MOV' works), but only where the name is not a symbol: a
+            # definition has to win, or a program cannot have a label called
+            # ADD.  MP/M II's STAT.PLM does - it declares a PROCEDURE named
+            # `add' - and `call ADD' resolving to the byte 80H turned the call
+            # into `call 0080H', a call into the DMA buffer.
+            #
+            # On pass 1 a forward-referenced label is not in the table yet and
+            # still reads as the opcode.  That is harmless: the operand is the
+            # same width either way, so only the value is wrong, and pass 2
+            # fixes it.  The worst case is a JR promoted to JP that need not
+            # have been, which the promotion set then keeps stable.
+            defined_sym = self.symbols.get(upper)
+            if upper in OPCODE_VALUES and not (
+                    defined_sym is not None
+                    and (defined_sym.defined or defined_sym.external)):
                 return (OPCODE_VALUES[upper], ADDR_ABSOLUTE, False, None)
 
             sym = self.lookup_symbol(expr)
