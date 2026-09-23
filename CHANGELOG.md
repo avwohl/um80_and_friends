@@ -2,6 +2,17 @@
 
 All notable changes to the um80 toolchain are documented here.
 
+## [0.3.47] - 2026-09-23
+
+### Documentation
+- Backfilled the missing CHANGELOG entries for 0.3.25 through 0.3.36. The file
+  ran from 0.3.37 straight back to 0.3.24, so twelve releases had no record at
+  all — including 0.3.32, which carried the DSEG placement fix. That one had
+  silently corrupted every multi-module link whose modules carry initialized
+  data, and it is the sort of thing that needs to be findable afterwards: it
+  surfaced months later as an MP/M II system image that was 1152 bytes short
+  and would not boot. No code changes in this release.
+
 ## [0.3.46] - 2026-08-04
 
 ### Fixed
@@ -210,6 +221,184 @@ genuine MACRO-80 / LINK-80 3.44 binaries running under cpmemu.
 - ud80 disassembler: Fixed incorrect bit pattern comments for DCX and LDAX opcodes.
 - ux80 translator: Fixed ALU mapping comments that incorrectly described output format.
 - ucref80, ux80: Removed unreachable dead code (try/except around decode with errors='replace').
+
+## [0.3.36] - 2026-03-12
+
+### Added
+- ul80 linker: Predefined `__BSS_START` and `__BSS_END` symbols giving the
+  bounds of the COMMON region, alongside the `__END__` symbol added in 0.3.16.
+  A crt0 that zeroes uninitialized data before entering `main` needs both ends
+  of that region and previously had no way to ask the linker for either.
+
+### Fixed
+- um80 assembler: An unnamed COMMON block (`COMMON //`, whose name is the empty
+  string) was not recognized as a COMMON block at all. The location-counter
+  getter and setter and the `seg_type` property all tested
+  `if self.current_common:`, and Python treats `''` as false, so a blank COMMON
+  — the form every C compiler's BSS uses — was assembled as though the block
+  had never been opened: the bytes were counted against the enclosing segment
+  and labeled with its segment type. The tests are now `is not None`.
+- ul80 linker: With `--no-ds-zeros`, the DSEG output size still counted
+  reserved (DS) bytes, so space merely reserved at the end of the data segment
+  was written out as zero padding in the binary — exactly the bytes that option
+  exists to leave out. Only initialized bytes (DB/DW) are counted now.
+
+## [0.3.35] - 2026-03-11
+
+### Fixed
+- um80 assembler: External references are no longer threaded through a linked
+  list embedded in the emitted code. Each reference stored the offset of the
+  previous one in its own two bytes, with 0 as the end-of-chain marker, which
+  is indistinguishable from a reference at offset 0 of a segment — a perfectly
+  ordinary place for the first instruction of a module to be. The linker
+  stopped walking there, so every earlier reference in that chain kept the raw
+  chain link instead of the resolved address. The assembler now emits one
+  CHAIN_EXTERNAL record per reference. Chains are also keyed by segment type,
+  so a chain started in one segment can no longer run into another and patch
+  bytes that belong to it.
+- ul80 linker: A location fixed up while resolving an external reference could
+  be relocated a second time in Phase 2, adding the segment base twice. The
+  linker now records the locations it resolved externally and skips them.
+
+## [0.3.34] - 2026-01-25
+
+### Fixed
+- ul80 linker: A reference from DSEG to a CSEG symbol — an initialized function
+  pointer, `int (*f)(int) = &some_function;` — was placed using the code base
+  rather than the data base. The relocation records carried only the target's
+  segment type, not the referencing segment's, so the output offset was
+  computed from `code_base` for a location that lives at `data_base`: the
+  patched address was written into the wrong bytes of the image, and external
+  chains anchored in DSEG were followed from the wrong buffer offset as well.
+  Relocation records are now 3-tuples carrying the referencing segment type.
+
+## [0.3.33] - 2026-01-24
+
+### Added
+- um80 assembler, ul80 linker: `EQU` accepts an external symbol plus an
+  optional offset, and such an alias can itself be declared PUBLIC:
+
+      EXTRN   ROUTINE
+      PUBLIC  ROUTINE_ALT
+      ROUTINE_ALT EQU ROUTINE+2
+
+  The assembler emits uses of the alias as external-plus-offset references and
+  writes an exported alias as `NEWNAME=EXTERNAL+N`; the linker defers those
+  publics and resolves them before linking. z88dk libraries use this to publish
+  alternate entry points a few bytes into an existing routine. Documented in
+  README.md and docs/EXTENSIONS.md, with tests in `tests/test_ext_alias.py`.
+
+## [0.3.32] - 2026-01-08
+
+### Fixed
+- ul80 linker: Initialized DSEG data is placed at the module's data base
+  address instead of immediately after that module's own code. The linker had
+  treated each module's CSEG and DSEG as one contiguous block and copied the
+  whole buffer to `code_base`, so a module's initialized data landed directly
+  on top of whatever was linked next — which, in a multi-module link, is the
+  next module's code. Nothing reported it: the link succeeded, the file was
+  written, and the image was wrong. Any link of more than one module where the
+  modules carry initialized data was silently corrupted, and the corruption was
+  worse the more modules there were.
+
+  It was finally identified by size. MP/M II's XDOS.SPR is built from 19
+  modules, nearly all of which use DSEG; ul80 produced an 8960-byte XDOS.SPR
+  where DRI's own XDOS.SPR is 10112 bytes. The 1152 missing bytes were the
+  overlap — data written over code that the output was then never sized to
+  hold. CSEG bytes now go to `code_base`, initialized DSEG bytes to
+  `data_base`, and the output buffer is sized to cover both regions.
+- tests: `tests/test_case_sensitivity.py` expected symbols to be truncated to
+  eight characters, but `RELWriter` defaults to `truncate_symbols=False` and
+  keeps the full name. The expectations were wrong, not the writer; no
+  behavior changed.
+
+## [0.3.31] - 2026-01-07
+
+### Fixed
+- um80 assembler: `EX AF,AF'` no longer swallows the rest of the line. The
+  trailing apostrophe was read as the start of a string literal, both when
+  stripping comments and when splitting operands, so everything after it —
+  including the comment and any following statement — was absorbed into an
+  unterminated string. An apostrophe directly after an alphanumeric character
+  is now part of the register name, not a quote.
+- um80 assembler: The LOCAL symbol counter was not reset between passes, so the
+  generated `??NNNN` names drifted: a symbol defined as `??0000` during pass 1
+  was referenced under a different number in pass 2. The counter is now reset
+  at the start of each pass-1 iteration and again for pass 2, so a LOCAL symbol
+  keeps one name throughout.
+
+## [0.3.30] - 2026-01-07
+
+### Fixed
+- um80 assembler: The `-e`/`--execute` and `--pre` options added in 0.3.29
+  reached the installed tool. That release had added them only to `src/um80`, a
+  standalone copy of the assembler that nothing runs — the `um80` entry point
+  in pyproject.toml names `um80.um80:main` — so an installed 0.3.29 still
+  rejected both options as unrecognized arguments. The same code is now in
+  `um80/um80.py`. (The stale `src/` copies were removed outright in 0.3.41.)
+
+## [0.3.29] - 2026-01-07
+
+### Added
+- um80 assembler: `-e`/`--execute CODE` assembles a line of inline source ahead
+  of the main file, and `--pre FILE` includes a whole file ahead of it. Both
+  may be repeated and are processed in the order given, and `-e` accepts the
+  DRI `!` statement separator. This is how a source file's CPU mode or a
+  conditional-assembly symbol can be set from the command line without editing
+  the file — `um80 -e .z80 file.mac`. Note that in this release the options
+  existed only in the unused `src/um80` script; see 0.3.30.
+
+## [0.3.28] - 2026-01-06
+
+### Fixed
+- ul80 linker: External references resolved to DSEG and COMMON symbols are now
+  recorded in the PRL relocation bitmap as well. 0.3.27 marked only targets in
+  CSEG, so a cross-module pointer into another module's data segment or a
+  COMMON block stayed at its link-time address when MP/M loaded the .PRL or
+  .SPR anywhere else.
+
+## [0.3.27] - 2026-01-06
+
+### Fixed
+- ul80 linker: Addresses patched in while resolving an external reference are
+  included in the PRL relocation bitmap. The bitmap was built only from the
+  relocations the linker applied from a module's own relocation records, so an
+  EXTRN resolved to a symbol in another module — every cross-module call or
+  jump — was written as a link-time address and never relocated when the image
+  was loaded at its real page. A single-module .PRL was correct, which is why
+  this survived as long as it did.
+
+## [0.3.26] - 2026-01-06
+
+### Fixed
+- `__version__` is read from the installed package metadata instead of being a
+  hardcoded literal in `um80/__init__.py`. It had to be edited by hand in step
+  with pyproject.toml and regularly was not: 0.3.12 and 0.3.14 were both yanked
+  for exactly this, and every tool in 0.3.25 reported itself as 0.3.24. There
+  is now one place to change.
+
+## [0.3.25] - 2026-01-05
+
+### Fixed
+- um80 assembler: `$` evaluated one byte too high in the 8080 instructions that
+  take an address operand (JMP, the conditional jumps, CALL, the conditional
+  calls, LXI, LDA and their kin). The opcode byte was emitted before the
+  operand expression was parsed, so `$` saw the location counter already
+  advanced past it: `JNZ $-5H` assembled a target one byte beyond the one
+  written. The expression is now parsed first and the opcode emitted after.
+- um80 assembler: A CSEG/DSEG/ASEG directive now emits a SET_LOC record, so the
+  linker switches output buffers where the source does. Without it the bytes
+  after a segment switch were accumulated into the previous segment's buffer.
+- ul80 linker: DS zero fill was applied only when the location counter advanced
+  within the current segment, so space reserved immediately after a switch to
+  another segment was not filled.
+
+### Changed
+- ul80 linker: DS directives now emit zeros by default; `--no-ds-zeros`
+  restores the old behavior of treating reserved space as BSS. PRL and SPR
+  images must be contiguous, and space reserved at the end of a segment was
+  simply absent from the file — which is what prevented MPM.SYS from being
+  built with these tools.
 
 ## [0.3.24] - 2025-12-31
 
