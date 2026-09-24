@@ -20,14 +20,30 @@ Control  A-field  B-field  Meaning
 5        A        B        Define COMMON size
 6        A        B        Chain external (A=head, B=name)
 7        A        B        Define entry point (A=addr, B=name)
-8        A        -        External - offset (for JMP/CALL to external)
-9        A        -        External + offset (add A to current loc)
+8        A        -        External - offset (subtract A from the word here)
+9        A        -        External + offset (add A to the word here)
 10       A        -        Define Data area size
 11       A        -        Set location counter
 12       A        -        Chain address (A=head of chain)
-13       A        -        Define program size
-14       -        -        End program (force byte boundary)
+13       A        -        Define program size (MACRO-80 types A program
+                           relative; LINK-80 3.44 writes no output when
+                           it is absolute)
+14       A        -        End program (A=start address, or absolute 0;
+                           then force byte boundary)
 15       -        -        End file
+
+Up to 0.3.48 um80 wrote item 14 without its A-field, which LINK-80 3.44
+rejects ("?Loading Error", or a hang).  RELReader still reads such files:
+see _read_end_program().
+
+A word that is an external plus a constant - `JMP EXT+3', `LXI H,EXT-1' -
+is written the way MACRO-80 writes it: item 9 with the constant (16-bit,
+so EXT-1 is FFFFH), then the word itself as a reference in the external's
+chain.  LINK-80 adds the constant once the chain is resolved.  um80 used to
+put the constant in the chain's name instead ("EXT+3"), which only ul80
+understood; ul80 still reads that too.  LINK-80 ends a chain at absolute 0,
+so a reference AT absolute 0 cannot be in a chain: um80 writes that one as
+an extension link item (B(EXT) A(store word)).
 
 A-field: 2-bit address type + 16-bit value
   00 = absolute
@@ -35,7 +51,11 @@ A-field: 2-bit address type + 16-bit value
   10 = data relative
   11 = common relative
 
-B-field: 3-bit length (0-7, but 0 means 8 chars) + 8 bits per character
+B-field: 3-bit length (0-7, but 0 means 8 chars) + 8 bits per character.
+LINK-80 3.44 refuses a count of 0 ("?Loading Error"), so an L80-readable
+B-field has at most 7 bytes: a symbol of 7 characters, or an extension item
+'B' naming an external of at most 6.  MACRO-80 truncates every symbol to 6
+characters, so it never writes more.
 
 Extension link items (special item 4)
 -------------------------------------
@@ -87,9 +107,10 @@ one-byte field (`MVI A,BUF' is C(data,3) A(store byte)).  Digital Research's
 LINK-80 lists item 4 as unused and RMAC rejects HIGH/LOW of a relocatable
 value with an 'E' error, so DRI's tools neither write nor read it.
 
-The one field wider than 8 bytes this module can need - an external name of
-more than 7 characters after the 'B' - uses um80's extended B-field (length
-0, then FFH, then the real length), as other long symbols do.
+An external name of more than 7 characters after the 'B' uses um80's
+extended B-field (length 0, then FFH, then the real length), as other long
+symbols do.  ul80 reads it; LINK-80 does not (see B-field above), nor a 'B'
+item of exactly 8 bytes (a 7-character name).
 """
 
 
@@ -131,6 +152,13 @@ class BitWriter:
             self.bytes.append(self.current_byte)
             self.current_byte = 0
             self.bit_pos = 0
+
+    def append(self, other):
+        """Write every bit `other' holds, as if written here."""
+        for byte in other.bytes:
+            self.write_byte(byte)
+        for i in range(other.bit_pos):
+            self.write_bit((other.current_byte >> (7 - i)) & 1)
 
     def get_bytes(self):
         """Get the byte array, padding if necessary."""
@@ -390,9 +418,13 @@ class RELWriter:
                           a_field=(addr_type, head))
 
     def write_define_program_size(self, size):
-        """Define program (code) segment size."""
+        """Define program (code) segment size.
+
+        Typed program relative, as MACRO-80 writes it: LINK-80 3.44 exits
+        without writing any output when it is absolute.
+        """
         self._write_special(LINK_DEFINE_PROG_SIZE,
-                          a_field=(ADDR_ABSOLUTE, size))
+                          a_field=(ADDR_PROGRAM_REL, size))
 
     def write_extension(self, data):
         """Extension link item (special item 4) with the given B-field bytes."""
@@ -418,18 +450,26 @@ class RELWriter:
                               value & 0xFF, value >> 8])
 
     def write_end_program(self, entry_addr=None, entry_type=ADDR_ABSOLUTE):
-        """End of program, optional entry address."""
-        if entry_addr is not None:
-            # Write entry address before end
-            self._write_special(LINK_SET_LOC,
-                              a_field=(entry_type, entry_addr))
-        self._write_special(LINK_END_PROGRAM)
+        """End of program: item 14, whose A-field is the start address.
+
+        With no start address the A-field is absolute 0, as MACRO-80 writes
+        it.  (um80 wrote a set-location item for the start address and no
+        A-field up to 0.3.48.)
+        """
+        if entry_addr is None:
+            entry_addr, entry_type = 0, ADDR_ABSOLUTE
+        self._write_special(LINK_END_PROGRAM,
+                            a_field=(entry_type, entry_addr & 0xFFFF))
         self.bits.force_byte_boundary()
 
     def write_end_file(self):
         """End of file marker."""
         self._write_special(LINK_END_FILE)
         self.bits.force_byte_boundary()
+
+    def append(self, other):
+        """Append the items another RELWriter holds (no byte boundary)."""
+        self.bits.append(other.bits)
 
     def get_bytes(self):
         """Get the REL file content."""
@@ -493,6 +533,39 @@ class RELReader:
             return ('EXT_VALUE', (payload[0], payload[1] | (payload[2] << 8)))
         return ('EXTENSION', kind, payload)
 
+    def _byte_at_boundary(self, byte_pos, bit_pos):
+        """The byte at the first byte boundary at or after a bit position."""
+        pos = byte_pos + (1 if bit_pos else 0)
+        return self.bits.data[pos] if pos < len(self.bits.data) else None
+
+    def _read_end_program(self):
+        """The A-field of item 14 (end program), or None if it has none.
+
+        MACRO-80 writes the start address there (absolute 0 if none); um80 up
+        to 0.3.48 wrote no A-field, going straight to the byte boundary,
+        and always followed it with item 15 (end file, byte 9EH once
+        aligned).  Both are read: the A-field is taken to be absent only if
+        reading it would run past the end of the data, or if what follows
+        it is not an item that can follow item 14 while the byte right after
+        the control field's boundary is the end-file item.
+        """
+        byte_pos, bit_pos = self.bits.byte_pos, self.bits.bit_pos
+        legacy_next = self._byte_at_boundary(byte_pos, bit_pos)
+        try:
+            a = self._read_a_field()
+        except EOFError:
+            a = None
+        if a is not None:
+            after = self._byte_at_boundary(self.bits.byte_pos, self.bits.bit_pos)
+            # End file, or a module that begins with its name (item 2) or
+            # an entry symbol (item 0): 1 00 0010 / 1 00 0000.
+            follows = after == 0x9E or (after is not None
+                                        and (after & 0xFE) in (0x84, 0x80))
+            if follows or legacy_next != 0x9E:
+                return a
+        self.bits.byte_pos, self.bits.bit_pos = byte_pos, bit_pos
+        return None
+
     def read_item(self):
         """
         Read next item from REL file.
@@ -555,8 +628,9 @@ class RELReader:
                 a = self._read_a_field()
                 return ('DEFINE_PROG_SIZE', a)
             elif control == LINK_END_PROGRAM:
+                a = self._read_end_program()
                 self.bits.force_byte_boundary()
-                return ('END_PROGRAM',)
+                return ('END_PROGRAM', a)
             else:
                 # LINK_END_FILE: the sixteenth and last control value.
                 self.bits.force_byte_boundary()

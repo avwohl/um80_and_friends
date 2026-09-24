@@ -958,8 +958,10 @@ class TestRELDumper:
         assert ('SET_LOC', (ADDR_ABSOLUTE, 0x100)) in items
         assert ('ABSOLUTE_BYTE', 0xAA) in items
         assert ('ABSOLUTE_BYTE', 0xBB) in items
-        assert ('DEFINE_PROG_SIZE', (ADDR_ABSOLUTE, 2)) in items
-        assert ('END_PROGRAM',) in items
+        # Typed program-relative, as MACRO-80 writes it (LINK-80 writes no
+        # output for an absolute one).
+        assert ('DEFINE_PROG_SIZE', (ADDR_PROGRAM_REL, 2)) in items
+        assert ('END_PROGRAM', (ADDR_ABSOLUTE, 0)) in items
         assert ('END_FILE',) in items
 
     def test_dump_with_externals(self):

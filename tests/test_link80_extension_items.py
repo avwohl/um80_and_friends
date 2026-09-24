@@ -72,7 +72,7 @@ def test_reader_round_trip_of_extension_items():
         ('EXTENSION', 0x35, b'\x02'),
         ('ABSOLUTE_BYTE', 0xAA),
         ('DEFINE_ENTRY', (ADDR_ABSOLUTE, 0x55AA), 'AFTER'),
-        ('END_PROGRAM',),
+        ('END_PROGRAM', (ADDR_ABSOLUTE, 0)),
         ('END_FILE',),
     ]
 

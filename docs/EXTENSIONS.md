@@ -8,7 +8,7 @@ This document describes extensions to the Microsoft MACRO-80 and LINK-80 compati
 
 The original Microsoft REL format encodes symbol names in a "B-field" using a 3-bit length (0-7, where 0 means 8 characters) followed by the ASCII characters. This limits symbol names to 8 characters maximum.
 
-This limitation causes problems when assembling code that uses longer symbol names, especially when external references include offsets like `MEMSEGTBL+2`. The original M80 would truncate this to `MEMSEGTB` (8 chars), losing the `+2` offset information.
+This limitation causes problems when assembling code that uses longer symbol names. (M80 itself keeps only the first 6 characters of every symbol.)
 
 ### Extended B-Field Format
 
@@ -34,8 +34,12 @@ um80/ul80 extend the REL B-field format to support symbols up to 255 characters:
 
 The extended format is designed for backward compatibility:
 - Standard 8-char symbols starting with 0xFF are extremely rare (non-printable)
-- Legacy L80 would see 0xFF as the first character of an 8-char symbol
 - ul80 detects the 0xFF marker and reads the extended length
+
+LINK-80 3.44 reads neither: it refuses a 3-bit count of 0 ("?Loading
+Error"), so the longest name it accepts is **7** characters, and the longest
+external an extension item `B` can name is 6 (the `B` is the first byte).
+Checked against the genuine L80 under a CP/M emulator.
 
 ### Command-Line Control
 
@@ -48,9 +52,12 @@ um80 program.mac             # Default: allow long symbols
 ```
 
 This is useful when:
-- Producing REL files for use with original Microsoft L80
 - Debugging symbol resolution issues
 - Comparing behavior with original tools
+
+For objects the original Microsoft L80 is to read, keep symbols to 7
+characters (6 for an external used in a link-time expression): `-t` still
+allows 8, which L80 refuses.
 
 ---
 
@@ -344,6 +351,34 @@ ul80 evaluates the expressions once every module is placed and writes the
 results over the placeholders, for every output format, and reads objects
 written by the real M80 the same way.
 
+### Objects LINK-80 reads, and objects MACRO-80 writes
+
+um80's `.REL` files follow the Microsoft format where earlier releases did
+not, so the genuine LINK-80 3.44 loads them, and ul80 links what MACRO-80 3.44
+writes (each checked by linking the same program four ways: M80+L80,
+M80+ul80, um80+L80, um80+ul80):
+
+- special item 14 (end program) carries its A-field, the start address
+  (absolute 0 if none), and item 13 (program size) is typed program relative;
+  the segment and COMMON sizes come first in the module, as M80 writes them
+  (L80 needs a COMMON block's size before anything refers to it);
+- `JMP EXT+3` is item 9 (External plus offset, `A` = 3; `EXT-1` is FFFFH)
+  just before the word, which is a reference in EXT's chain. um80 used to put
+  the constant in the chain's name (`EXT+3`), which L80 takes for an undefined
+  symbol; ul80 still reads that. ul80 applies items 9 and 8, and follows
+  MACRO-80's chains through every reference, each link typed by its
+  relocation;
+- a chain head of absolute 0 is an empty chain (M80 writes one for an
+  external used only in an expression), so a reference *at* absolute 0 is
+  written as an extension item `B(EXT) A(store word)`;
+- each named COMMON block is placed on its own; a COMMON-relative word,
+  extension value, public, chain head or set-location is preceded by
+  special item 1 when it refers to another block than the one selected last;
+  bytes assembled into a COMMON block load there (DB, FORTRAN's BLOCK DATA);
+- a `.REL` holding several modules (a LIB-80 library such as FORTRAN-80's
+  FORLIB.REL) loads every one of them, and `ulib80 -c` stores each as a
+  module of its own.
+
 ### Absolute assembly (`--aseg`)
 
 M80 starts a file in CSEG, so an `ORG` is an offset within a relocatable
@@ -374,7 +409,7 @@ assembles MAC sources the way MAC does.
 
 ## Version History
 
-- **Unreleased** — link-time expressions (REL extension link items): HIGH/LOW of relocatable and external values
+- **Unreleased** — link-time expressions (REL extension link items): HIGH/LOW of relocatable and external values; `.REL` objects the genuine LINK-80 reads (item 14's A-field, item 9 for EXT+n, COMMON block selection)
 - **0.3.48** — `--spr`, `--extra` and `--aseg`; `--prl` links a transient at 100H
 - **0.3.33** — External symbol aliases (EQU external+offset) for z88dk compatibility
 - **0.3.21** — Extended REL format for long symbols, `-t/--truncate` switch

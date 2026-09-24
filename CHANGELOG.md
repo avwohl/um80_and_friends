@@ -119,10 +119,59 @@ evaluates them. The format was established by running the genuine M80 and L80
   ulib80 indexed four garbage "public symbols" from an M80 module that uses
   one. Item 8 (External − offset) has an A-field only, per the Microsoft
   manual, but was read as if it had a B-field as well.
-- ul80 linker: a chain-external record whose head is absolute 0, in a module
-  with no absolute code, is an empty chain — M80 writes one to declare an
-  external used only inside an expression. It was followed as if a reference
-  sat at absolute 0.
+- ul80 linker: a chain-external record whose head is absolute 0 is an empty
+  chain, as in LINK-80 — M80 writes one to declare an external used only
+  inside an expression, or not used at all. It was followed as if a reference
+  sat at absolute 0, writing the external's address over the first word of a
+  module with ASEG code there (a reset vector). um80 now writes a reference
+  at absolute 0 as an extension link item; only in an object from um80 0.3.48
+  or earlier, recognised by its item 14, is such a head still a reference.
+- relformat, um80: the genuine LINK-80 3.44 could not load any object um80
+  wrote ("?Loading Error", or a hang). Special item 14 (end program) has an
+  A-field — the start address, absolute 0 if none — which um80 left out,
+  writing the start address as a set-location item instead; item 13
+  (program size) has to be typed program relative, as M80 writes it (L80
+  writes no output when it is absolute); and a COMMON block's size has to
+  come before anything refers to the block. um80 now writes all three the
+  way M80 does, with the segment and COMMON sizes at the start of the
+  module. Linking the same programs with M80+L80, um80+L80 and um80+ul80
+  gives the same bytes.
+- relformat: the reader read item 14 without its A-field, so every object
+  MACRO-80 or LINK-80 wrote fell out of step after its first module:
+  `ulib80 -c` on FORTRAN-80's FORLIB.REL crashed (UnicodeEncodeError) and
+  found 43 garbage "publics" instead of 418. It reads both layouts (um80's
+  earlier objects have no A-field).
+- ul80 linker: MACRO-80 writes `JMP EXT+3` as special item 9 (External plus
+  offset) before a word that is a link in EXT's chain, and chains every
+  reference to an external through the words. ul80 ignored items 9 and 8,
+  and fixed up only the head of each chain, so the relocation pass then
+  added the segment base to the other links: in an M80 object `JMP EXT+3`
+  linked to EXT, and of three `CALL X` the second called X+100H. It applies
+  the constants and follows each chain link by its relocation type.
+- ul80 linker, ulib80: a `.REL` holding several modules — a LIB-80 library
+  such as FORTRAN-80's FORLIB.REL, 106 modules — loaded only the first, and
+  `ulib80 -c` stored it as one module. Every module is loaded, and ulib80
+  keeps each as a module of its own, named by its program name.
+- um80 assembler, ul80 linker: two or more named COMMON blocks were placed at
+  one address, on top of each other. ul80 ignored special item 1 (select
+  COMMON block), which a COMMON-relative value is relative to, and um80 wrote
+  it only at the `COMMON` directive, so every COMMON-relative word, extension
+  value and public referred to whichever block came last. Each block now gets
+  its own place, the size of its largest declaration, in the order blocks are
+  first declared, and um80 selects the right block before each reference (a
+  reference to another block from inside one goes out as an extension item,
+  with the block being loaded selected again before the store). The distance
+  between two different COMMON blocks is a link-time expression, not a
+  constant (M80 3.44 assembles it as one). Bytes assembled into a COMMON
+  block (`DB`, FORTRAN's BLOCK DATA) went into the segment before the
+  `COMMON` directive — overwriting the code after it — and ul80 dropped
+  initialized COMMON data; both now land in the block, and the bytes a module
+  loads there are in the image. A `.PRL` header now reserves memory for
+  COMMON, which lies past the image: MP/M allocated none.
+- um80 assembler: with `--aseg`, code before the first `ORG` was loaded by
+  the linker into CSEG, at the program base, although its labels are
+  absolute from 0; an external referenced there was never filled in. The
+  module now starts in ASEG.
 
 ### Changed
 - um80 assembler: `n-SYM` and an expression naming two externals, errors since
@@ -153,13 +202,18 @@ evaluates them. The format was established by running the genuine M80 and L80
   an error.
 - um80 assembler: a `PUBLIC` symbol equated to a link-time expression is an
   error — a `.REL` public carries an address or a constant.
+- um80 assembler: a word that is an external plus a constant goes out as
+  M80 writes it — special item 9 with the constant, then a reference in the
+  external's chain — instead of a chain named `EXT+3`, which LINK-80 took for
+  an undefined symbol. ul80 still reads the old form.
 
 ### Added
 - ul80 linker: evaluates extension link items (`+ - * / MOD NOT HIGH LOW`,
   unary minus, externals, program/data/common-relative values) once every
   segment is placed, for `.COM`, `.HEX`, `.PRL` and `.SPR` output alike. An
   object written by the real MACRO-80 3.44 links to the values LINK-80 3.44
-  computes for it.
+  computes for it, and one um80 writes links in LINK-80 to the values ul80
+  computes (except where M80 itself miscompiles; see above).
 - ul80 linker: in `.PRL`/`.SPR` output a stored byte that is `HIGH` of an
   address is marked in the relocation bitmap and one that is `LOW` of an
   address is not (a page move never changes a low byte); a stored word that is

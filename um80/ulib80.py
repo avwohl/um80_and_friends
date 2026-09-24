@@ -64,33 +64,75 @@ class Library:
         self.symbol_index = {}  # symbol_name -> module_name
 
     def add_rel_file(self, filename):
-        """Add a .REL file to the library."""
+        """Add a .REL file to the library: each module in it.
+
+        A .REL can hold several modules one after another (a LIB-80
+        library is one: FORTRAN-80's FORLIB.REL has 106); each becomes a
+        module of its own, named by its program name, so a link loads only
+        the ones it needs.  A file with one module is stored as it is,
+        under the file's name.
+        """
         with open(filename, 'rb') as f:
             data = f.read()
 
-        name = Path(filename).stem.upper()
-
-        # Check if module already exists
-        for mod in self.modules:
-            if mod.name == name:
+        stem = Path(filename).stem.upper()
+        parts = self.split_modules(data)
+        if len(parts) <= 1:
+            parts = [(stem, data)]
+        added = []
+        for name, part in parts:
+            name = name.upper() or stem
+            taken = {mod.name for mod in self.modules}
+            if len(parts) == 1 and name in taken:
                 raise LibraryError(f"Module '{name}' already exists in library")
+            base, n = name, 1
+            while name in taken:
+                name = f"{base}_{n}"
+                n += 1
+            module = Module(name, bytearray(part))
 
-        module = Module(name, bytearray(data))
+            # Parse the REL data to extract public symbols
+            module.publics = self._extract_publics(part)
 
-        # Parse the REL file to extract public symbols
-        module.publics = self._extract_publics(data)
+            # Update symbol index
+            for sym in module.publics:
+                if sym in self.symbol_index:
+                    print(f"Warning: Symbol '{sym}' defined in multiple modules", file=sys.stderr)
+                self.symbol_index[sym] = name
 
-        # Update symbol index
-        for sym in module.publics:
-            if sym in self.symbol_index:
-                print(f"Warning: Symbol '{sym}' defined in multiple modules", file=sys.stderr)
-            self.symbol_index[sym] = name
+            self.modules.append(module)
+            added.append(name)
+        return added
 
-        self.modules.append(module)
+    @staticmethod
+    def split_modules(data):
+        """[(program name, REL bytes)] of each module in `data'.
+
+        A module ends with special item 14, which ends on a byte boundary;
+        each piece gets an end-file item of its own.
+        """
+        reader = RELReader(data)
+        parts = []
+        start = 0
+        name = ''
+        while True:
+            try:
+                item = reader.read_item()
+            except EOFError:
+                break
+            if item is None or item[0] == 'END_FILE':
+                break
+            if item[0] == 'PROGRAM_NAME' and not name:
+                name = item[1]
+            elif item[0] == 'END_PROGRAM':
+                end = reader.bits.byte_pos
+                parts.append((name, bytes(data[start:end]) + b'\x9e'))
+                start, name = end, ''
+        return parts
 
     def _extract_publics(self, data):
-        """Extract public symbol names from REL data."""
-        publics = set()
+        """Extract public symbol names from REL data, in order."""
+        publics = {}
         try:
             reader = RELReader(data)
             while True:
@@ -101,11 +143,11 @@ class Library:
                     if item[0] == 'DEFINE_ENTRY':
                         # Public symbol definition
                         _, name = item[1], item[2]
-                        publics.add(name.upper())
+                        publics[name.upper()] = True
                     elif item[0] == 'ENTRY_SYMBOL':
                         # Entry symbol (also public)
                         name = item[1]
-                        publics.add(name.upper())
+                        publics[name.upper()] = True
                     elif item[0] == 'END_FILE':
                         break
                 except EOFError:
@@ -241,8 +283,8 @@ def cmd_create(args):
             print(f"Error: File not found: {relfile}", file=sys.stderr)
             return 1
         try:
-            lib.add_rel_file(relfile)
-            print(f"  Added: {Path(relfile).stem.upper()}")
+            for name in lib.add_rel_file(relfile):
+                print(f"  Added: {name}")
         except LibraryError as e:
             print(f"Error: {e}", file=sys.stderr)
             return 1
@@ -352,8 +394,8 @@ def cmd_add(args):
             print(f"Error: File not found: {relfile}", file=sys.stderr)
             return 1
         try:
-            lib.add_rel_file(relfile)
-            print(f"  Added: {Path(relfile).stem.upper()}")
+            for name in lib.add_rel_file(relfile):
+                print(f"  Added: {name}")
         except LibraryError as e:
             print(f"Error: {e}", file=sys.stderr)
             return 1

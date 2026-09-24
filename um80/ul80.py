@@ -36,13 +36,14 @@ class Module:
 
         # Symbols defined in this module
         self.publics = {}  # name -> (value, seg_type)
+        self.public_blocks = {}  # name -> COMMON block, for a COMMON-relative public
 
         # Aliased entry points: SYMBOL EQU EXTERNAL+offset made PUBLIC
         # These are resolved after all externals are resolved
         self.aliased_publics = {}  # new_name -> (base_external, offset)
 
         # External references (chains to be fixed up)
-        self.externals = {}  # name -> list of (offset_in_module, seg_type)
+        self.externals = {}  # name -> list of (buf_offset of the chain head, segment key)
 
         # Internal chains (forward references resolved within module)
         self.chains = {}  # offset -> list of offsets to fix
@@ -50,39 +51,64 @@ class Module:
         # Common blocks
         self.commons = {}  # name -> size
 
-        # Relocation info: list of (offset, seg_type) for addresses that need relocation
+        # Relocation info: (buf_offset, reloc_type, segment key of the
+        # location, COMMON block of a COMMON-relative value or None).
         self.relocations = []
 
-        # Segment buffer offsets: maps segment type to buffer offset where that segment starts
-        # Used to convert segment-relative addresses to buffer offsets during chain following
-        self.seg_buf_start = {}  # seg_type -> buffer start offset
+        # Where each segment's bytes start in `code'.  The key is a segment
+        # type, or (ADDR_COMMON_REL, name) for a COMMON block: every named
+        # block is a segment of its own.
+        self.seg_buf_start = {}
 
         # Fields the linker computes from extension link items (HIGH/LOW of
         # a relocatable or external value, and the like): a list of
         # (buf_offset, size, items) - `size' bytes at `buf_offset' get the
-        # value of the postfix expression `items' (RELReader EXT_* tuples).
+        # value of the postfix expression `items' (RELReader EXT_* tuples;
+        # a COMMON-relative EXT_VALUE carries its block as a third element).
         self.expressions = []
+
+        # Special items 9 and 8 (External plus/minus offset): (buf_offset,
+        # sign, a_field, block) - the A value, relocated, times sign is added
+        # to the word at buf_offset once every reference is filled in.
+        self.offsets = []
+
+        # The bytes a module loads into a COMMON block, as opposed to the
+        # zeros DS leaves there: segment key -> set of offsets in the block.
+        # Only these are put in the image (FORTRAN's BLOCK DATA, DB in a
+        # COMMON block); a COMMON block is otherwise uninitialized.
+        self.common_data = {}
+
+        # Item 14's A-field (the start address), None when the module was
+        # written by um80 up to 0.3.48, which left the A-field out.
+        self.entry = None
+        self.legacy_um80 = False
 
 
 class Linker:
     """LINK-80 compatible linker."""
 
+    # Addresses the linker computes from the layout.
+    LINKER_SYMBOLS = ('__END__', '__BSS_START', '__BSS_END')
+
     def __init__(self):
         self.modules = []
         self.globals = {}  # name -> (module_idx, value, seg_type, is_defined)
-        self.commons = {}  # name -> size (largest wins)
+        self.global_blocks = {}  # name -> COMMON block of a COMMON-relative global
+        self.commons = {}  # name -> size (largest wins), in order of declaration
+        self.common_bases = {}  # name -> address, set by calculate_addresses()
+        self.total_common = 0
 
         # Pre-define linker symbols (values computed in calculate_addresses)
         # mod_idx=0 is placeholder, value will be absolute address
-        self.globals['__END__'] = (0, 0, ADDR_ABSOLUTE, True)
-        self.globals['__BSS_START'] = (0, 0, ADDR_ABSOLUTE, True)
-        self.globals['__BSS_END'] = (0, 0, ADDR_ABSOLUTE, True)
+        for name in self.LINKER_SYMBOLS:
+            self.globals[name] = (0, 0, ADDR_ABSOLUTE, True)
 
         self.code_base = 0x0103  # Default CP/M load address + 3 for JMP
         self.data_base = None  # Will be after code if not specified
         self.common_base = None  # After data
 
         self.output = bytearray()
+        self.output_base = 0
         self.entry_point = None  # (value, seg_type) or None
 
         self.errors = []
@@ -125,36 +151,64 @@ class Linker:
         return self.load_rel_data(Path(filename).stem, data)
 
     def load_rel_data(self, name, data):
-        """Load REL data from bytes (e.g., from a library module)."""
+        """Load REL data from bytes (e.g., from a library module).
+
+        Every module in it: a .REL can hold several, one after another,
+        each ending in item 14 and the last followed by item 15 (FORTRAN-80's
+        FORLIB.REL has 106).  Only the first was loaded.
+        """
         reader = RELReader(data)
+        count = 0
+        while True:
+            more = self._load_module(reader, name if count == 0
+                                     else f"{name}_{count}")
+            if more is None:
+                break
+            count += 1
+            if not more:
+                break
+        return True
+
+    def _load_module(self, reader, name):
+        """Load the next module from `reader'.
+
+        Returns True if another may follow (it ended in item 14), False if
+        the data ended with it, or None if there was no module at all.
+        """
         module = Module(name.upper())
 
         current_loc = 0  # Position within current segment
         current_seg = ADDR_PROGRAM_REL  # Default to code segment
+        current_block = None  # COMMON block selected by special item 1
         first_abs_data = False  # Track if actual data bytes written to ASEG
+        any_item = False
+        more = False
 
         # Use separate buffers for each segment to avoid overwrites when
         # switching between segments (e.g., CSEG -> DSEG -> CSEG)
-        seg_buffers = {}  # seg_type -> bytearray
+        seg_buffers = {}  # segment key -> bytearray
 
-        def get_seg_buffer():
-            """Get or create buffer for current segment."""
-            if current_seg not in seg_buffers:
-                seg_buffers[current_seg] = bytearray()
-            return seg_buffers[current_seg]
+        def seg_key(seg=None):
+            """The buffer key of segment type `seg' (default: the current)."""
+            seg = current_seg if seg is None else seg
+            return (ADDR_COMMON_REL, current_block) if seg == ADDR_COMMON_REL \
+                else seg
 
-        def write_byte_to_seg(value):
+        def write_byte_to_seg(value, loaded=True):
             """Write a byte at current_loc in current segment's buffer."""
-            buf = get_seg_buffer()
+            buf = seg_buffers.setdefault(seg_key(), bytearray())
             while len(buf) <= current_loc:
                 buf.append(0)
             buf[current_loc] = value
+            if loaded and current_seg == ADDR_COMMON_REL:
+                module.common_data.setdefault(seg_key(), set()).add(current_loc)
 
         # Track relocations with segment-relative offsets before combining
-        pending_relocations = []  # (seg_type, seg_offset, reloc_type)
-        pending_externals = []  # (name, seg_type, head_offset)
-        pending_chains = []  # (chain_seg, head_offset, cur_seg, cur_offset)
-        pending_exprs = []  # (seg_type, seg_offset, size, items)
+        pending_relocations = []  # (seg key, seg_offset, reloc_type, block)
+        pending_externals = []  # (name, seg key, head_offset)
+        pending_chains = []  # (chain key, head_offset, cur key, cur_offset)
+        pending_exprs = []  # (seg key, seg_offset, size, items)
+        pending_offsets = []  # (seg key, seg_offset, sign, a_field, block)
         expr_items = []  # extension items read since the last store
 
         while True:
@@ -167,6 +221,9 @@ class Linker:
                 break
 
             item_type = item[0]
+            if item_type == 'END_FILE':
+                break
+            any_item = True
 
             if item_type == 'ABSOLUTE_BYTE':
                 if not first_abs_data and current_seg == ADDR_ABSOLUTE:
@@ -174,36 +231,20 @@ class Linker:
                 write_byte_to_seg(item[1])
                 current_loc += 1
 
-            elif item_type == 'PROGRAM_REL':
-                # 16-bit program-relative value - needs relocation
+            elif item_type in ('PROGRAM_REL', 'DATA_REL', 'COMMON_REL'):
+                # 16-bit relocatable value - needs relocation
                 if not first_abs_data and current_seg == ADDR_ABSOLUTE:
                     first_abs_data = True
+                reloc_type = {'PROGRAM_REL': ADDR_PROGRAM_REL,
+                              'DATA_REL': ADDR_DATA_REL,
+                              'COMMON_REL': ADDR_COMMON_REL}[item_type]
                 value = item[1]
                 write_byte_to_seg(value & 0xFF)
-                # Record relocation at low byte position
-                pending_relocations.append((current_seg, current_loc, ADDR_PROGRAM_REL))
-                current_loc += 1
-                write_byte_to_seg((value >> 8) & 0xFF)
-                current_loc += 1
-
-            elif item_type == 'DATA_REL':
-                # 16-bit data-relative value - needs relocation
-                if not first_abs_data and current_seg == ADDR_ABSOLUTE:
-                    first_abs_data = True
-                value = item[1]
-                write_byte_to_seg(value & 0xFF)
-                pending_relocations.append((current_seg, current_loc, ADDR_DATA_REL))
-                current_loc += 1
-                write_byte_to_seg((value >> 8) & 0xFF)
-                current_loc += 1
-
-            elif item_type == 'COMMON_REL':
-                # 16-bit common-relative value - needs relocation
-                if not first_abs_data and current_seg == ADDR_ABSOLUTE:
-                    first_abs_data = True
-                value = item[1]
-                write_byte_to_seg(value & 0xFF)
-                pending_relocations.append((current_seg, current_loc, ADDR_COMMON_REL))
+                # Record relocation at low byte position; a COMMON-relative
+                # value is relative to the block selected last.
+                pending_relocations.append(
+                    (seg_key(), current_loc, reloc_type,
+                     current_block if reloc_type == ADDR_COMMON_REL else None))
                 current_loc += 1
                 write_byte_to_seg((value >> 8) & 0xFF)
                 current_loc += 1
@@ -236,12 +277,14 @@ class Linker:
                     module.aliased_publics[new_name] = (base_ext, offset)
                 else:
                     module.publics[sym_name] = (value, addr_type)
+                    if addr_type == ADDR_COMMON_REL:
+                        module.public_blocks[sym_name] = current_block
 
             elif item_type == 'CHAIN_EXTERNAL':
                 # External reference chain - store segment-relative for now
                 a_field, sym_name = item[1], item[2]
                 addr_type, head = a_field
-                pending_externals.append((sym_name, addr_type, head))
+                pending_externals.append((sym_name, seg_key(addr_type), head))
 
             elif item_type == 'SET_LOC':
                 a_field = item[1]
@@ -252,13 +295,13 @@ class Linker:
                     # Switch to target segment first to write to correct buffer
                     current_seg = addr_type
                     # Get current buffer size for this segment
-                    buf = get_seg_buffer()
+                    buf = seg_buffers.setdefault(seg_key(), bytearray())
                     fill_from = len(buf)
                     if value > fill_from:
                         # Temporarily set current_loc to fill position
                         current_loc = fill_from
                         while current_loc < value:
-                            write_byte_to_seg(0)
+                            write_byte_to_seg(0, loaded=False)
                             current_loc += 1
                 current_loc = value
                 current_seg = addr_type
@@ -274,7 +317,8 @@ class Linker:
                 # Internal forward reference chain - store segment-relative
                 a_field = item[1]
                 addr_type, head = a_field
-                pending_chains.append((addr_type, head, current_seg, current_loc))
+                pending_chains.append((seg_key(addr_type), head, seg_key(),
+                                       current_loc))
 
             elif item_type == 'DEFINE_PROG_SIZE':
                 a_field = item[1]
@@ -292,15 +336,28 @@ class Linker:
                 module.commons[sym_name] = size
 
             elif item_type == 'SELECT_COMMON':
-                # Switch to common block
-                pass
+                # What COMMON-relative items refer to, and load into, from
+                # here on.
+                current_block = item[1]
 
             elif item_type == 'REQUEST_LIB':
                 # Library search request
                 pass
 
+            elif item_type in ('EXTERNAL_PLUS_OFFSET', 'EXTERNAL_OFFSET'):
+                # MACRO-80 writes `JMP EXT+3' as item 9 (A = 3) just before
+                # the word, which is a reference in EXT's chain; LINK-80 adds
+                # A to the word once it is filled in.  Item 8 subtracts.
+                a_field = item[1]
+                pending_offsets.append(
+                    (seg_key(), current_loc,
+                     1 if item_type == 'EXTERNAL_PLUS_OFFSET' else -1,
+                     a_field, current_block))
+
             elif item_type in ('EXT_VALUE', 'EXT_SYMBOL'):
                 # An operand of a link-time expression (see relformat.py).
+                if item_type == 'EXT_VALUE' and item[1][0] == ADDR_COMMON_REL:
+                    item = ('EXT_VALUE', item[1], current_block)
                 expr_items.append(item)
                 if item_type == 'EXT_SYMBOL':
                     # Make the name an external of this module, so a library
@@ -315,7 +372,7 @@ class Linker:
                     # placeholder bytes, which load here and are replaced
                     # once every segment is placed (link()).
                     size = 1 if item[1] == EXT_OP_STORE_BYTE else 2
-                    pending_exprs.append((current_seg, current_loc, size,
+                    pending_exprs.append((seg_key(), current_loc, size,
                                           expr_items))
                     expr_items = []
                 else:
@@ -329,67 +386,96 @@ class Linker:
                              f"{item[1]:02X}H ignored")
 
             elif item_type == 'END_PROGRAM':
-                # End of module
+                # End of module; the A-field is the start address.
+                module.entry = item[1]
+                module.legacy_um80 = item[1] is None
+                more = True
                 break
 
-            elif item_type == 'END_FILE':
-                break
+        if not any_item:
+            return None
+
+        # A COMMON-relative item before any block was selected: um80 up to
+        # 0.3.48 selected the block only at its COMMON directive.  Take the
+        # module's first block.
+        default_block = next(iter(module.commons), ' ')
+
+        def norm(key):
+            if isinstance(key, tuple) and key[1] is None:
+                return (ADDR_COMMON_REL, default_block)
+            return key
+
+        def block_of(block):
+            return default_block if block is None else block
 
         # Combine segment buffers into single code buffer
-        # Order: ASEG (absolute), CSEG (program), DSEG (data), COMMON
+        # Order: ASEG (absolute), CSEG (program), DSEG (data), each COMMON block
         code_bytes = bytearray()
         seg_buf_start = {}
+        keys = [ADDR_ABSOLUTE, ADDR_PROGRAM_REL, ADDR_DATA_REL]
+        keys += [k for k in seg_buffers if isinstance(k, tuple)]
+        for key in keys:
+            if key in seg_buffers and norm(key) not in seg_buf_start:
+                seg_buf_start[norm(key)] = len(code_bytes)
+                code_bytes.extend(seg_buffers[key])
+        for key, positions in list(module.common_data.items()):
+            del module.common_data[key]
+            module.common_data.setdefault(norm(key), set()).update(positions)
+        for name_, block in list(module.public_blocks.items()):
+            module.public_blocks[name_] = block_of(block)
 
-        for seg_type in [ADDR_ABSOLUTE, ADDR_PROGRAM_REL, ADDR_DATA_REL, ADDR_COMMON_REL]:
-            if seg_type in seg_buffers:
-                seg_buf_start[seg_type] = len(code_bytes)
-                code_bytes.extend(seg_buffers[seg_type])
+        def buf_offset(key, offset, fallback):
+            key = norm(key)
+            if key in seg_buf_start:
+                return seg_buf_start[key] + offset
+            return fallback + offset
 
         # Convert segment-relative relocations to buffer offsets
-        # Store (buf_offset, reloc_type, ref_seg_type) where ref_seg_type is which segment the reference is in
-        for seg_type, seg_offset, reloc_type in pending_relocations:
-            if seg_type in seg_buf_start:
-                buf_offset = seg_buf_start[seg_type] + seg_offset
-                module.relocations.append((buf_offset, reloc_type, seg_type))
+        for key, seg_offset, reloc_type, block in pending_relocations:
+            if norm(key) in seg_buf_start:
+                module.relocations.append(
+                    (seg_buf_start[norm(key)] + seg_offset, reloc_type,
+                     norm(key), block_of(block)
+                     if reloc_type == ADDR_COMMON_REL else None))
 
         # Convert pending externals to buffer offsets
-        for sym_name, addr_type, head in pending_externals:
+        for sym_name, key, head in pending_externals:
             if sym_name not in module.externals:
                 module.externals[sym_name] = []
-            if (addr_type == ADDR_ABSOLUTE and head == 0
-                    and ADDR_ABSOLUTE not in seg_buf_start):
+            if key == ADDR_ABSOLUTE and head == 0 and (
+                    not module.legacy_um80
+                    or ADDR_ABSOLUTE not in seg_buf_start):
                 # LINK-80 chains end at absolute 0, so this is an empty
                 # chain: MACRO-80 writes one to declare an external used
-                # only inside a link-time expression.  (um80 writes a
-                # record per reference, and one at absolute 0 would need
-                # the module to have absolute code there.)
+                # only inside a link-time expression, or not at all.  (um80
+                # up to 0.3.48 wrote a record per reference, and one at
+                # absolute 0 meant a reference there; um80 now writes such a
+                # reference as an extension link item.)
                 continue
-            if addr_type in seg_buf_start:
-                buf_head = seg_buf_start[addr_type] + head
-            else:
-                buf_head = seg_buf_start.get(ADDR_ABSOLUTE, len(code_bytes)) + head
-            module.externals[sym_name].append((buf_head, addr_type))
+            buf_head = buf_offset(key, head,
+                                  seg_buf_start.get(ADDR_ABSOLUTE, len(code_bytes)))
+            module.externals[sym_name].append((buf_head, norm(key)))
 
         # Convert pending chains to buffer offsets
-        for chain_seg, head, cur_seg, cur_offset in pending_chains:
-            if chain_seg in seg_buf_start:
-                buf_head = seg_buf_start[chain_seg] + head
-            else:
-                buf_head = len(code_bytes) + head
-            if cur_seg in seg_buf_start:
-                buf_cur = seg_buf_start[cur_seg] + cur_offset
-            else:
-                buf_cur = len(code_bytes) + cur_offset
+        for chain_key, head, cur_key, cur_offset in pending_chains:
+            buf_head = buf_offset(chain_key, head, len(code_bytes))
+            buf_cur = buf_offset(cur_key, cur_offset, len(code_bytes))
             if buf_head not in module.chains:
                 module.chains[buf_head] = []
-            module.chains[buf_head].append((buf_cur, chain_seg))
+            module.chains[buf_head].append((buf_cur, norm(chain_key)))
 
         if expr_items:
             self.error(f"Module {module.name}: link-time expression has no "
                        f"store operator")
-        for seg_type, seg_offset, size, items in pending_exprs:
-            buf_offset = seg_buf_start.get(seg_type, len(code_bytes)) + seg_offset
-            module.expressions.append((buf_offset, size, items))
+        for key, seg_offset, size, items in pending_exprs:
+            module.expressions.append(
+                (buf_offset(key, seg_offset, len(code_bytes)), size,
+                 [(t[0], t[1], block_of(t[2])) if len(t) == 3 else t
+                  for t in items]))
+        for key, seg_offset, sign, a_field, block in pending_offsets:
+            module.offsets.append(
+                (buf_offset(key, seg_offset, len(code_bytes)), sign, a_field,
+                 block_of(block)))
 
         module.code = code_bytes
         module.seg_buf_start = seg_buf_start  # Save for chain following during link
@@ -402,53 +488,49 @@ class Linker:
                 self.error(f"Multiply defined global '{sym_name}'")
             else:
                 self.globals[sym_name] = (mod_idx, value, seg_type, True)
+                if seg_type == ADDR_COMMON_REL:
+                    self.global_blocks[sym_name] = module.public_blocks.get(sym_name)
 
         # Track common block sizes
         for sym_name, size in module.commons.items():
             if sym_name not in self.commons or size > self.commons[sym_name]:
                 self.commons[sym_name] = size
 
-        return True
+        return more
+
+    @staticmethod
+    def _split_offset_name(name):
+        """(base name, offset) of a chain name um80 up to 0.3.48 wrote as
+        "SYMBOL+N" for SYMBOL plus a constant; (name, 0) otherwise."""
+        if '+' in name:
+            base, offset = name.rsplit('+', 1)
+            try:
+                return base, int(offset)
+            except ValueError:
+                pass
+        return name, 0
 
     def get_undefined_symbols(self):
-        """Get list of undefined external symbols."""
-        undefined = set()
+        """Undefined external symbols, in the order the modules use them."""
+        undefined = {}
         for module in self.modules:
             for name in module.externals:
-                # Parse "SYMBOL+N" format - check base symbol
-                base_name = name
-                if '+' in name:
-                    parts = name.rsplit('+', 1)
-                    try:
-                        int(parts[1])  # Valid offset?
-                        base_name = parts[0]
-                    except ValueError:
-                        pass  # Not a valid offset, use full name
-
+                base_name, _ = self._split_offset_name(name)
                 if base_name not in self.globals or not self.globals[base_name][3]:
-                    undefined.add(base_name)
-        return undefined
+                    undefined[base_name] = True
+        return list(undefined)
 
     def resolve_externals(self):
         """Check that all external references can be resolved."""
-        undefined = []
+        undefined = {}
         for module in self.modules:
             for name in module.externals:
-                # Parse "SYMBOL+N" format - check base symbol
-                base_name = name
-                if '+' in name:
-                    parts = name.rsplit('+', 1)
-                    try:
-                        int(parts[1])  # Valid offset?
-                        base_name = parts[0]
-                    except ValueError:
-                        pass  # Not a valid offset, use full name
-
+                base_name, _ = self._split_offset_name(name)
                 if base_name not in self.globals or not self.globals[base_name][3]:
-                    undefined.append(name)
+                    undefined[name] = True
 
         if undefined:
-            for name in set(undefined):
+            for name in undefined:
                 self.error(f"Undefined symbol: {name}")
             return False
         return True
@@ -469,7 +551,7 @@ class Linker:
         and UTIL7/DM.PLM imports it.  The second pass, with refresh set,
         recomputes the values now that the bases are known.
         """
-        for mod_idx, module in enumerate(self.modules):
+        for module in self.modules:
             for new_name, (base_ext, offset) in module.aliased_publics.items():
                 # Look up the base external symbol
                 if base_ext not in self.globals:
@@ -489,9 +571,18 @@ class Linker:
                 else:
                     # Use the same module index as the base external
                     self.globals[new_name] = (base_mod_idx, new_value, base_seg_type, True)
+                    if base_ext in self.global_blocks:
+                        self.global_blocks[new_name] = self.global_blocks[base_ext]
+
+    def _moves(self, name, value, seg_type):
+        """Whether global `name' moves when MP/M relocates the image: a
+        relocatable symbol, or with page_zero_relative one in page zero."""
+        del name
+        return (seg_type != ADDR_ABSOLUTE
+                or (self.page_zero_relative and value < 0x100))
 
     def _segment_ranges(self, module):
-        """Yield (seg_type, buf_start, buf_end) for each segment buffer."""
+        """Yield (segment key, buf_start, buf_end) for each segment buffer."""
         starts = sorted(module.seg_buf_start.items(), key=lambda kv: kv[1])
         for i, (seg, start) in enumerate(starts):
             end = starts[i + 1][1] if i + 1 < len(starts) else len(module.code)
@@ -511,28 +602,41 @@ class Linker:
             return 0
         start = module.seg_buf_start[ADDR_PROGRAM_REL]
         end = len(module.code)
-        for s, st in module.seg_buf_start.items():
-            if st > start and st < end:
+        for st in module.seg_buf_start.values():
+            if start < st < end:
                 end = st
         return end - start
+
+    @staticmethod
+    def _seg_at(module, buf_offset):
+        """(segment key, start) of the buffer that holds `buf_offset'.
+
+        An empty buffer starts where the next one does; the later wins.
+        """
+        seg, seg_start = ADDR_PROGRAM_REL, 0
+        for s, st in module.seg_buf_start.items():
+            if seg_start <= st <= buf_offset:
+                seg, seg_start = s, st
+        return seg, seg_start
+
+    def _seg_key_at(self, module, buf_offset):
+        """The segment key of the buffer that holds `buf_offset'."""
+        return self._seg_at(module, buf_offset)[0]
 
     def _buf_offset_addr(self, module, buf_offset):
         """Absolute output address for a module.code buffer offset.
 
         ASEG buffer index == absolute address; CSEG/DSEG/COMMON offsets are
-        rebased onto code_base/data_base/common_base respectively.
+        rebased onto code_base/data_base/the block's base respectively.
         """
-        seg, seg_start = ADDR_PROGRAM_REL, 0
-        for s, st in module.seg_buf_start.items():
-            if st <= buf_offset and st >= seg_start:
-                seg, seg_start = s, st
+        seg, seg_start = self._seg_at(module, buf_offset)
         rel = buf_offset - seg_start
         if seg == ADDR_ABSOLUTE:
             return buf_offset
         if seg == ADDR_DATA_REL:
             return module.data_base + rel
-        if seg == ADDR_COMMON_REL:
-            return self.common_base + rel
+        if isinstance(seg, tuple):
+            return self.common_bases.get(seg[1], self.common_base) + rel
         return module.code_base + rel
 
     def calculate_addresses(self):
@@ -556,8 +660,15 @@ class Linker:
         if self.common_base is None:
             self.common_base = self.data_base + total_data
 
-        # Calculate total common size
-        total_common = sum(self.commons.values())
+        # Each COMMON block gets its own place, in the order the blocks were
+        # first declared, the size of its largest declaration.  (They were
+        # all placed at common_base, on top of each other.)
+        self.common_bases = {}
+        total_common = 0
+        for name, size in self.commons.items():
+            self.common_bases[name] = self.common_base + total_common
+            total_common += size
+        self.total_common = total_common
 
         # Add __END__ symbol pointing to first free byte after all segments
         # This is an absolute address, not module-relative
@@ -568,8 +679,8 @@ class Linker:
         self.globals['__BSS_START'] = (0, self.common_base, ADDR_ABSOLUTE, True)
         self.globals['__BSS_END'] = (0, end_addr, ADDR_ABSOLUTE, True)
 
-    def relocate_value(self, module, value, seg_type):
-        """Relocate a value based on its segment type."""
+    def relocate_value(self, module, value, seg_type, block=None):
+        """Relocate a value based on its segment type (and COMMON block)."""
         if seg_type == ADDR_ABSOLUTE:
             return value
         elif seg_type == ADDR_PROGRAM_REL:
@@ -577,8 +688,18 @@ class Linker:
         elif seg_type == ADDR_DATA_REL:
             return value + module.data_base
         elif seg_type == ADDR_COMMON_REL:
-            return value + self.common_base
+            return value + self.common_bases.get(block, self.common_base)
         return value
+
+    def _global_address(self, name):
+        """(address, module_idx, value, seg_type) of a defined global."""
+        mod_idx, value, seg_type, _ = self.globals[name]
+        module = self.modules[mod_idx] if self.modules else None
+        if module is None:
+            return value, mod_idx, value, seg_type
+        return (self.relocate_value(module, value, seg_type,
+                                    self.global_blocks.get(name)),
+                mod_idx, value, seg_type)
 
     def link(self):
         """Link all loaded modules."""
@@ -597,9 +718,11 @@ class Linker:
 
         # Place each module's segments at their output addresses. ASEG bytes go
         # to their absolute address; CSEG -> code_base; DSEG -> data_base.
-        # COMMON is BSS and is not emitted. The leading zero padding of an ASEG
-        # buffer (from offset 0 up to its ORG) is skipped. output_base is the
-        # lowest address actually written; the output size covers the highest.
+        # Of a COMMON block only the bytes a module loads into it are placed
+        # (a DB in it, FORTRAN's BLOCK DATA); the rest is uninitialized.
+        # The leading zero padding of an ASEG buffer (from offset 0 up to
+        # its ORG) is skipped. output_base is the lowest address actually
+        # written; the output size covers the highest.
         lo = None
         hi = 0
 
@@ -612,15 +735,24 @@ class Linker:
             if addr_end > hi:
                 hi = addr_end
 
-        placements = []  # (addr, source bytes iterable as (out_addr, byte))
+        def _placed(module, seg, start, end):
+            """Buffer offsets of `module' that go into the image."""
+            if isinstance(seg, tuple):
+                return [start + p for p in sorted(module.common_data.get(seg, ()))
+                        if start + p < end]
+            begin = max(start, module.code_start) if seg == ADDR_ABSOLUTE else start
+            return range(begin, end)
+
         for module in self.modules:
             for seg, start, end in self._segment_ranges(module):
-                if seg == ADDR_COMMON_REL:
-                    continue  # COMMON is uninitialized (BSS), not emitted
-                begin = max(start, module.code_start) if seg == ADDR_ABSOLUTE else start
-                if begin < end:
-                    _span(self._buf_offset_addr(module, begin),
-                          self._buf_offset_addr(module, end - 1) + 1)
+                placed = _placed(module, seg, start, end)
+                if isinstance(seg, tuple):
+                    for o in placed:
+                        addr = self._buf_offset_addr(module, o)
+                        _span(addr, addr + 1)
+                elif len(placed):
+                    _span(self._buf_offset_addr(module, placed[0]),
+                          self._buf_offset_addr(module, placed[-1]) + 1)
             # Account for declared sizes beyond the materialized buffer
             if ADDR_PROGRAM_REL in module.seg_buf_start:
                 _span(module.code_base, module.code_base + self._cseg_len(module))
@@ -635,10 +767,7 @@ class Linker:
 
         for module in self.modules:
             for seg, start, end in self._segment_ranges(module):
-                if seg == ADDR_COMMON_REL:
-                    continue
-                begin = max(start, module.code_start) if seg == ADDR_ABSOLUTE else start
-                for o in range(begin, end):
+                for o in _placed(module, seg, start, end):
                     out = self._buf_offset_addr(module, o) - self.output_base
                     if 0 <= out < len(self.output):
                         self.output[out] = module.code[o]
@@ -649,67 +778,64 @@ class Linker:
         resolved_external_locs = set()
 
         for mod_idx, module in enumerate(self.modules):
+            # What each relocatable word in the module is relative to: a
+            # chain link MACRO-80 wrote as one (P:0001) points into that
+            # segment.
+            link_types = {r[0]: (r[1], r[3]) for r in module.relocations}
             for name, refs in module.externals.items():
-                # Parse "SYMBOL+N" format for expression offsets
-                expr_offset = 0
-                base_name = name
-                if '+' in name:
-                    parts = name.rsplit('+', 1)
-                    base_name = parts[0]
-                    try:
-                        expr_offset = int(parts[1])
-                    except ValueError:
-                        pass  # Not a valid offset, use full name
+                # "SYMBOL+N": the offset in the name, as um80 up to 0.3.48
+                # wrote a reference to SYMBOL plus a constant.
+                base_name, expr_offset = self._split_offset_name(name)
 
                 if base_name not in self.globals:
                     continue
 
-                target_mod_idx, target_value, target_seg_type, _ = self.globals[base_name]
-                target_module = self.modules[target_mod_idx]
-                target_addr = self.relocate_value(target_module, target_value, target_seg_type)
-                target_addr += expr_offset  # Add expression offset (e.g., +1 for SYMBOL+1)
+                target_addr, _, _, target_seg_type = \
+                    self._global_address(base_name)
+                target_addr += expr_offset
+                moves = self._moves(base_name, target_addr, target_seg_type)
 
-                for head, ref_seg_type in refs:
-                    # Mark this location as externally resolved so Phase 2 skips it
-                    resolved_external_locs.add((mod_idx, head))
-
-                    # Follow the chain of references. head is a buffer offset;
-                    # each chain link holds the segment-relative offset of the
-                    # previous reference (0 ends the chain).
-                    seg_base = module.seg_buf_start.get(ref_seg_type, 0)
-                    cur_buf = head
+                for head, _ in refs:
+                    # Follow the chain.  Each word holds the next reference:
+                    # an offset in the segment its relocation type names
+                    # (MACRO-80 chains every reference to an external through
+                    # them), and absolute 0 ends it.  Every link is filled
+                    # in, and marked so the relocation pass below leaves it
+                    # alone - it added the segment base to a filled-in word.
+                    cur = head
                     visited = set()  # Prevent infinite loops
-                    while cur_buf is not None and cur_buf not in visited:
-                        visited.add(cur_buf)
-                        abs_offset = self._buf_offset_addr(module, cur_buf) - self.output_base
-                        if abs_offset < 0 or abs_offset + 1 >= len(self.output):
+                    while (cur is not None and cur not in visited
+                           and 0 <= cur < len(module.code) - 1):
+                        visited.add(cur)
+                        resolved_external_locs.add((mod_idx, cur))
+                        link = module.code[cur] | (module.code[cur + 1] << 8)
+                        link_type, link_block = link_types.get(
+                            cur, (ADDR_ABSOLUTE, None))
+                        out = self._buf_offset_addr(module, cur) - self.output_base
+                        if 0 <= out and out + 1 < len(self.output):
+                            self.output[out] = target_addr & 0xFF
+                            self.output[out + 1] = (target_addr >> 8) & 0xFF
+                            if moves:
+                                # Under MP/M page zero belongs to the memory
+                                # segment, so a reference to BDOS/FCB/TBUFF
+                                # relocates like any program address.
+                                self.external_relocations.append(out)
+                        if link_type == ADDR_ABSOLUTE and link == 0:
                             break
-                        value = self.output[abs_offset] | (self.output[abs_offset + 1] << 8)
-                        self.output[abs_offset] = target_addr & 0xFF
-                        self.output[abs_offset + 1] = (target_addr >> 8) & 0xFF
-                        if target_seg_type in (ADDR_PROGRAM_REL, ADDR_DATA_REL, ADDR_COMMON_REL):
-                            self.external_relocations.append(abs_offset)
-                        elif (self.page_zero_relative
-                              and target_seg_type == ADDR_ABSOLUTE
-                              and target_addr < 0x100):
-                            # Under MP/M page zero belongs to the memory segment,
-                            # not to absolute address 0, so a resolved reference to
-                            # BDOS/FCB/TBUFF/... relocates like any program address.
-                            self.external_relocations.append(abs_offset)
-                        if value == 0:
-                            break
-                        cur_buf = seg_base + value
+                        if link_type == ADDR_COMMON_REL:
+                            key = (ADDR_COMMON_REL, link_block)
+                        elif link_type == ADDR_ABSOLUTE:
+                            # An untyped link: in the segment it is in, as
+                            # ul80 has always read one.
+                            key = self._seg_key_at(module, cur)
+                        else:
+                            key = link_type
+                        start = module.seg_buf_start.get(key)
+                        cur = None if start is None else start + link
 
         # Apply relocations for program-relative, data-relative, and common-relative addresses
         for mod_idx, module in enumerate(self.modules):
-            for reloc_entry in module.relocations:
-                # Handle both old 2-tuple and new 3-tuple format
-                if len(reloc_entry) == 3:
-                    buf_offset, seg_type, ref_seg_type = reloc_entry
-                else:
-                    buf_offset, seg_type = reloc_entry
-                    ref_seg_type = ADDR_PROGRAM_REL  # Default to CSEG for compatibility
-
+            for buf_offset, seg_type, _, block in module.relocations:
                 # Skip locations already resolved by external reference fixup
                 if (mod_idx, buf_offset) in resolved_external_locs:
                     continue
@@ -721,15 +847,23 @@ class Linker:
                     # Read current value
                     value = self.output[abs_offset] | (self.output[abs_offset + 1] << 8)
                     # Apply relocation based on what the value points to
-                    if seg_type == ADDR_PROGRAM_REL:
-                        value += module.code_base
-                    elif seg_type == ADDR_DATA_REL:
-                        value += module.data_base
-                    elif seg_type == ADDR_COMMON_REL:
-                        value += self.common_base
+                    value = self.relocate_value(module, value, seg_type, block)
                     # Write relocated value
                     self.output[abs_offset] = value & 0xFF
                     self.output[abs_offset + 1] = (value >> 8) & 0xFF
+
+        # Items 9 and 8: the constant of EXT+n / EXT-n, added once the word
+        # holds EXT.  (They were read and ignored: every JMP EXT+3 in an
+        # object MACRO-80 wrote linked to EXT.)
+        for module in self.modules:
+            for buf_offset, sign, (a_type, a_value), block in module.offsets:
+                out = self._buf_offset_addr(module, buf_offset) - self.output_base
+                if 0 <= out and out + 1 < len(self.output):
+                    delta = self.relocate_value(module, a_value, a_type, block)
+                    value = self.output[out] | (self.output[out + 1] << 8)
+                    value = (value + sign * delta) & 0xFFFF
+                    self.output[out] = value & 0xFF
+                    self.output[out + 1] = value >> 8
 
         # Fields computed from extension link items, last: every segment is
         # placed and every symbol known, and each field's placeholder bytes
@@ -762,7 +896,9 @@ class Linker:
         for item in items:
             if item[0] == 'EXT_VALUE':
                 addr_type, value = item[1]
-                value = self.relocate_value(module, value, addr_type) & 0xFFFF
+                block = item[2] if len(item) > 2 else None
+                value = self.relocate_value(module, value, addr_type,
+                                            block) & 0xFFFF
                 stack.append((value, self._move(
                     0 if addr_type == ADDR_ABSOLUTE else 256)))
                 continue
@@ -771,13 +907,10 @@ class Linker:
                 if name not in self.globals or not self.globals[name][3]:
                     self.error(f"Undefined symbol: {name}")
                     return None
-                t_idx, t_value, t_seg, _ = self.globals[name]
-                value = self.relocate_value(self.modules[t_idx], t_value,
-                                            t_seg) & 0xFFFF
-                # The same rule resolve-by-chain uses: a program address, or
-                # page zero when MP/M relocates page zero with the program.
-                moves = t_seg != ADDR_ABSOLUTE or (self.page_zero_relative
-                                                   and value < 0x100)
+                value, _, t_value, t_seg = self._global_address(name)
+                value &= 0xFFFF
+                # The same rule resolve-by-chain uses (_moves()).
+                moves = self._moves(name, t_value, t_seg)
                 stack.append((value, self._move(256 if moves else 0)))
                 continue
             op = item[1]
@@ -1006,33 +1139,25 @@ class Linker:
             uninitialized_dseg = module.data_size - initialized_dseg
             if uninitialized_dseg > 0:
                 bss_size += uninitialized_dseg
+        # COMMON is placed after the image and is not in it: the memory MP/M
+        # allocates has to reach its end.  (It asked for none: a program
+        # with COMMON wrote past its segment.)
+        if self.total_common:
+            common_end = self.common_base + self.total_common
+            bss_size = max(bss_size,
+                           common_end - (self.output_base + code_length))
 
         # Build relocation bitmap - one bit per byte of code
         # Bit is set if corresponding byte is a HIGH byte of relocatable address
         bitmap_size = (code_length + 7) // 8
         bitmap = bytearray(bitmap_size)
 
-        # Collect all relocation high-byte offsets from all modules
+        # Collect all relocation high-byte offsets from all modules: the
+        # words that are addresses, where link() put them.
         for module in self.modules:
-            dest_offset = module.code_base - self.output_base
-            src_start = module.code_start
-
-            for reloc_entry in module.relocations:
-                # Handle both old 2-tuple and new 3-tuple format
-                if len(reloc_entry) == 3:
-                    buf_offset, seg_type, ref_seg_type = reloc_entry
-                else:
-                    buf_offset, seg_type = reloc_entry
-                    ref_seg_type = ADDR_PROGRAM_REL
-
-                # Calculate output offset based on which segment the reference is in
-                if ref_seg_type == ADDR_DATA_REL:
-                    dseg_start = module.seg_buf_start.get(ADDR_DATA_REL, 0)
-                    seg_offset = buf_offset - dseg_start
-                    abs_offset = (module.data_base - self.output_base) + seg_offset
-                else:
-                    abs_offset = dest_offset + (buf_offset - src_start)
-
+            for buf_offset, _, _, _ in module.relocations:
+                abs_offset = self._buf_offset_addr(module, buf_offset) \
+                    - self.output_base
                 high_byte_offset = abs_offset + 1
 
                 if 0 <= high_byte_offset < code_length:
@@ -1097,11 +1222,9 @@ class Linker:
         """
         # Build list of (name, address) for all defined globals
         symbols = []
-        for name, (mod_idx, value, seg_type, is_defined) in self.globals.items():
-            if is_defined:
-                module = self.modules[mod_idx]
-                addr = self.relocate_value(module, value, seg_type)
-                symbols.append((name, addr))
+        for name, (_, _, _, is_defined) in self.globals.items():
+            if is_defined and self.modules:
+                symbols.append((name, self._global_address(name)[0]))
 
         # Sort alphabetically by symbol name (DRI convention)
         symbols.sort(key=lambda x: x[0])
@@ -1191,7 +1314,7 @@ def main():
     # Keep searching until no more symbols can be resolved
     modules_loaded = set()  # Track which library modules we've already loaded
     while libraries:
-        undefined = linker.get_undefined_symbols()
+        undefined = set(linker.get_undefined_symbols())
         if not undefined:
             break
 

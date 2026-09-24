@@ -81,6 +81,7 @@ class Symbol:
         # For an EQU/SET whose value only the linker can compute (e.g.
         # `X EQU HIGH BUF' with BUF relocatable): the ExprValue it stands for.
         self.link_expr = None
+        self.common_block = None  # COMMON block name of a COMMON-relative symbol
         self.line = 0  # Source line of the (latest) definition
         self.public_line = 0  # Source line of the PUBLIC that named it
         # Pass 2 read the value pass 1 left before this pass redefined it
@@ -107,12 +108,16 @@ class ExprValue:
               SHR or a comparison) on a relocatable or external value;
               `why' names it, and `origin' the (symbol, line) of the EQU
               or SET that did so when the value came through a symbol.
+
+    A COMMON-relative value ('rel' with seg ADDR_COMMON_REL) also names its
+    COMMON block in `block': each named block is placed on its own.
     """
 
-    __slots__ = ('value', 'seg', 'ext', 'name', 'kind', 'rpn', 'why', 'origin')
+    __slots__ = ('value', 'seg', 'ext', 'name', 'kind', 'rpn', 'why', 'origin',
+                 'block')
 
     def __init__(self, value, seg=ADDR_ABSOLUTE, ext=False, name=None,
-                 kind=None, rpn=None, why=None, origin=None):
+                 kind=None, rpn=None, why=None, origin=None, block=None):
         self.value = value
         self.seg = seg
         self.ext = ext
@@ -126,6 +131,7 @@ class ExprValue:
         self.rpn = rpn
         self.why = why
         self.origin = origin
+        self.block = block if seg == ADDR_COMMON_REL else None
 
     def as_tuple(self):
         """(value, seg_type, is_external, ext_name), as parse_expression()."""
@@ -214,7 +220,7 @@ class Assembler:
             self.symbols[name] = sym
 
         # External reference chains
-        self.ext_chains = {}  # name -> list of (seg, offset, expr_offset) references
+        self.ext_chains = {}  # name -> list of (seg, offset, common block) references
 
         # Forward reference chains (for labels within module)
         self.fwd_chains = {}  # name -> list of (seg, offset) references
@@ -245,6 +251,7 @@ class Assembler:
         self.prev_defs = {}  # name -> ExprValue
         self.defining = None  # the symbol a SET is defining, while it does
         self.phase = None  # (run address, location counter) after .PHASE
+        self.rel_common = None  # COMMON block last selected in the .REL
         self.reported_unlinkable = set()  # symbols report_unlinkable() named
 
     @property
@@ -257,7 +264,9 @@ class Assembler:
     @loc.setter
     def loc(self, value):
         if self.current_common is not None:
-            self.common_blocks[self.current_common].loc = value
+            com = self.common_blocks[self.current_common]
+            com.loc = value
+            com.size = max(com.size, value)  # a COMMON block's size
         else:
             self.segments[self.current_seg].loc = value
 
@@ -278,6 +287,10 @@ class Assembler:
     def pc_seg(self):
         """The segment type of pc: absolute inside a .PHASE block."""
         return ADDR_ABSOLUTE if self.phase is not None else self.seg_type
+
+    def here(self):
+        """The ExprValue of $: pc, in its segment (and COMMON block)."""
+        return ExprValue(self.pc, self.pc_seg, block=self.current_common)
 
     @property
     def seg_type(self):
@@ -348,7 +361,8 @@ class Assembler:
         """Define or update a symbol (a label, or EQU of an assembly-time value)."""
         if seg_type is None:
             seg_type = self.seg_type
-        self.define_value(name, ExprValue(value, seg_type), public)
+        self.define_value(name, ExprValue(value, seg_type,
+                                          block=self.current_common), public)
 
     def define_value(self, name, ev, public=False):
         """Define a label or EQU symbol as the ExprValue `ev'.
@@ -378,6 +392,7 @@ class Assembler:
         sym.ext_alias_base = ev.name if ev.kind == 'ext' else None
         sym.ext_alias_offset = ev.value if ev.kind == 'ext' else 0
         sym.link_expr = ev if ev.kind in ('expr', 'bad') else None
+        sym.common_block = ev.block
         sym.defined = True
         sym.defined_pass = self.pass_num
         sym.redefinable = False  # EQU / label is non-redefinable
@@ -400,7 +415,7 @@ class Assembler:
                 ev = ExprValue(ev.value, ev.seg, ev.ext, ev.name, kind='bad',
                                why=ev.why, origin=(sym.name, sym.line))
             return ev
-        return ExprValue(sym.value, sym.seg_type)
+        return ExprValue(sym.value, sym.seg_type, block=sym.common_block)
 
     def forward_value(self, name):
         """The value of a symbol used before the line that defines it, or None.
@@ -419,7 +434,7 @@ class Assembler:
     def value_key(ev):
         """A comparable summary of everything an ExprValue says."""
         return (ev.kind, ev.value & 0xFFFF, ev.seg, ev.ext, ev.name,
-                tuple(ev.rpn) if ev.rpn else None, ev.why)
+                tuple(ev.rpn) if ev.rpn else None, ev.why, ev.block)
 
     def check_phase(self, sym, new):
         """Refuse a pass-2 redefinition that differs from pass 1's value.
@@ -648,7 +663,7 @@ class Assembler:
 
         # Handle special symbols
         if expr == '$':
-            return ExprValue(self.pc, self.pc_seg)
+            return self.here()
 
         # Operators are split lowest-precedence-first (recursive descent) in
         # M80 precedence order. Unary operators (NOT; unary +/-; HIGH/LOW/NUL/
@@ -719,7 +734,7 @@ class Assembler:
             # linker puts it; so do two offsets from the same external
             # (`EXT EQ EXT', which M80 also accepts).
             if ((left.kind == 'rel' and right.kind == 'rel'
-                 and left.seg == right.seg)
+                 and left.seg == right.seg and left.block == right.block)
                     or (left.kind == 'ext' and right.kind == 'ext'
                         and left.name == right.name)):
                 return ExprValue(result)
@@ -964,13 +979,16 @@ class Assembler:
         # addresses in one segment.  Everything else - constant - address,
         # the sum of two addresses, the distance between two segments, or a
         # term that is already an expression - goes to the linker.
+        # (Two COMMON blocks are placed apart, so the distance between them
+        # is not a constant; M80 3.44 assembles it as one.)
         simple = (left.kind == 'abs' and right.kind == 'abs') \
             or (left.kind == 'rel' and right.kind == 'abs') \
             or (op == '+' and left.kind == 'abs' and right.kind == 'rel') \
             or (op == '-' and left.kind == 'rel' and right.kind == 'rel'
-                and left_seg == right_seg)
+                and left_seg == right_seg and left.block == right.block)
+        block = left.block if left.kind == 'rel' else right.block
         if simple:
-            return ExprValue(result, result_seg)
+            return ExprValue(result, result_seg, block=block)
         return self._link_binary(op, left, right, result, result_seg)
 
     def _link_items(self, ev):
@@ -978,6 +996,8 @@ class Assembler:
         if ev.kind == 'abs':
             return [(EXT_ITEM_VALUE, ADDR_ABSOLUTE, ev.value & 0xFFFF)]
         if ev.kind == 'rel':
+            if ev.seg == ADDR_COMMON_REL:
+                return [(EXT_ITEM_VALUE, ev.seg, ev.value & 0xFFFF, ev.block)]
             return [(EXT_ITEM_VALUE, ev.seg,
                      self._reloc_value(ev.value, ev.seg) & 0xFFFF)]
         if ev.kind == 'ext':
@@ -1222,17 +1242,51 @@ class Assembler:
 
         return result
 
+    def select_common(self, block):
+        """Make `block' the COMMON block the .REL's COMMON items refer to.
+
+        A COMMON-relative word, extension value, set-location, public or
+        chain head is relative to the block selected last (special item 1),
+        as MACRO-80 writes them.  um80 selected a block only at the COMMON
+        directive, so every COMMON-relative value was relative to whichever
+        block came last.
+        """
+        if self.pass_num == 2 and block is not None and block != self.rel_common:
+            self.output.write_select_common(block if block else ' ')
+            self.rel_common = block
+
+    def select_for_load(self):
+        """Before loading into a COMMON block, make it the selected one again.
+
+        A reference to another block selects that one, and LINK-80 loads
+        into the selected block; so select this one back and say where.
+        """
+        if (self.pass_num == 2 and self.current_common is not None
+                and self.rel_common != self.current_common):
+            self.select_common(self.current_common)
+            self.output.write_set_location(ADDR_COMMON_REL, self.loc)
+
     def emit_byte(self, value):
         """Emit a byte to current segment."""
         if self.pass_num == 2:
+            self.select_for_load()
             self.output.write_absolute_byte(value & 0xFF)
             if self.generate_listing:
                 self.current_line_bytes.append(value & 0xFF)
         self.loc += 1
 
-    def emit_word(self, value, seg_type=ADDR_ABSOLUTE):
+    def emit_word(self, value, seg_type=ADDR_ABSOLUTE, block=None):
         """Emit a 16-bit word to current segment."""
+        if (seg_type == ADDR_COMMON_REL and self.current_common is not None
+                and block is not None and block != self.current_common):
+            # An address in another COMMON block, from inside this one:
+            # selecting that block would also move the loading there, so it
+            # is a one-item link-time expression with this block selected
+            # again before the store.
+            self.emit_link_expr(ExprValue(value, seg_type, block=block), 2)
+            return
         if self.pass_num == 2:
+            self.select_for_load()
             if seg_type == ADDR_ABSOLUTE:
                 self.output.write_absolute_byte(value & 0xFF)
                 self.output.write_absolute_byte((value >> 8) & 0xFF)
@@ -1249,6 +1303,7 @@ class Assembler:
                     rel_value -= self.segments['DSEG'].org
                 self.output.write_data_relative(rel_value)
             elif seg_type == ADDR_COMMON_REL:
+                self.select_common(block)
                 self.output.write_common_relative(value)
             if self.generate_listing:
                 self.current_line_bytes.append(value & 0xFF)
@@ -1268,11 +1323,15 @@ class Assembler:
             out = self.output
             for item in self._link_items(ev):
                 if item[0] == EXT_ITEM_VALUE:
+                    if item[1] == ADDR_COMMON_REL:
+                        self.select_common(item[3])
                     out.write_ext_value(item[1], item[2])
                 elif item[0] == EXT_ITEM_SYMBOL:
                     out.write_ext_symbol(item[1])
                 else:
                     out.write_ext_operator(item[1])
+            # The store writes where the loader is, in this block.
+            self.select_for_load()
             out.write_ext_operator(EXT_OP_STORE_BYTE if size == 1
                                    else EXT_OP_STORE_WORD)
             for _ in range(size):
@@ -1344,7 +1403,7 @@ class Assembler:
     def emit_word_operand(self, ev):
         """Emit a 16-bit operand (address of JMP/CALL/LXI, DW, ...)."""
         if ev.kind in ('abs', 'rel'):
-            self.emit_word(ev.value, ev.seg)
+            self.emit_word(ev.value, ev.seg, ev.block)
         elif ev.kind == 'ext':
             self.emit_external_ref(ev.name, ev.value)
         elif ev.kind == 'expr':
@@ -1374,34 +1433,33 @@ class Assembler:
                 self.emit_link_expr(ev, 1)
 
     def emit_external_ref(self, name, offset=0):
-        """Emit reference to external symbol.
+        """Emit a word that is an external symbol plus a constant.
 
-        The offset parameter is the expression offset (e.g., +1 in RNDX+1),
-        which is added to the resolved address during linking.
+        As MACRO-80 writes it: a nonzero constant as special item 9
+        (External plus offset - the linker adds it to the word at this
+        location once the external is known; EXT-1 is FFFFH), then the word,
+        which the linker fills from the external's chain.  (um80 used to put
+        the constant in the chain's name, "EXT+3", which LINK-80 takes for
+        an undefined symbol.)  Each reference gets a chain record of its own
+        and holds absolute 0, a chain of one: linking references through
+        the words would make one at offset 0 of a segment read as the end.
 
-        External references form a chain - each location contains the offset
-        of the previous reference (or 0 for the first). The linker walks the
-        chain backwards from the head (last reference) to resolve all refs.
-
-        Separate chains are maintained for each unique (name, offset) pair,
-        so RNDX and RNDX+1 have independent chains.
+        LINK-80 takes a chain head of absolute 0 for an empty chain, so a
+        reference AT absolute address 0 cannot be in one; it goes out as an
+        extension link item instead.
         """
         name = name.upper()
-        # Key by (name, expr_offset, seg_type) so different offsets AND segments
-        # get separate chains. Cross-segment chains would corrupt the linker's
-        # chain-following since chain link values are segment-relative offsets.
-        chain_key = (name, offset, self.seg_type)
-        if chain_key not in self.ext_chains:
-            self.ext_chains[chain_key] = []
-
-        # Each reference is emitted independently (no chaining).
-        # Chaining uses 0 as end-of-chain marker, but a reference at segment
-        # offset 0 would be indistinguishable from end-of-chain.
-        # Instead, we emit a separate CHAIN_EXTERNAL record per reference.
-        chain = self.ext_chains[chain_key]
-        chain.append((self.seg_type, self.loc))
-
-        # Emit 0 placeholder (linker will overwrite with resolved address)
+        offset = self._ext_offset(offset)
+        if self.seg_type == ADDR_ABSOLUTE and self.loc == 0:
+            self.emit_link_expr(ExprValue(offset, ext=True, name=name), 2)
+            return
+        if self.pass_num == 2:
+            self.select_for_load()
+            if offset:
+                self.output.write_external_plus_offset(ADDR_ABSOLUTE,
+                                                       offset & 0xFFFF)
+            self.ext_chains.setdefault(name, []).append(
+                (self.seg_type, self.loc, self.current_common))
         self.emit_word(0)
 
     def resolve_register_alias(self, name):
@@ -2549,13 +2607,15 @@ class Assembler:
             # without affecting symbol relocation. This handles "org $-1" patterns
             # correctly - they just back up the location counter, not set segment base.
             seg_obj = self.segments[self.current_seg]
-            if not seg_obj.org_set and self.current_seg == 'ASEG':
+            if not seg_obj.org_set and self.current_seg == 'ASEG' \
+                    and self.current_common is None:
                 seg_obj.org = val
                 seg_obj.org_set = True
             if self.pass_num == 2:
                 # ORG sets the location counter within the current segment.
                 # For relocatable segments (CSEG/DSEG), the segment type doesn't change.
                 # Only use ASEG if we're actually in ASEG.
+                self.select_common(self.current_common)
                 self.output.write_set_location(self.seg_type, val)
             return True
 
@@ -2710,34 +2770,38 @@ class Assembler:
                     # For REL format, we need to advance by emitting zeros or using set_location
                     # Using set_location to skip over the space
                     new_loc = self.loc + val
+                    self.select_common(self.current_common)
                     self.output.write_set_location(self.seg_type, new_loc)
                 self.loc += val
             return True
 
         # CSEG/DSEG/ASEG - segment selection
         if operator == 'CSEG':
-            if self.current_seg != 'CSEG':
+            if self.current_seg != 'CSEG' or self.current_common is not None:
+                # Emit SET_LOC so the linker loads into this segment again
+                # (leaving a COMMON block too, which did not set one).
                 self.current_seg = 'CSEG'
-                # Emit SET_LOC so linker knows to switch segments
+                self.current_common = None
                 if self.pass_num == 2:
                     self.output.write_set_location(self.seg_type, self.loc)
-            self.current_common = None
             return True
         if operator == 'DSEG':
-            if self.current_seg != 'DSEG':
+            if self.current_seg != 'DSEG' or self.current_common is not None:
+                # Emit SET_LOC so the linker loads into this segment again
+                # (leaving a COMMON block too, which did not set one).
                 self.current_seg = 'DSEG'
-                # Emit SET_LOC so linker knows to switch segments
+                self.current_common = None
                 if self.pass_num == 2:
                     self.output.write_set_location(self.seg_type, self.loc)
-            self.current_common = None
             return True
         if operator == 'ASEG':
-            if self.current_seg != 'ASEG':
+            if self.current_seg != 'ASEG' or self.current_common is not None:
+                # Emit SET_LOC so the linker loads into this segment again
+                # (leaving a COMMON block too, which did not set one).
                 self.current_seg = 'ASEG'
-                # Emit SET_LOC so linker knows to switch segments
+                self.current_common = None
                 if self.pass_num == 2:
                     self.output.write_set_location(self.seg_type, self.loc)
-            self.current_common = None
             return True
 
         # COMMON - define/select common block
@@ -2751,7 +2815,12 @@ class Assembler:
                 self.common_blocks[name] = Segment(name, ADDR_COMMON_REL)
             self.current_common = name
             if self.pass_num == 2:
-                self.output.write_select_common(name if name else ' ')
+                # Select the block and say where in it the bytes that follow
+                # load: um80 wrote the selection alone, so the linker went on
+                # loading them into the segment before - `DB 55H' in a
+                # COMMON block overwrote the CSEG byte after the code.
+                self.select_common(name)
+                self.output.write_set_location(ADDR_COMMON_REL, self.loc)
             return True
 
         # PUBLIC/ENTRY - declare public symbols
@@ -3277,7 +3346,7 @@ class Assembler:
         # Define label if present
         if label and (z80_set or upper_op not in
                       ('EQU', 'SET', 'DEFL', 'ASET', 'MACRO')):
-            self.define_symbol(label, self.pc, self.pc_seg)
+            self.define_value(label, self.here())
 
         if not operator:
             self._save_listing_entry(line)
@@ -3676,8 +3745,10 @@ class Assembler:
                 seg.loc = 0
             for com in self.common_blocks.values():
                 com.loc = 0
+                com.size = 0
             self.current_seg = self.default_seg
             self.current_common = None
+            self.rel_common = None  # no COMMON block selected in the .REL yet
 
         for line in lines:
             self.process_line(line)
@@ -3686,78 +3757,6 @@ class Assembler:
         # "Unterminated Conditional"). Report once, on the final pass.
         if self.cond_stack and pass_num == 2:
             self.warning("Unterminated conditional (missing ENDIF)")
-
-    def write_output(self):
-        """Write the REL file content."""
-        # Write module name
-        name = self.module_name or 'MODULE'
-        self.output.write_program_name(name)
-
-        # Write entry symbols (for library search)
-        for sym in self.symbols.values():
-            if (sym.public or self.export_all_symbols) and sym.defined:
-                self.output.write_entry_symbol(sym.name)
-
-        # Reset for code generation
-        for seg in self.segments.values():
-            seg.loc = 0
-        for com in self.common_blocks.values():
-            com.loc = 0
-        self.current_seg = self.default_seg
-        self.current_common = None
-
-        # Second pass already wrote the code bytes
-
-        # Write public symbol definitions
-        # For relocatable symbols, subtract segment ORG so linker can add its base
-        for sym in self.symbols.values():
-            if (sym.public or self.export_all_symbols) and sym.defined:
-                value = sym.value
-                if sym.seg_type == ADDR_PROGRAM_REL and self.segments['CSEG'].org_set:
-                    value -= self.segments['CSEG'].org
-                elif sym.seg_type == ADDR_DATA_REL and self.segments['DSEG'].org_set:
-                    value -= self.segments['DSEG'].org
-                self.output.write_define_entry_point(sym.seg_type, value, sym.name)
-
-        # Write external chains
-        # Each reference gets its own CHAIN_EXTERNAL record (no chaining).
-        # This avoids the offset-0 ambiguity where a reference at segment
-        # offset 0 would be confused with the end-of-chain marker.
-        for (name, expr_offset, _seg_type), refs in self.ext_chains.items():
-            if refs:
-                # For non-zero offsets, append "+N" to symbol name
-                if expr_offset != 0:
-                    sym_name = f"{name}+{expr_offset}"
-                else:
-                    sym_name = name
-                # Emit one record per reference
-                for seg, offset in refs:
-                    self.output.write_chain_external(seg, offset, sym_name)
-
-        # Write segment sizes (actual bytes, not location counter value)
-        cseg = self.segments['CSEG']
-        dseg = self.segments['DSEG']
-        cseg_size = cseg.loc - cseg.org if cseg.org_set else cseg.loc
-        dseg_size = dseg.loc - dseg.org if dseg.org_set else dseg.loc
-
-        if cseg_size > 0:
-            self.output.write_define_program_size(cseg_size)
-        if dseg_size > 0:
-            self.output.write_define_data_size(dseg_size)
-
-        # Write COMMON sizes
-        for name, com in self.common_blocks.items():
-            if com.loc > 0:
-                self.output.write_define_common_size(ADDR_ABSOLUTE, com.loc, name if name else ' ')
-
-        # Write end
-        if self.entry_point:
-            val, seg = self.entry_point
-            self.output.write_end_program(val, seg)
-        else:
-            self.output.write_end_program()
-
-        self.output.write_end_file()
 
     def write_listing(self, filepath):
         """Write the listing file."""
@@ -3882,6 +3881,7 @@ class Assembler:
                 seg.org_set = False
             for com in self.common_blocks.values():
                 com.loc = 0
+                com.size = 0
             self.current_seg = self.default_seg
             self.current_common = None
             self.errors = []  # Clear errors between iterations
@@ -3939,25 +3939,55 @@ class Assembler:
         if self.errors:
             return False
 
-        # Pass 2: Generate code
+        # Pass 2: Generate code.  The body - code, data and everything
+        # pass 2 writes as it goes - goes to a writer of its own, so the
+        # module header can carry the segment and COMMON sizes pass 2
+        # arrives at: LINK-80 3.44 needs a COMMON block's size before
+        # anything refers to it ("?Loading Error"), and MACRO-80 writes the
+        # sizes there.
         self.local_counter = 0  # Reset LOCAL symbol counter for pass 2
         self.output = RELWriter(truncate_symbols=self.truncate_symbols)
         self.ext_chains = {}
 
-        # Write module header
-        name = self.module_name or Path(source_file).stem.upper()[:6]
-        self.output.write_program_name(name)
+        # Entry symbols (PUBLIC symbols for library search), as pass 1 left
+        # them: -g leaves out a link-time EQU.
+        entry_names = [sym.name for sym in self.symbols.values()
+                       if (sym.public or self.export_all_symbols) and sym.defined
+                       and not (sym.link_expr is not None and not sym.public)]
 
-        # Write entry symbols (PUBLIC symbols for library search)
-        for sym in self.symbols.values():
-            if (sym.public or self.export_all_symbols) and sym.defined \
-                    and not (sym.link_expr is not None and not sym.public):
-                self.output.write_entry_symbol(sym.name)
-
+        if self.default_seg == 'ASEG':
+            # --aseg: the code before any ORG or segment directive is
+            # absolute too.  The linker starts in CSEG, and loaded it there.
+            self.output.write_set_location(ADDR_ABSOLUTE, 0)
         self.assemble_pass(lines, 2)
 
         if self.errors:
             return False
+
+        body = self.output
+        self.output = RELWriter(truncate_symbols=self.truncate_symbols)
+        name = self.module_name or Path(source_file).stem.upper()[:6]
+        self.output.write_program_name(name)
+        for entry_name in entry_names:
+            self.output.write_entry_symbol(entry_name)
+
+        # Segment and COMMON sizes, before the code, as MACRO-80 writes them
+        # (a COMMON block's size is also the highest location reached in it:
+        # the location at the end undercounts a block re-entered or ORGed
+        # back).
+        for cname, com in self.common_blocks.items():
+            if com.size > 0:
+                self.output.write_define_common_size(ADDR_ABSOLUTE, com.size,
+                                                     cname if cname else ' ')
+        cseg = self.segments['CSEG']
+        dseg = self.segments['DSEG']
+        cseg_size = cseg.loc - cseg.org if cseg.org_set else cseg.loc
+        dseg_size = dseg.loc - dseg.org if dseg.org_set else dseg.loc
+        if dseg_size > 0:
+            self.output.write_define_data_size(dseg_size)
+        if cseg_size > 0:
+            self.output.write_define_program_size(cseg_size)
+        self.output.append(body)
 
         # Finalize output
         # Write public symbol definitions
@@ -3993,43 +4023,22 @@ class Assembler:
                         value -= self.segments['CSEG'].org
                     elif sym.seg_type == ADDR_DATA_REL and self.segments['DSEG'].org_set:
                         value -= self.segments['DSEG'].org
+                    elif sym.seg_type == ADDR_COMMON_REL:
+                        self.select_common(sym.common_block)
                     self.output.write_define_entry_point(sym.seg_type, value, sym.name)
 
-        # Write external chains
-        # Each reference gets its own CHAIN_EXTERNAL record (no chaining).
-        # This avoids the offset-0 ambiguity where a reference at segment
-        # offset 0 would be confused with the end-of-chain marker.
-        for (name, expr_offset, _seg_type), refs in self.ext_chains.items():
-            if refs:
-                # For non-zero offsets, append "+N" to symbol name
-                if expr_offset != 0:
-                    sym_name = f"{name}+{expr_offset}"
-                else:
-                    sym_name = name
-                # Emit one record per reference
-                for seg, offset in refs:
-                    self.output.write_chain_external(seg, offset, sym_name)
-
-        # Write segment sizes (actual bytes, not location counter value)
-        cseg = self.segments['CSEG']
-        dseg = self.segments['DSEG']
-        cseg_size = cseg.loc - cseg.org if cseg.org_set else cseg.loc
-        dseg_size = dseg.loc - dseg.org if dseg.org_set else dseg.loc
-
-        if cseg_size > 0:
-            self.output.write_define_program_size(cseg_size)
-        if dseg_size > 0:
-            self.output.write_define_data_size(dseg_size)
-
-        # Write COMMON sizes
-        for name, com in self.common_blocks.items():
-            if com.loc > 0:
-                self.output.write_define_common_size(ADDR_ABSOLUTE, com.loc, name if name else ' ')
+        # Write external chains: a record of its own for every reference
+        # (see emit_external_ref()).
+        for name, refs in self.ext_chains.items():
+            for seg, offset, block in refs:
+                if seg == ADDR_COMMON_REL:
+                    self.select_common(block)
+                self.output.write_chain_external(seg, offset, name)
 
         # Write end with optional entry point
         if self.entry_point:
             val, seg = self.entry_point
-            self.output.write_end_program(val, seg)
+            self.output.write_end_program(self._reloc_value(val, seg), seg)
         else:
             self.output.write_end_program()
 
