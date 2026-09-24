@@ -53,6 +53,28 @@ evaluates them. The format was established by running the genuine M80 and L80
   byte fields above it reached `MVI A,EQX+1` too.) `1 SHR (EXT-1)` also
   stopped with a Python traceback ("negative shift count") instead of the
   error for SHR on an external.
+- um80 assembler: a symbol used above the `EQU` that defines it, when that
+  `EQU` itself uses a symbol defined further down, silently assembled a
+  wrong value: `MVI A,X` / `X EQU FWD+1` / `FWD EQU 5` gave `MVI A,01H`.
+  Pass 1 computed X with FWD still 0, and pass 2 read that value above the
+  line that recomputes it. The same froze a forward `X EQU HIGH BUF` as the
+  absolute byte 0, and an alias `RBUF EQU LABEL` of a later label as
+  absolute 0: MP/M II's SUB utility, compiled from `SUB.PLM`
+  (`declare rbuff(1) byte at (.minimum$buffer)`), stored its command buffer
+  at address 0000H. Pass 1 is now repeated until the symbol table stops
+  changing, and from its second time on a forward reference reads the
+  value from the end of the time before, which is what pass 2 reads there
+  too — so X is 6. A definition that never settles, because a symbol is
+  defined in terms of itself, is an error ("Cannot resolve the value of
+  ..."), and so is a symbol whose value differs between the passes after it
+  was used (a phase error, e.g. after `IFDEF` of a later symbol). `SET` is
+  unchanged: a forward reference to a `SET` symbol reads its last value, as
+  in M80, and `X SET X+1` reads the X of the line before. (MACRO-80 flags
+  these forward uses `U`; um80 assembles the value they stand for.)
+- um80 assembler: `/` or `MOD` by a symbol defined further down, or by an
+  external, was reported as "Division by zero" (its pass-1 value is 0).
+  Only a constant 0 divisor is an error now; `MOD EXT` goes to the linker,
+  as in M80.
 - relformat: special link item 4 was returned as `UNKNOWN_SPECIAL` without
   consuming its B-field, so everything after it in the module was misread:
   ulib80 indexed four garbage "public symbols" from an M80 module that uses

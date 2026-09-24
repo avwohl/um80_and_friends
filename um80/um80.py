@@ -51,6 +51,10 @@ class Symbol:
         # For an EQU/SET whose value only the linker can compute (e.g.
         # `X EQU HIGH BUF' with BUF relocatable): the ExprValue it stands for.
         self.link_expr = None
+        self.line = 0  # Source line of the (latest) definition
+        # Pass 2 read the value pass 1 left before this pass redefined it
+        # (a forward reference): it must not change when it is redefined.
+        self.read_early = False
 
 
 class ExprValue:
@@ -200,6 +204,14 @@ class Assembler:
         # Processor mode
         self.z80_mode = False  # False = 8080 mode, True = Z80 mode
 
+        # Pass 1 is repeated until the symbol table stops changing.  From
+        # the second time on, a symbol used before the line that defines it
+        # reads its value at the end of the time before (forward_value()).
+        self.pass1_iteration = 0
+        self.prev_symbols = {}  # name -> (value, seg_type), for JR/DJNZ
+        self.prev_defs = {}  # name -> ExprValue
+        self.defining = None  # the symbol a SET is defining, while it does
+
     @property
     def loc(self):
         """Current location counter."""
@@ -280,32 +292,96 @@ class Assembler:
             })
 
     def define_symbol(self, name, value, seg_type=None, public=False):
-        """Define or update a symbol."""
-        name = name.upper()
+        """Define or update a symbol (a label, or EQU of an assembly-time value)."""
         if seg_type is None:
             seg_type = self.seg_type
+        self.define_value(name, ExprValue(value, seg_type), public)
 
-        if name in self.symbols:
-            sym = self.symbols[name]
-            if sym.defined and sym.defined_pass == self.pass_num and not sym.external:
-                # Multiply defined if the value changed, or if the symbol was
-                # made redefinable by SET/DEFL/ASET (EQU/label cannot redefine
-                # a SET symbol -- the definition class is fixed by the first
-                # definition).
-                if sym.redefinable or sym.value != value:
-                    self.error(f"Symbol '{name}' multiply defined")
-                    return
-            sym.value = value
-            sym.seg_type = seg_type
-            sym.defined = True
-            sym.defined_pass = self.pass_num
-            sym.redefinable = False  # EQU / label is non-redefinable
-            if public:
-                sym.public = True
-        else:
-            sym = Symbol(name, value, seg_type, defined=True, public=public)
-            sym.defined_pass = self.pass_num
+    def define_value(self, name, ev, public=False):
+        """Define a label or EQU symbol as the ExprValue `ev'.
+
+        `ev' may be an address or constant, an external plus a constant (the
+        symbol is an alias of the external), or a value only the linker can
+        compute, which the symbol then stands for wherever it is used.
+        """
+        name = name.upper()
+        sym = self.symbols.get(name)
+        if sym is None:
+            sym = Symbol(name)
             self.symbols[name] = sym
+        elif sym.defined and sym.defined_pass == self.pass_num and not sym.external:
+            # Multiply defined if the value changed - its segment, the
+            # expression it stands for, not just the number - or if the
+            # symbol was made redefinable by SET/DEFL/ASET (EQU/label cannot
+            # redefine a SET symbol -- the definition class is fixed by the
+            # first definition).
+            if sym.redefinable or (self.value_key(self.symbol_value(sym))
+                                   != self.value_key(ev)):
+                self.error(f"Symbol '{name}' multiply defined")
+                return
+        self.check_phase(sym, ev)
+        sym.value = ev.value
+        sym.seg_type = ADDR_ABSOLUTE if ev.kind == 'ext' else ev.seg
+        sym.ext_alias_base = ev.name if ev.kind == 'ext' else None
+        sym.ext_alias_offset = ev.value if ev.kind == 'ext' else 0
+        sym.link_expr = ev if ev.kind in ('expr', 'bad') else None
+        sym.defined = True
+        sym.defined_pass = self.pass_num
+        sym.redefinable = False  # EQU / label is non-redefinable
+        sym.line = self.line_num
+        if public:
+            sym.public = True
+
+    @staticmethod
+    def symbol_value(sym):
+        """The ExprValue a defined or external symbol stands for."""
+        if sym.external:
+            return ExprValue(0, ext=True, name=sym.name)
+        if sym.ext_alias_base:
+            return ExprValue(sym.ext_alias_offset, ext=True,
+                             name=sym.ext_alias_base)
+        if sym.link_expr is not None:
+            return sym.link_expr
+        return ExprValue(sym.value, sym.seg_type)
+
+    def forward_value(self, name):
+        """The value of a symbol used before the line that defines it, or None.
+
+        On a repeat of pass 1 that is its value at the end of the previous
+        repeat, which is what pass 2 will read there too; so a chain like
+        `MVI A,X / X EQU FWD+1 / FWD EQU 5' settles on X = 6 instead of
+        freezing the 1 the first time through computed with FWD still 0.
+        A SET symbol read by its own SET (`X SET X+1') is left undefined.
+        """
+        if self.pass_num != 1 or name == self.defining:
+            return None
+        return self.prev_defs.get(name)
+
+    @staticmethod
+    def value_key(ev):
+        """A comparable summary of everything an ExprValue says."""
+        return (ev.kind, ev.value & 0xFFFF, ev.seg, ev.ext, ev.name,
+                tuple(ev.rpn) if ev.rpn else None, ev.why)
+
+    def check_phase(self, sym, new):
+        """Refuse a pass-2 redefinition that differs from pass 1's value.
+
+        Pass 2 reads a forward-referenced symbol's pass-1 value; if the line
+        that defines it then computes something else, every earlier use was
+        assembled with the wrong value.  Pass 1 is iterated until the table
+        stops changing (assemble()), so this should not happen - it is the
+        net under that, for whatever makes the two passes differ (an IFDEF
+        of a later symbol, IF1/IF2).
+        """
+        if (self.pass_num == 2 and sym.defined and sym.defined_pass == 1
+                and sym.read_early and not sym.redefinable
+                and not sym.external
+                and self.value_key(self.symbol_value(sym))
+                != self.value_key(new)):
+            self.error(f"Phase error: '{sym.name}' is used before it is "
+                       f"defined, and its value is not the same in both "
+                       f"passes ({sym.value & 0xFFFF:04X}H before this "
+                       f"line, {new.value & 0xFFFF:04X}H here)")
 
     def lookup_symbol(self, name):
         """Look up a symbol, creating undefined entry if needed."""
@@ -613,8 +689,14 @@ class Assembler:
                 result = (left_val * right_val) & 0xFFFF
             elif op in ('/', 'MOD'):
                 if right_val == 0:
-                    self.error("Division by zero")
-                    return ExprValue(0)
+                    # Only a constant 0 is a division by zero.  A divisor
+                    # read before its definition is 0 the first time pass 1
+                    # sees it, and an external or relocatable divisor is 0
+                    # at assembly time whatever the linker makes of it.
+                    if right.kind == 'abs' and self.pass_num == 2:
+                        self.error("Division by zero")
+                        return ExprValue(0)
+                    return self._link_binary(op, left, right, 0)
                 if op == '/':
                     result = (left_val // right_val) & 0xFFFF
                 else:
@@ -733,20 +815,18 @@ class Assembler:
                 return ExprValue(OPCODE_VALUES[upper])
 
             sym = self.lookup_symbol(expr)
-            if sym.external:
-                return ExprValue(0, ext=True, name=sym.name)
-            # Check if symbol is an alias to external+offset
-            if sym.ext_alias_base:
-                return ExprValue(sym.ext_alias_offset, ext=True,
-                                 name=sym.ext_alias_base)
-            if not sym.defined and not allow_undefined:
-                if self.pass_num == 2:
+            if not (sym.defined or sym.external):
+                ev = self.forward_value(sym.name)
+                if ev is not None:
+                    return ev
+                if not allow_undefined and self.pass_num == 2:
                     self.error(f"Undefined symbol '{expr}'")
                 return ExprValue(0)
-            # An EQU/SET whose value only the linker can compute.
-            if sym.defined and sym.link_expr is not None:
-                return sym.link_expr
-            return ExprValue(sym.value, sym.seg_type)
+            if self.pass_num == 2 and sym.defined_pass != 2:
+                sym.read_early = True
+            # An external, an alias of one (X EQU EXT+n), an EQU/SET whose
+            # value only the linker can compute, or an address or constant.
+            return self.symbol_value(sym)
 
         # Try as number
         val, ok = self.parse_number(expr)
@@ -2366,35 +2446,14 @@ class Assembler:
                 self.define_symbol(label, REGPAIRS_PUSHPOP[op_upper], ADDR_ABSOLUTE)
                 return True
             ev = self.eval_operand(ops[0], allow_undefined=(self.pass_num == 1))
-            val, seg, ext, ext_name = ev.as_tuple()
-            if ev.kind in ('expr', 'bad'):
-                # A value only the linker can compute, e.g. HIGH BUF with BUF
-                # relocatable: the symbol stands for the expression, so each
-                # use of it is passed to the linker the way the expression
-                # itself would be.  (M80 keeps the mode and loses the HIGH:
-                # `X EQU HIGH BUF' then `MVI A,X' loads the LOW byte of BUF.)
-                self.define_symbol(label, val, seg)
-                sym = self.symbols[label.upper()]
-                sym.link_expr = ev
-                sym.ext_alias_base = None
-                return True
-            if ext:
-                # External alias: SYMBOL EQU EXTERNAL+offset
-                # Track as an alias symbol that will be resolved at link time
-                sym_name = label.upper()
-                if sym_name not in self.symbols:
-                    sym = Symbol(sym_name, val, ADDR_ABSOLUTE, defined=True,
-                                 ext_alias_base=ext_name, ext_alias_offset=val)
-                    self.symbols[sym_name] = sym
-                else:
-                    sym = self.symbols[sym_name]
-                    sym.defined = True
-                    sym.ext_alias_base = ext_name
-                    sym.ext_alias_offset = val
-                sym.link_expr = None
-                return True
-            self.define_symbol(label, val, seg)
-            self.symbols[label.upper()].link_expr = None
+            # An external plus a constant makes the symbol an alias of the
+            # external.  A value only the linker can compute, e.g. HIGH BUF
+            # with BUF relocatable, makes the symbol stand for the
+            # expression, so each use of it is passed to the linker the way
+            # the expression itself would be.  (M80 keeps the mode and loses
+            # the HIGH: `X EQU HIGH BUF' then `MVI A,X' loads the LOW byte
+            # of BUF.)
+            self.define_value(label, ev)
             return True
 
         # SET/DEFL/ASET - like EQU but redefinable
@@ -2415,7 +2474,16 @@ class Assembler:
             elif op_upper in REGPAIRS_PUSHPOP:
                 val, seg = REGPAIRS_PUSHPOP[op_upper], ADDR_ABSOLUTE
             else:
-                ev = self.eval_operand(ops[0], allow_undefined=(self.pass_num == 1))
+                # `X SET X+1' reads the X of the line before, not the one
+                # this line makes: in pass 1 an X not yet SET reads 0, as it
+                # always has, rather than the previous iteration's final X
+                # (see forward_value()), which would never settle.
+                self.defining = label.upper()
+                try:
+                    ev = self.eval_operand(ops[0],
+                                           allow_undefined=(self.pass_num == 1))
+                finally:
+                    self.defining = None
                 val, seg, ext, _ = ev.as_tuple()
                 if ev.kind in ('expr', 'bad'):
                     link_expr = ev  # see EQU
@@ -2435,6 +2503,7 @@ class Assembler:
             sym.defined_pass = self.pass_num
             sym.redefinable = True
             sym.link_expr = link_expr
+            sym.line = self.line_num
             return True
 
         # DB - define bytes
@@ -3633,11 +3702,22 @@ class Assembler:
         # - Iteration 0: Build symbol table; can't check JR range (forward refs undefined)
         # - Iteration 1+: Use symbol table from previous iteration for range checking
         # - Keep iterating until no new promotions (sizes stabilize)
-        max_iterations = 10  # Prevent infinite loops
+        #
+        # The table must also settle: an EQU (or anything else) whose value
+        # depends on a symbol defined further down reads, the first time,
+        # a 0 for that symbol, and from then on its value at the end of the
+        # previous time through (forward_value()) - which is also what pass
+        # 2 reads above the defining line.  A chain N deep settles after N
+        # repeats; one that never settles defines a symbol in terms of
+        # itself.
+        max_iterations = 64  # Prevent infinite loops
         prev_symbols = {}  # Symbol table from previous iteration for forward refs
+        prev_defs = {}
+        prev_keys = None
         for iteration in range(max_iterations):
             self.pass1_iteration = iteration  # Track iteration for JR range checking
             self.prev_symbols = prev_symbols  # Make available for JR range checking
+            self.prev_defs = prev_defs
             # Reset state for pass 1
             for seg in self.segments.values():
                 seg.loc = 0
@@ -3665,17 +3745,35 @@ class Assembler:
 
             # Save symbol table for next iteration
             prev_symbols = {name: (sym.value, sym.seg_type) for name, sym in self.symbols.items() if sym.defined}
+            prev_defs = {name: self.symbol_value(sym)
+                         for name, sym in self.symbols.items()
+                         if sym.defined or sym.external}
+            keys = {name: self.value_key(ev) for name, ev in prev_defs.items()}
+            settled = keys == prev_keys
+            unsettled = [] if settled or prev_keys is None else sorted(
+                name for name in set(keys) | set(prev_keys)
+                if keys.get(name) != prev_keys.get(name))
+            prev_keys = keys
 
             # Always run at least 2 iterations:
             # - Iteration 0 builds symbol table (can't check range yet)
             # - Iteration 1 checks range with symbol values from iteration 0
             # After that, check if promotions have stabilized
-            if iteration >= 1 and len(self.promoted_jr) == prev_promotions:
-                break  # Stable - no new promotions
-
+            if (iteration >= 1 and len(self.promoted_jr) == prev_promotions
+                    and settled):
+                break  # Stable - no new promotions, no symbol still moving
+        else:
+            if unsettled:
+                for name in unsettled[:10]:
+                    sym = self.symbols.get(name)
+                    self.errors.append(AssemblerError(
+                        f"Cannot resolve the value of '{name}': it changes "
+                        f"every time the source is read, so it is defined "
+                        f"in terms of itself (directly or through other "
+                        f"symbols)", sym.line if sym else None))
+                return False
             # Warn about promotions on last iteration
-            if iteration == max_iterations - 1:
-                self.warnings.append(f"Warning: JR/DJNZ promotion did not stabilize after {max_iterations} iterations")
+            self.warnings.append(f"Warning: JR/DJNZ promotion did not stabilize after {max_iterations} iterations")
 
         # Report promotions
         if self.promoted_jr and not self.strict_jr:

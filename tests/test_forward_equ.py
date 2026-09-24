@@ -1,0 +1,198 @@
+"""A symbol used before the EQU that defines it gets the EQU's final value.
+
+    MVI  A,X
+X   EQU  FWD+1
+FWD EQU  5
+
+assembled to MVI A,01H, with no error.  Pass 1 read the EQU while FWD was
+still undefined, so X became 0+1, and pass 2 - which reads X at the MVI,
+above the line that recomputes it - used that 1.  The same froze a forward
+`X EQU HIGH BUF' as the absolute byte 0, and made `100/COUNT' a division by
+zero.  MACRO-80 3.44 flags such uses 'U'; um80 now repeats pass 1 until the
+symbol table stops changing, reading a forward reference as its value at
+the end of the previous time through, so X settles on 6.  A definition that
+never settles (a symbol defined in terms of itself) is an error, and a
+value that differs between the passes after it was used is a phase error.
+"""
+
+import os
+import tempfile
+
+from um80.relformat import RELReader
+from um80.um80 import Assembler
+from um80.ul80 import Linker
+
+
+def _asm(source, **kw):
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "t.mac")
+        with open(p, "w") as f:
+            f.write(source)
+        asm = Assembler(**kw)
+        ok = asm.assemble(p)
+        rel = asm.output.get_bytes() if ok else None
+    return ok, asm, rel
+
+
+def _bytes(rel):
+    """Absolute bytes of a REL, in order (ASEG/CSEG code)."""
+    reader = RELReader(rel)
+    out = []
+    while True:
+        item = reader.read_item()
+        if item is None or item[0] in ('END_PROGRAM', 'END_FILE'):
+            return out
+        if item[0] == 'ABSOLUTE_BYTE':
+            out.append(item[1])
+
+
+def _link(*sources):
+    with tempfile.TemporaryDirectory() as d:
+        linker = Linker()
+        linker.code_base = 0x100
+        for i, src in enumerate(sources):
+            ok, asm, rel = _asm(src)
+            assert ok, [e.message for e in asm.errors]
+            p = os.path.join(d, f"m{i}.rel")
+            with open(p, "wb") as f:
+                f.write(rel)
+            linker.load_rel(p)
+        assert linker.link(), linker.errors
+    return linker
+
+
+def _errors(asm):
+    return [e.message for e in asm.errors]
+
+
+def test_forward_equ_of_a_forward_equ():
+    ok, asm, rel = _asm("\tASEG\n\tORG 100H\n\tMVI A,X\nX\tEQU FWD+1\n"
+                        "FWD\tEQU 5\n\tMVI A,X\n\tEND\n")
+    assert ok, _errors(asm)
+    assert _bytes(rel) == [0x3E, 0x06, 0x3E, 0x06]
+
+
+def test_forward_chain_used_in_a_word_and_a_byte():
+    ok, asm, rel = _asm("\tASEG\n\tORG 100H\n\tDW BUFSIZ\n\tMVI A,BUFSIZ\n"
+                        "BUFSIZ\tEQU RECSIZ*2\nRECSIZ\tEQU 40H\n"
+                        "\tDW BUFSIZ\n\tEND\n")
+    assert ok, _errors(asm)
+    assert _bytes(rel) == [0x80, 0x00, 0x3E, 0x80, 0x80, 0x00]
+
+
+def test_deep_forward_chain_settles():
+    lines = ["\tASEG", "\tORG 100H", "\tDW S0"]
+    lines += [f"S{i}\tEQU S{i + 1}+1" for i in range(25)]
+    lines += ["S25\tEQU 1000H", "\tDS S0-1000H", "LL:\tDW LL", "\tEND"]
+    ok, asm, rel = _asm("\n".join(lines) + "\n")
+    assert ok, _errors(asm)
+    assert _bytes(rel) == [0x19, 0x10, 0x1B, 0x01]  # LL = 100H+2+19H
+
+
+def test_forward_size_moves_the_labels_after_it():
+    """DS of a size defined further down: the labels after it are right in
+    pass 1 too, so a forward jump over it lands on them."""
+    ok, asm, rel = _asm("\tASEG\n\tORG 100H\n\tJMP LAB\n\tDS SIZE\n"
+                        "LAB:\tNOP\nSIZE\tEQU 10H\n\tEND\n")
+    assert ok, _errors(asm)
+    assert _bytes(rel)[:3] == [0xC3, 0x13, 0x01]
+
+
+def test_forward_link_time_equ():
+    """`X EQU HIGH BUF' below its uses: the uses are link-time expressions
+    too, not the absolute 0 pass 1 first computed for X."""
+    src = ("\tCSEG\n\tMVI A,X\n\tLXI H,X\n\tLXI D,Y\nX\tEQU HIGH BUF\n"
+           "Y\tEQU BUF+4\n\tDSEG\n\tDS 10H\nBUF:\tDS 1\n\tEND\n")
+    linker = _link(src)
+    buf = 0x100 + 8 + 0x10
+    assert list(linker.output[:8]) == [
+        0x3E, buf >> 8, 0x21, buf >> 8, 0x00, 0x11,
+        (buf + 4) & 0xFF, (buf + 4) >> 8]
+
+
+def test_forward_alias_of_an_external():
+    src = "\tEXTRN EXA\n\tCSEG\n\tLXI H,FQA\nFQA\tEQU EXA+4\n\tEND\n"
+    other = "\tPUBLIC EXA\n\tCSEG\n\tDS 20H\nEXA:\tNOP\n\tEND\n"
+    linker = _link(src, other)
+    exa = 0x100 + 3 + 0x20
+    assert list(linker.output[:3]) == [0x21, (exa + 4) & 0xFF, (exa + 4) >> 8]
+
+
+def test_forward_set_reads_the_final_value_of_the_pass_before():
+    """A SET symbol read above any SET of it reads its last value, as in
+    M80 (verified: `DB Y / Y SET Z / Z SET 3' gives 03)."""
+    ok, asm, rel = _asm("\tASEG\n\tORG 100H\nY\tSET Z\n\tDB Y\nZ\tSET 3\n"
+                        "\tDB Y\n\tEND\n")
+    assert ok, _errors(asm)
+    assert _bytes(rel) == [3, 3]
+
+
+def test_set_of_itself_is_positional():
+    """`CN SET CN+1' reads the CN of the line before; one never SET before
+    still reads its pass-1 value above the first SET (M80 and 0.3.48)."""
+    ok, asm, rel = _asm("\tASEG\n\tORG 100H\nCN\tSET 0\n\tDB CN\n"
+                        "CN\tSET CN+1\n\tDB CN\nCN\tSET CN+1\n\tDB CN\n\tEND\n")
+    assert ok, _errors(asm)
+    assert _bytes(rel) == [0, 1, 2]
+
+
+def test_circular_equs_are_an_error():
+    ok, asm, _ = _asm("\tASEG\n\tORG 100H\n\tDB X\nX\tEQU Y+1\n"
+                      "Y\tEQU X+1\n\tEND\n")
+    assert not ok
+    assert any("Cannot resolve the value of 'X'" in e for e in _errors(asm))
+
+
+def test_equ_of_itself_is_an_error():
+    ok, asm, _ = _asm("\tASEG\n\tORG 100H\n\tDB X\nX\tEQU X+1\n\tEND\n")
+    assert not ok
+    assert any("'X'" in e for e in _errors(asm))
+
+
+def test_value_that_differs_between_passes_after_use_is_a_phase_error():
+    """IFDEF of a symbol defined later is false in pass 1 and true in pass
+    2; LAB moved after JMP LAB was assembled with its pass-1 address."""
+    ok, asm, _ = _asm("\tASEG\n\tORG 100H\n\tJMP LAB\n\tIFDEF LATER\n"
+                      "\tDS 10\n\tENDIF\nLAB:\tNOP\nLATER\tEQU 1\n\tEND\n")
+    assert not ok
+    assert any("Phase error: 'LAB'" in e for e in _errors(asm))
+
+
+def test_divisor_defined_later_is_not_a_division_by_zero():
+    ok, asm, rel = _asm("\tASEG\n\tORG 100H\n\tMVI A,100/COUNT\n"
+                        "\tDB 7 MOD COUNT\nCOUNT\tEQU 5\n\tEND\n")
+    assert ok, _errors(asm)
+    assert _bytes(rel) == [0x3E, 20, 2]
+
+
+def test_constant_zero_divisor_is_still_an_error():
+    ok, asm, _ = _asm("\tASEG\n\tORG 100H\n\tDB 1/0\n\tEND\n")
+    assert not ok
+    assert "Division by zero" in _errors(asm)
+
+
+def test_mod_by_an_external_is_computed_by_the_linker():
+    """M80 writes C(1000H) B(EXT) A(MOD); L80 links it (FD for EXT=0225H)."""
+    src = "\tEXTRN EXT\n\tCSEG\n\tDW 1000H MOD EXT\n\tEND\n"
+    other = "\tPUBLIC EXT\n\tCSEG\n\tDS 20H\nEXT:\tNOP\n\tEND\n"
+    linker = _link(src, other)
+    ext = 0x100 + 2 + 0x20
+    value = 0x1000 % ext
+    assert list(linker.output[:2]) == [value & 0xFF, value >> 8]
+
+
+def test_export_all_does_not_announce_a_forward_link_time_equ():
+    """-g wrote ENTRY_SYMBOL HB with no DEFINE_ENTRY for it: pass 1 saw
+    `HB EQU HIGH FWD' as absolute and pass 2 as a link-time expression."""
+    ok, asm, rel = _asm("\tCSEG\n\tMVI A,HB\nHB\tEQU HIGH FWD\n\tNOP\n"
+                        "FWD:\tNOP\n\tEND\n", export_all_symbols=True)
+    assert ok, _errors(asm)
+    reader = RELReader(rel)
+    names = []
+    while True:
+        item = reader.read_item()
+        if item is None or item[0] == 'END_FILE':
+            break
+        if item[0] == 'ENTRY_SYMBOL':
+            names.append(item[1])
+    assert 'HB' not in names
