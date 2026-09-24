@@ -75,6 +75,18 @@ evaluates them. The format was established by running the genuine M80 and L80
   external, was reported as "Division by zero" (its pass-1 value is 0).
   Only a constant 0 divisor is an error now; `MOD EXT` goes to the linker,
   as in M80.
+- um80 assembler: an `EQU` redefined with the same offset in another
+  segment (`X EQU PC0` then `X EQU PD0`), or a link-time `EQU` redefined as
+  a different expression, or an external alias as another offset, was
+  accepted; the second silently replaced the first. It is "multiply
+  defined", as in M80.
+- um80 assembler: an `EQU` whose value uses `AND`/`OR`/... on a relocatable
+  value was reported at every line that used it, without naming it — on
+  CP/M 2.0's `ASM.COM` sources, at `LXI SP,ENDMOD`, which has no `AND` in
+  it. It is reported once, at the `EQU` (where M80 flags it), naming the
+  first line that used it. A `DS n,fill` with such a fill repeated the error
+  once per byte; `PUBLIC` of a link-time `EQU` was reported at a line past
+  `END` and is now reported at the `PUBLIC`.
 - relformat: special link item 4 was returned as `UNKNOWN_SPECIAL` without
   consuming its B-field, so everything after it in the module was misread:
   ulib80 indexed four garbage "public symbols" from an M80 module that uses

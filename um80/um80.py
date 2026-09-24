@@ -52,6 +52,7 @@ class Symbol:
         # `X EQU HIGH BUF' with BUF relocatable): the ExprValue it stands for.
         self.link_expr = None
         self.line = 0  # Source line of the (latest) definition
+        self.public_line = 0  # Source line of the PUBLIC that named it
         # Pass 2 read the value pass 1 left before this pass redefined it
         # (a forward reference): it must not change when it is redefined.
         self.read_early = False
@@ -74,13 +75,14 @@ class ExprValue:
               items (see relformat.py).
       'bad'   uses an operator LINK-80 cannot evaluate (AND, OR, XOR, SHL,
               SHR or a comparison) on a relocatable or external value;
-              `why' names it.
+              `why' names it, and `origin' the (symbol, line) of the EQU
+              or SET that did so when the value came through a symbol.
     """
 
-    __slots__ = ('value', 'seg', 'ext', 'name', 'kind', 'rpn', 'why')
+    __slots__ = ('value', 'seg', 'ext', 'name', 'kind', 'rpn', 'why', 'origin')
 
     def __init__(self, value, seg=ADDR_ABSOLUTE, ext=False, name=None,
-                 kind=None, rpn=None, why=None):
+                 kind=None, rpn=None, why=None, origin=None):
         self.value = value
         self.seg = seg
         self.ext = ext
@@ -93,6 +95,7 @@ class ExprValue:
         self.kind = kind
         self.rpn = rpn
         self.why = why
+        self.origin = origin
 
     def as_tuple(self):
         """(value, seg_type, is_external, ext_name), as parse_expression()."""
@@ -211,6 +214,7 @@ class Assembler:
         self.prev_symbols = {}  # name -> (value, seg_type), for JR/DJNZ
         self.prev_defs = {}  # name -> ExprValue
         self.defining = None  # the symbol a SET is defining, while it does
+        self.reported_unlinkable = set()  # symbols report_unlinkable() named
 
     @property
     def loc(self):
@@ -340,8 +344,13 @@ class Assembler:
         if sym.ext_alias_base:
             return ExprValue(sym.ext_alias_offset, ext=True,
                              name=sym.ext_alias_base)
-        if sym.link_expr is not None:
-            return sym.link_expr
+        ev = sym.link_expr
+        if ev is not None:
+            if ev.kind == 'bad' and ev.origin is None:
+                # Name the definition in the error a use of it gets.
+                ev = ExprValue(ev.value, ev.seg, ev.ext, ev.name, kind='bad',
+                               why=ev.why, origin=(sym.name, sym.line))
+            return ev
         return ExprValue(sym.value, sym.seg_type)
 
     def forward_value(self, name):
@@ -945,7 +954,8 @@ class Assembler:
             return ExprValue(value, seg, ext, name, kind='abs')
         for side in (left, right):
             if side.kind == 'bad':
-                return ExprValue(value, seg, ext, name, kind='bad', why=side.why)
+                return ExprValue(value, seg, ext, name, kind='bad',
+                                 why=side.why, origin=side.origin)
         code = self._LINK_BINARY_OPS.get(op)
         if code is None:
             return ExprValue(value, seg, ext, name, kind='bad', why=op)
@@ -959,7 +969,8 @@ class Assembler:
         if operand.kind == 'abs':
             return ExprValue(value, seg, ext, name, kind='abs')
         if operand.kind == 'bad':
-            return ExprValue(value, seg, ext, name, kind='bad', why=operand.why)
+            return ExprValue(value, seg, ext, name, kind='bad',
+                             why=operand.why, origin=operand.origin)
         return ExprValue(value, seg, ext, name, kind='expr',
                          rpn=self._link_items(operand)
                          + [(EXT_ITEM_OPERATOR, code)])
@@ -1018,7 +1029,9 @@ class Assembler:
             stripped = stripped[match.end():]
             line = stripped  # Continue with remainder
             if colons == '::':
-                self.lookup_symbol(label).public = True
+                sym = self.lookup_symbol(label)
+                sym.public = True
+                sym.public_line = sym.public_line or self.line_num
         elif not line[0].isspace() if line else False:
             # At column 1, no colon - check if it's a conditional directive
             match = re.match(r'^([$A-Za-z_@?][A-Za-z0-9_@?$.]*)\s*', stripped)
@@ -1231,12 +1244,24 @@ class Assembler:
         M80 flags the same operands 'R' (relocation error).  Assembling the
         operator's assembly-time result instead would bake the value's
         offset within its segment into the program, which is right only if
-        the linker happens to put the segment at 0.
+        the linker happens to put the segment at 0.  When the value came
+        through an EQU or SET, the error is reported once, at that
+        definition (where M80 flags it), naming the line that used it.
         """
-        if self.pass_num == 2 and ev.why:
-            self.error(f"{ev.why} cannot be applied to a relocatable or "
-                       f"external value: LINK-80 has no {ev.why} operator, "
-                       f"so the linker could not compute the result")
+        if self.pass_num != 2 or not ev.why:
+            return
+        why = (f"{ev.why} cannot be applied to a relocatable or external "
+               f"value: LINK-80 has no {ev.why} operator, so the linker could "
+               f"not compute the result")
+        if ev.origin is None:
+            self.error(why)
+            return
+        name, line = ev.origin
+        if name in self.reported_unlinkable:
+            return
+        self.reported_unlinkable.add(name)
+        self.errors.append(AssemblerError(
+            f"{name}, used at line {self.line_num}: {why}", line))
 
     def emit_word_operand(self, ev):
         """Emit a 16-bit operand (address of JMP/CALL/LXI, DW, ...)."""
@@ -2567,6 +2592,10 @@ class Assembler:
                 return True
             if len(ops) >= 2:
                 fill = self.eval_operand(ops[1])
+                if fill.kind == 'bad':
+                    # Once, not once for every byte it fills.
+                    self.report_unlinkable(fill)
+                    fill = ExprValue(fill.value)
                 for _ in range(val):
                     self.emit_code([fill.value & 0xFF], {0: fill})
             else:
@@ -2624,6 +2653,7 @@ class Assembler:
             for op in ops:
                 sym = self.lookup_symbol(op.strip())
                 sym.public = True
+                sym.public_line = sym.public_line or self.line_num
             return True
 
         # EXTRN/EXT/EXTERNAL - declare external symbols
@@ -3812,11 +3842,13 @@ class Assembler:
                     # is neither until the program is linked.  -g (export
                     # everything) just leaves it out.
                     if sym.public:
-                        self.error(f"PUBLIC {sym.name} cannot be exported: its"
-                                   f" value depends on where the linker puts a"
-                                   f" segment or on an external symbol, and a"
-                                   f" .REL public symbol can only carry an"
-                                   f" address or a constant")
+                        self.errors.append(AssemblerError(
+                            f"PUBLIC {sym.name} cannot be exported: its value"
+                            f" (defined at line {sym.line}) depends on where"
+                            f" the linker puts a segment or on an external"
+                            f" symbol, and a .REL public symbol can only"
+                            f" carry an address or a constant",
+                            sym.public_line or sym.line))
                     continue
                 # Check if this is an external alias (EQU external+offset)
                 if sym.ext_alias_base:
