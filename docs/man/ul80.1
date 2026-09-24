@@ -61,14 +61,22 @@ or can use prefixes: 0x for hex, 0o for octal.
 .SH MEMORY LAYOUT
 The linker arranges memory as follows:
 .IP 1. 3
-Code segment (CSEG) starting at the origin address
+Code segment (CSEG) starting at the origin address, each module's after
+the previous module's
 .IP 2.
 Data segment (DSEG) immediately following code
 .IP 3.
 COMMON blocks following data
 .PP
-The first three bytes of a CP/M .COM file are typically a JMP instruction to the
-actual entry point, so code starts at origin + 3 (0x103 by default).
+Absolute code (ASEG) is loaded at its own address. A module's code starts
+above the highest absolute location that the modules before it reached,
+when that is above where the code would go, as LINK-80 places it: after
+\fBASEG\fR / \fBORG 100H\fR in one module, the next module's code starts
+after that code. Absolute code that lands on a module's code, on the data
+or COMMON, or on another module's absolute code is an error, and no output
+is written. LINK-80 starts at 0103H when not given /P, which leaves room
+for a JMP at 0100H in absolute code; ul80 starts at the origin, 0100H by
+default, so link such a program with \fB\-p 103\fR.
 .SH LINKING PROCESS
 .IP 1. 3
 Load all input .REL files
@@ -115,7 +123,8 @@ Link with library:
 Linking successful.
 .TP
 .B 1
-Linking failed due to errors (undefined symbols, etc.).
+Linking failed due to errors (undefined symbols, absolute code overlapping
+other code, etc.).
 .SH FILES
 .TP
 .I input.rel

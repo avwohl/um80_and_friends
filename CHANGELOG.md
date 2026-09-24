@@ -297,6 +297,25 @@ evaluates them. The format was established by running the genuine M80 and L80
   loaded there: a CSEG module at 0100H, then a module loading absolute
   bytes at 0080H and 0300H, came out with the CSEG zeroed, without a
   message. Only the bytes a module loads go into the image, as in LINK-80.
+- ul80 linker: each module's code went straight after the previous
+  module's, even where a module before it had loaded absolute code:
+  `ASEG` / `ORG 100H` in one module and a CSEG in the next linked the CSEG
+  on top of the absolute code, without a message. LINK-80 3.44 (probed
+  under cpmemu) starts the next module above the highest absolute location
+  loaded so far - a byte, or a location an `ORG` or `DS` set - with `/P`
+  or without, and even with free space below it (absolute code at 0200H,
+  `/P:100`: the next module at 0204H); absolute code below the origin
+  moves nothing, and a module's own absolute code does not move its own
+  code. ul80 now does the same. `__END__` (and so `$MEMRY` and PL/M's
+  `.MEMORY`) is past absolute code loaded above the program, as L80's
+  `$MEMRY` is; it was the end of the relocatable areas, below it.
+  Absolute code that still lands on something - a module's program area
+  (its own, or an earlier module's), the data or COMMON after all the code,
+  or another module's absolute code - is an error and no output is
+  written; L80 warns "%Overlaying Program area" and writes a mixture of
+  the two. `ASEG` / `ORG 100H` / `JMP START` and a CSEG in one module is
+  such a case at ul80's default origin, 0100H; L80's, 0103H, leaves room
+  for the jump, and so does `-p 103`.
 - ul80 linker: in a `.PRL`/`.SPR` bitmap, a reference to `__END__`,
   `__BSS_START` or `__BSS_END`, or to a `PUBLIC` alias of one, was never
   marked: the linker computes them as absolute values, but they are program

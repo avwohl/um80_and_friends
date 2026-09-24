@@ -255,7 +255,7 @@ ROUTINE_ALT EQU ROUTINE+2       ; ROUTINE_ALT = ROUTINE + 2
 
 ### `__END__` Predefined Symbol
 
-The linker automatically provides a `__END__` symbol that points to the first free byte after all linked segments:
+The linker automatically provides a `__END__` symbol that points to the first free byte after all linked segments (and after any absolute code loaded above them):
 
 ```asm
         EXTRN   __END__             ; Import linker symbol
@@ -446,8 +446,8 @@ searches a file named `.lib` and loads every module of a `.rel`.)
 
 #### What still differs
 
-The four-way comparison (M80+L80, M80+ul80, um80+L80, um80+ul80) of 41 test
-links gives the same bytes all four ways in 26, and differs only in these
+The four-way comparison (M80+L80, M80+ul80, um80+L80, um80+ul80) of 52 test
+links gives the same bytes all four ways in 40, and differs only in these
 cases, each checked with the genuine M80 and L80 3.44:
 
 - **M80 3.44 miscompiles, um80 does not.** `DW -LAB`, `DW LAB*2`,
@@ -472,14 +472,18 @@ cases, each checked with the genuine M80 and L80 3.44:
     with `/D` or without, and without `/D` it loads each module's data just
     before its code; ul80 puts all code, then all data, then COMMON (as L80
     does with `/D` set to the end of the code, except for COMMON);
-  - after a module whose absolute code lies at or above the start of the
-    program area, L80 starts the next module's program area above that
-    code; ul80 goes on from the end of the previous module's code. With
-    `ASEG` / `ORG 100H` in one module and a CSEG in the next, ul80 loads
-    that CSEG over the absolute code, without a message;
-  - with `/D` given, L80 refuses a link in which absolute code lies above
-    the program or data area it meets ("?Intersecting Program area",
-    "?Intersecting Data area"), which ul80 links.
+  - with `/D` given, L80 does not start a module's program area above the
+    absolute code loaded before it, as it does without `/D` (and ul80
+    does, see below): it loads the code over the absolute code, without a
+    message. And it refuses a link in which absolute code lies above the
+    program or data area it meets ("?Intersecting Program area",
+    "?Intersecting Data area"). The links with absolute code are compared
+    with L80 run without `/D`, on modules with no data, where the two
+    layouts are the same;
+  - L80 writes a `.COM` from 0100H whatever `/P` says (with `/P:200` the
+    program starts 100H bytes into the file); ul80 writes it from `-p`, so
+    that `-p` gives a raw image for another address, such as a ROM at
+    E000H.
 
 ul80 has no counterpart of `/D`; to compare with L80, give L80 `/D:` the
 address where ul80 puts the data (the end of the code).
@@ -497,6 +501,41 @@ M80 starts a file in CSEG, so an `ORG` is an offset within a relocatable
 segment. DRI's MAC has no relocatable segments: its sources are absolute and an
 `ORG` is an absolute address. `um80 --aseg` starts the file in ASEG, which
 assembles MAC sources the way MAC does.
+
+### Absolute code in a link
+
+ul80 places each module's code after the previous module's, unless the
+modules before it loaded absolute (`ASEG`) code reaching higher: then the
+module's code starts above the highest absolute location they reached - a
+byte loaded, or a location an `ORG` or `DS` set with nothing loaded after
+it. This is LINK-80 3.44's rule without `/D` (ul80 has no `/D`), probed
+under cpmemu: it holds with `/P` and without, and when there is free space
+below the absolute code (`ASEG` / `ORG 200H` in one module, then a CSEG
+module, linked `/P:100`: the CSEG starts at 0204H). Absolute code below the
+origin moves nothing. A module's own absolute code does not move its own
+code, because L80 allocates a module's program area before it loads anything
+in it. The data and COMMON follow all the code, as always in ul80.
+`__END__`, and so `$MEMRY` and PL/M's `.MEMORY`, is past absolute code
+loaded above the program, as L80 stores `$MEMRY`. Only the bytes a module
+loads go into the image: the gap an `ORG` or `DS` leaves in its absolute
+code does not overwrite another module's code there.
+
+Absolute code that lands on something else is an error, and ul80 writes no
+output: on a module's program area (its own, or an earlier module's), on the
+data or COMMON that follow all the code, or on absolute code another module
+loaded. For example `ASEG` / `ORG 100H` / `JMP START`
+followed by a CSEG in the same module, linked at ul80's default origin,
+0100H, gives
+
+```
+Error: Module X: absolute code at 0100H-0102H overlaps its own program area (0100H-0115H)
+```
+
+L80 warns "%Overlaying Program area" (or "Data area") there and writes a
+mixture of the two. L80's default origin is 0103H, which leaves room for
+exactly such a jump; link the program with `-p 103`. An `ORG` back over a
+module's own absolute bytes is not an overlap: the later bytes load, as they
+do in the assembler.
 
 ---
 
@@ -521,7 +560,7 @@ assembles MAC sources the way MAC does.
 
 ## Version History
 
-- **Unreleased** — link-time expressions (REL extension link items): HIGH/LOW of relocatable and external values; `.REL` objects the genuine LINK-80 reads (item 14's A-field, item 9 for EXT+n, item 10 always, COMMON block selection, ASEG set-location held back); M80 objects ul80 links (typed chain links, item 12 chain address, `$MEMRY`)
+- **Unreleased** — link-time expressions (REL extension link items): HIGH/LOW of relocatable and external values; `.REL` objects the genuine LINK-80 reads (item 14's A-field, item 9 for EXT+n, item 10 always, COMMON block selection, ASEG set-location held back); M80 objects ul80 links (typed chain links, item 12 chain address, `$MEMRY`); code placed above absolute code as L80 places it, and absolute code that overlaps anything an error
 - **0.3.48** — `--spr`, `--extra` and `--aseg`; `--prl` links a transient at 100H
 - **0.3.33** — External symbol aliases (EQU external+offset) for z88dk compatibility
 - **0.3.21** — Extended REL format for long symbols, `-t/--truncate` switch

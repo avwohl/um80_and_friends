@@ -441,6 +441,7 @@ to documented M80 behavior:
 | `test_symbol_class.py` | SET vs. EQU/label redefinability classes |
 | `test_z80_and_charconst.py` | `LD A,I`/`LD A,R` encoding, two-character constant byte order |
 | `test_linker_segments.py` | Absolute ASEG placement, mixed CSEG+ASEG, COMMON-only modules |
+| `test_linker_absolute_code.py` | A module's code placed above the absolute code loaded before it; absolute code overlapping anything is an error |
 | `test_linker_dupglobal.py` | Multiply-defined PUBLIC global is a link error |
 
 Further tests cover the toolchain more broadly: `test_ds_org.py` (DS/ORG and

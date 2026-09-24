@@ -80,8 +80,11 @@ class Module:
         # COMMON block); a COMMON block is otherwise uninitialized.
         self.common_data = {}
 
-        # The addresses the module loaded absolute (ASEG) bytes at: a DS or
-        # ORG gap between them loads nothing.
+        # Absolute (ASEG) code: one past the highest location the module
+        # reached in ASEG, by a byte loaded there or a location set (an ORG
+        # or DS, even with nothing after it), and the addresses it loaded
+        # bytes at (a DS or ORG gap between them loads nothing).
+        self.abs_top = 0
         self.abs_loaded = set()
 
         # Item 14's A-field (the start address), None when the module was
@@ -233,6 +236,7 @@ class Linker:
                 module.common_data.setdefault(seg_key(), set()).add(current_loc)
             if loaded and current_seg == ADDR_ABSOLUTE:
                 module.abs_loaded.add(current_loc)
+                module.abs_top = max(module.abs_top, current_loc + 1)
                 # Loaded below where ASEG was thought to start: `ORG 200H /
                 # DB 1 / ORG 180H / DB 4' lost the 4.
                 module.code_start = min(module.code_start, current_loc)
@@ -341,6 +345,8 @@ class Linker:
                             current_loc += 1
                 current_loc = value
                 current_seg = addr_type
+                if addr_type == ADDR_ABSOLUTE:
+                    module.abs_top = max(module.abs_top, value)
                 # Track the lowest non-zero ASEG SET_LOC as code_start, until
                 # actual data is written.  SET_LOC(ABS, 0) is skipped because it
                 # is typically just a segment switch (ASEG directive) and the
@@ -735,16 +741,40 @@ class Linker:
             cur = None if start is None else start + link
 
     def calculate_addresses(self):
-        """Calculate base addresses for all modules."""
-        # Calculate total code size (CSEG/program-relative bytes only)
-        total_code = 0
+        """Calculate base addresses for all modules.
+
+        Each module's code goes after the previous module's - or above the
+        absolute code the modules before it loaded, if that reaches higher.
+        LINK-80 3.44 does that (probed under cpmemu): it starts the next
+        module's area above the highest absolute location loaded so far,
+        a byte or a location set by ORG or DS, with /P: or without, when
+        that is above where the area would go; absolute code below it moves
+        nothing.  ul80 went on from the end of the previous module's code,
+        so `ASEG / ORG 100H' in one module put the next module's CSEG on top
+        of it.  A module's own absolute code does not move its own code:
+        L80 allocates the program area before it loads anything.  Data and
+        COMMON follow all the code, which is above every absolute location
+        of the modules before the last; absolute code that still meets
+        something (a module's own, or a later module's) is reported by
+        link().  The first free address, __END__, is past the absolute code
+        too, as L80's $MEMRY is.
+        """
+        # One past the highest absolute location of the modules before each.
+        abs_before = []
+        abs_top = 0
         for module in self.modules:
-            module.code_base = self.code_base + total_code
-            total_code += self._cseg_len(module)
+            abs_before.append(abs_top)
+            abs_top = max(abs_top, module.abs_top)
+
+        loc = self.code_base
+        for module, below in zip(self.modules, abs_before):
+            loc = max(loc, below)
+            module.code_base = loc
+            loc += self._cseg_len(module)
 
         # Data follows code
         if self.data_base is None:
-            self.data_base = self.code_base + total_code
+            self.data_base = loc
 
         total_data = 0
         for module in self.modules:
@@ -766,9 +796,11 @@ class Linker:
         self.total_common = total_common
 
         # Add __END__ symbol pointing to first free byte after all segments
-        # This is an absolute address, not module-relative
+        # and absolute code.  This is an absolute address, not
+        # module-relative.
         end_addr = self.common_base + total_common
-        self.globals['__END__'] = (0, end_addr, ADDR_ABSOLUTE, True)
+        self.globals['__END__'] = (0, max(end_addr, abs_top), ADDR_ABSOLUTE,
+                                   True)
 
         # BSS region = COMMON area (uninitialized data, zeroed by crt0)
         self.globals['__BSS_START'] = (0, self.common_base, ADDR_ABSOLUTE, True)
@@ -809,6 +841,8 @@ class Linker:
             return False
 
         self.calculate_addresses()
+        if not self.check_absolute_overlaps():
+            return False
 
         # Aliases onto a linker-defined symbol (__END__ and friends) only get a
         # value once the segments are placed.
@@ -950,6 +984,96 @@ class Linker:
         ok = self.apply_expressions()
         self.store_memry()
         return ok
+
+    def _areas(self):
+        """(what, module index or None, first, end) of each relocatable
+        area: every module's program and data area, and every COMMON
+        block.
+
+        A module that loads absolute code and nothing in CSEG (or DSEG)
+        has no program (data) area, whatever size it declares: an object
+        that gives its absolute code's size as the program size is not
+        overlapping itself.
+        """
+        for idx, module in enumerate(self.modules):
+            size = {seg: end - start
+                    for seg, start, end in self._segment_ranges(module)}
+            code = max(self._cseg_len(module), size.get(ADDR_PROGRAM_REL, 0))
+            data = max(module.data_size, size.get(ADDR_DATA_REL, 0))
+            if code and (ADDR_PROGRAM_REL in size or not module.abs_loaded):
+                yield 'program area', idx, module.code_base, module.code_base + code
+            if data and (ADDR_DATA_REL in size or not module.abs_loaded):
+                yield 'data area', idx, module.data_base, module.data_base + data
+        for name, size in self.commons.items():
+            if size:
+                base = self.common_bases[name]
+                label = f"COMMON /{name.strip()}/" if name.strip() \
+                    else 'blank COMMON'
+                yield label, None, base, base + size
+
+    @staticmethod
+    def _ranges(addrs):
+        """`0100H-0107H, 0200H' for a sorted list of addresses."""
+        runs = []
+        for a in addrs:
+            if runs and a == runs[-1][1] + 1:
+                runs[-1][1] = a
+            else:
+                runs.append([a, a])
+        return ', '.join(f"{lo:04X}H" if lo == hi else f"{lo:04X}H-{hi:04X}H"
+                         for lo, hi in runs)
+
+    def check_absolute_overlaps(self):
+        """Report absolute code loaded where something else is: in a
+        module's program or data area (its own, or another's), in a COMMON
+        block, or where another module loaded absolute code.
+
+        LINK-80 prints "%Overlaying Program area" (or Data area) and writes
+        a mixture of the two - with /D: the later bytes, without it partly
+        the earlier ones.  The image is wrong either way, so here it is an
+        error and the link fails.  Absolute code a module loads twice
+        itself (an ORG back over its own bytes) is the module's business:
+        the later bytes load, as in the assembler.  Returns False if there
+        was any.
+        """
+        owner = {}  # address -> index of the module whose absolute byte it is
+        found = []
+        for idx, module in enumerate(self.modules):
+            clash = {}  # other module's index -> addresses both load
+            for a in sorted(module.abs_loaded):
+                other = owner.setdefault(a, idx)
+                if other != idx:
+                    clash.setdefault(other, []).append(a)
+            found += [self._overlap(idx, addrs, "absolute code of module "
+                                    + self.modules[other].name)
+                      for other, addrs in clash.items()]
+        for what, area_idx, first, end in self._areas() if owner else ():
+            hits = {}  # module index -> its absolute addresses in the area
+            for a in range(first, end):
+                if a in owner:
+                    hits.setdefault(owner[a], []).append(a)
+            found += [self._overlap(idx, addrs,
+                                    f"{self._whose(what, area_idx, idx)} "
+                                    f"({first:04X}H-{end - 1:04X}H)")
+                      for idx, addrs in hits.items()]
+        for msg in found:
+            self.error(msg)
+        return not found
+
+    def _whose(self, what, area_idx, idx):
+        """`what' (an area of module `area_idx', or a COMMON block if
+        None) as the message for module `idx' names it."""
+        if area_idx is None:
+            return what
+        if area_idx == idx:
+            return f"its own {what}"
+        return f"the {what} of module {self.modules[area_idx].name}"
+
+    def _overlap(self, idx, addrs, what):
+        """The message for module `idx' loading absolute code at `addrs'
+        over `what'."""
+        return (f"Module {self.modules[idx].name}: absolute code at "
+                f"{self._ranges(addrs)} overlaps {what}")
 
     def store_memry(self):
         """Store the first free address in the word at $MEMRY, as LINK-80.

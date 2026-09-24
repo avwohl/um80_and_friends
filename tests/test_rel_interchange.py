@@ -162,8 +162,9 @@ def _word_at(linker, addr):
 def test_m80_chain_from_relocatable_code_into_aseg():
     """An absolute chain link is an address in ASEG.  ul80 read it as an
     offset in the segment the word is in, found nothing at CSEG+4000H and
-    left the reference at 4000H zero (LINK-80 fills both)."""
-    ext = 0x100 + 3 + 0x123
+    left the reference at 4000H zero (LINK-80 fills both).  E goes above
+    the absolute code at 4000H, as in `L80 /P:100,XA,E': EXT is 4125H."""
+    ext = 0x4002 + 0x123
     for name, rel in (("XA", M80_XA), ("AX", M80_AX)):
         with tempfile.TemporaryDirectory() as d:
             linker = _link(d, (name, rel), ("E", M80_E))
