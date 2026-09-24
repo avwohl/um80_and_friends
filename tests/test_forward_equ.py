@@ -246,3 +246,47 @@ def test_an_equ_restated_from_itself_is_not_circular():
                         "\tDB X,Y\n\tEND\n")
     assert ok, _errors(asm)
     assert _bytes(rel) == [5, 5]
+
+
+def test_forward_chain_through_set_symbols_settles():
+    """SET symbols were left out of the chain depth: a chain of forward
+    references that alternates EQU and SET stopped after 64 repeats with
+    "still changing ... through the address of a label", although the
+    same chain of EQUs alone assembles, as does this one in reverse."""
+    n = 70
+    lines = ["\tASEG", "\tORG 100H", "\tDW A0"]
+    lines += [f"A{i}\t{'SET' if i % 2 else 'EQU'} A{i + 1}+1"
+              for i in range(n - 1)]
+    lines += [f"A{n - 1}\tSET 5", "\tDW A0", "\tEND"]
+    ok, asm, rel = _asm("\n".join(lines) + "\n")
+    assert ok, _errors(asm)[:3]
+    value = 5 + n - 1
+    assert _bytes(rel) == [value & 0xFF, value >> 8] * 2
+
+
+def test_circular_through_a_set_is_an_error():
+    """A cycle through a SET symbol settled silently: `X SET Y+1 /
+    Y EQU X-1' gave X = 1, Y = 0."""
+    text = _circular("\tASEG\n\tORG 100H\n\tDW X,Y\nX\tSET Y+1\n"
+                     "Y\tEQU X-1\n\tEND\n")
+    assert "(X SET Y+1, Y EQU X-1)" in text
+    text = _circular("\tASEG\n\tORG 100H\n\tDW X\nX\tEQU Y\nY\tSET X\n"
+                     "\tDW Y\n\tEND\n")
+    assert "(X EQU Y, Y SET X)" in text
+    text = _circular("\tASEG\n\tORG 100H\n\tDB AA\nAA\tEQU X+1\nX\tSET 3\n"
+                     "X\tSET AA\n\tEND\n")
+    assert "(AA EQU X+1, X SET AA)" in text
+
+
+def test_an_earlier_set_is_not_in_the_cycle():
+    """A forward reference reads a SET symbol's last definition, so a use
+    of the reader by an earlier SET of it is no cycle: AA is 7."""
+    ok, asm, rel = _asm("\tASEG\n\tORG 100H\n\tDB AA\nAA\tEQU X\n"
+                        "X\tSET AA\nX\tSET 7\n\tDB AA,X\n\tEND\n")
+    assert ok, _errors(asm)
+    assert _bytes(rel) == [7, 7, 7]
+    ok, asm, rel = _asm("\tASEG\n\tORG 100H\n\tDB TOTAL\nTOTAL\tEQU CNT\n"
+                        "CNT\tSET 0\n\tREPT 3\nCNT\tSET CNT+1\n\tENDM\n"
+                        "\tDB TOTAL,CNT\n\tEND\n")
+    assert ok, _errors(asm)
+    assert _bytes(rel) == [3, 3, 3]

@@ -84,16 +84,18 @@ evaluates them. The format was established by running the genuine M80 and L80
   value from the end of the time before, which is what pass 2 reads there
   too — so X is 6. A chain of N such forward references needs N repeats,
   and the limit grows with the longest chain in the source (plus 64 for
-  labels moved by forward sizes and JR promotion). EQUs defined in terms of
-  each other are an error naming the cycle — "Cannot resolve the value of
-  'X': it is defined in terms of itself (X EQU Y, Y EQU X)" — whether or
-  not some value satisfies them, and so is a symbol whose value still
-  changes when the limit is reached (through a label its own value moves)
-  or differs between the passes after it was used (a phase error, e.g.
-  after `IFDEF` of a later symbol). `SET` is unchanged: a forward reference
-  to a `SET` symbol reads its last value, as in M80, and `X SET X+1` reads
-  the X of the line before. (MACRO-80 flags these forward uses `U`; um80
-  assembles the value they stand for.)
+  labels moved by forward sizes and JR promotion). EQUs and SETs defined in
+  terms of each other are an error naming the cycle — "Cannot resolve the
+  value of 'X': it is defined in terms of itself (X EQU Y, Y SET X)" —
+  whether or not some value satisfies them, and so is a symbol whose value
+  still changes when the limit is reached (through a label its own value
+  moves) or differs between the passes after it was used (a phase error,
+  e.g. after `IFDEF` of a later symbol). A forward reference to a `SET`
+  symbol reads its last value, as in M80, and `X SET X+1` reads the X of
+  the line before, so each `SET` is a definition of its own: a chain may
+  run through `SET`s, and a `SET` that reads a later symbol whose value
+  comes from an earlier `SET` of the same name is no cycle. (MACRO-80 flags
+  these forward uses `U`; um80 assembles the value they stand for.)
 - um80 assembler: `/` or `MOD` by a symbol defined further down, or by an
   external, was reported as "Division by zero" (its pass-1 value is 0).
   Only a constant 0 divisor is an error now; `MOD EXT` goes to the linker,

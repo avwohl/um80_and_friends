@@ -9,6 +9,7 @@ import sys
 import os
 import re
 import argparse
+from collections import deque
 from pathlib import Path
 
 from um80 import __version__
@@ -256,12 +257,18 @@ class Assembler:
         self.prev_symbols = {}  # name -> (value, seg_type), for JR/DJNZ
         self.prev_defs = {}  # name -> ExprValue
         self.defining = None  # the symbol a SET is defining, while it does
-        # The symbols each EQU's operand read in this time through pass 1:
-        # name -> {symbol read: True if it was not defined yet (a forward
-        # reference)}, and the operand's text; `reading' collects them
-        # while an EQU operand is evaluated.  See equ_cycle_and_depth().
-        self.equ_deps = {}
-        self.equ_text = {}
+        # What each EQU and SET read in this time through pass 1, for
+        # definition_graph().  A definition is a node (name, k): k is 0 for
+        # an EQU, and for a SET its number among the SETs of that name so
+        # far (a SET symbol's value depends on where it is read).
+        # def_deps: node -> {node read: True if it was a forward reference,
+        # to a symbol not defined yet, which reads its last definition};
+        # def_text and def_line say where it is, for messages; `reading'
+        # collects the reads while an operand is evaluated (note_read()).
+        self.def_deps = {}
+        self.def_text = {}
+        self.def_line = {}
+        self.set_count = {}  # name -> SETs of it so far in this pass
         self.reading = None
         self.phase = None  # (run address, location counter) after .PHASE
         self.rel_common = None  # COMMON block last selected in the .REL
@@ -474,65 +481,155 @@ class Assembler:
                        f"passes ({sym.value & 0xFFFF:04X}H before this "
                        f"line, {new.value & 0xFFFF:04X}H here)")
 
-    def equ_cycle_and_depth(self):
-        """(cycle, depth) of the EQUs read in the last time through pass 1.
+    def note_read(self, sym):
+        """Record in `reading' which definition of `sym' is read.
 
-        `cycle' is a list of EQU symbols each defined in terms of the next
+        A symbol not defined yet is a forward reference: it reads the
+        symbol's value at the end of the previous time through, its last
+        definition, which is (name, -1) until the pass is over.  A SET
+        symbol read by its own SET reads the SET before (there may be
+        none: `X SET X+1' with no X yet reads nothing).
+        """
+        name = sym.name
+        if name == self.defining:
+            k = self.set_count.get(name, 0)
+            if k:
+                self.reading.setdefault((name, k), False)
+        elif sym.defined or sym.external:
+            k = self.set_count.get(name, 0) if sym.redefinable else 0
+            self.reading.setdefault((name, k), False)
+        else:
+            self.reading[(name, -1)] = True
+
+    def note_definition(self, node, operator, text, reads):
+        """Record what the EQU or SET `node' read (note_read())."""
+        deps = self.def_deps.setdefault(node, {})
+        for dep, forward in reads.items():
+            deps[dep] = deps.get(dep) or forward
+        self.def_text.setdefault(node, f"{node[0]} {operator} {text.strip()}")
+        self.def_line.setdefault(node, self.line_num)
+
+    def resolve_node(self, node):
+        """The definition a read recorded as `node' reads, now that the
+        pass is over: a forward reference, (name, -1), reads the last."""
+        name, k = node
+        return (name, self.set_count.get(name, 0)) if k < 0 else node
+
+    def definition_graph(self):
+        """(cycle, depth, order) of the EQUs and SETs of the last pass 1.
+
+        `cycle' is a list of definitions each defined in terms of the next
         and the last in terms of the first, with at least one of those
         uses a forward reference (reading an earlier definition is not
         circular: `X EQU 5 / Y EQU X / X EQU Y' is fine), or None.  `depth'
-        is the most forward references along any chain of EQUs, the number
-        of repeats of pass 1 the chain needs to settle.
+        is the most forward references along any chain of definitions,
+        the number of repeats of pass 1 the chain needs to settle.  `order'
+        lists every definition after those it reads (a cycle's members
+        together).
+
+        Each strongly connected set of definitions (Tarjan's algorithm,
+        iterative, so a long chain does not hit Python's recursion limit)
+        is circular if a forward reference joins two of its members: there
+        is then a way back from the one read to the one reading it.
         """
-        deps = self.equ_deps
-        state, depth = {}, {}
+        deps = self.def_deps
+        edges = {}
+        for node, reads in deps.items():
+            out = {}
+            for dep, forward in reads.items():
+                dep = self.resolve_node(dep)
+                if dep in deps:  # not a label, an external, ...
+                    out[dep] = out.get(dep, False) or forward
+            edges[node] = sorted(out.items())
 
-        def line_of(name):
-            sym = self.symbols.get(name)
-            return (sym.line if sym else 0), name
+        roots = sorted(deps, key=lambda n: (self.def_line.get(n, 0), n))
+        components = self._strong_components(roots, edges)
 
-        for root in sorted(deps, key=line_of):
-            if root in state:
+        # Components come out after every component they read.
+        cycle, depth, order = None, {}, []
+        for component in components:
+            members = set(component)
+            most = 0
+            for node in component:
+                for used, forward in edges[node]:
+                    if used not in members:
+                        most = max(most, depth[used] + (1 if forward else 0))
+                    elif forward and cycle is None:
+                        cycle = self._cycle_through(node, used, members, edges)
+            for node in component:
+                depth[node] = most
+            order.extend(component)
+        return cycle, max(depth.values(), default=0), order
+
+    @staticmethod
+    def _strong_components(roots, edges):
+        """The strongly connected components of the graph `edges' (node ->
+        [(node, anything)]), each listed after every component it reaches:
+        Tarjan's algorithm, iterative."""
+        index, low, on_stack, stack, components = {}, {}, set(), [], []
+
+        def visit(node):
+            index[node] = low[node] = len(index)
+            stack.append(node)
+            on_stack.add(node)
+            return (node, iter(edges[node]))
+
+        for root in roots:
+            if root in index:
                 continue
-            state[root] = 1  # on the stack
-            # (symbol, its uses not yet followed, forward edge into it)
-            stack = [(root, iter(sorted(deps[root].items())), False)]
-            while stack:
-                node, uses, _ = stack[-1]
-                for used, forward in uses:
-                    if used not in deps:
-                        continue  # a label, an external, a SET symbol
-                    if state.get(used) == 1:
-                        k = next(i for i, entry in enumerate(stack)
-                                 if entry[0] == used)
-                        if forward or any(entry[2] for entry in stack[k + 1:]):
-                            return [entry[0] for entry in stack[k:]], 0
-                        continue
-                    if used not in state:
-                        state[used] = 1
-                        stack.append((used, iter(sorted(deps[used].items())),
-                                      forward))
+            work = [visit(root)]
+            while work:
+                node, uses = work[-1]
+                for used, _ in uses:
+                    if used not in index:
+                        work.append(visit(used))
                         break
+                    if used in on_stack:
+                        low[node] = min(low[node], index[used])
                 else:
-                    stack.pop()
-                    state[node] = 2
-                    depth[node] = max(
-                        (depth[used] + (1 if forward else 0)
-                         for used, forward in deps[node].items()
-                         if used in depth), default=0)
-        return None, max(depth.values(), default=0)
+                    work.pop()
+                    if work:
+                        parent = work[-1][0]
+                        low[parent] = min(low[parent], low[node])
+                    if low[node] == index[node]:
+                        component = [stack.pop()]
+                        while component[-1] != node:
+                            component.append(stack.pop())
+                        on_stack.difference_update(component)
+                        components.append(component)
+        return components
+
+    @staticmethod
+    def _cycle_through(node, used, members, edges):
+        """The cycle `node' -> `used' -> ... -> `node' within `members'."""
+        came_from = {used: None}
+        queue = deque([used])
+        while queue:
+            here = queue.popleft()
+            if here == node:
+                break
+            for nxt, _ in edges[here]:
+                if nxt in members and nxt not in came_from:
+                    came_from[nxt] = here
+                    queue.append(nxt)
+        path = []
+        here = node
+        while here is not None:
+            path.append(here)
+            here = came_from[here]
+        path.reverse()  # used ... node
+        return [node] + path[:-1]
 
     def report_circular(self, cycle):
-        """Error for EQUs defined in terms of each other (`cycle')."""
-        first = min(range(len(cycle)), key=lambda i: (
-            self.symbols[cycle[i]].line if cycle[i] in self.symbols else 0))
+        """Error for definitions made in terms of each other (`cycle')."""
+        first = min(range(len(cycle)),
+                    key=lambda i: (self.def_line.get(cycle[i], 0), i))
         cycle = cycle[first:] + cycle[:first]
-        chain = ', '.join(f"{name} EQU {self.equ_text.get(name, '?')}"
-                          for name in cycle)
-        sym = self.symbols.get(cycle[0])
+        chain = ', '.join(self.def_text.get(node, f"{node[0]} EQU ?")
+                          for node in cycle)
         self.errors.append(AssemblerError(
-            f"Cannot resolve the value of '{cycle[0]}': it is defined in "
-            f"terms of itself ({chain})", sym.line if sym else None))
+            f"Cannot resolve the value of '{cycle[0][0]}': it is defined in "
+            f"terms of itself ({chain})", self.def_line.get(cycle[0])))
 
     def lookup_symbol(self, name):
         """Look up a symbol, creating undefined entry if needed."""
@@ -963,8 +1060,7 @@ class Assembler:
 
             sym = self.lookup_symbol(expr)
             if self.reading is not None:
-                forward = not (sym.defined or sym.external)
-                self.reading[sym.name] = self.reading.get(sym.name) or forward
+                self.note_read(sym)
             if not (sym.defined or sym.external):
                 ev = self.forward_value(sym.name)
                 if ev is not None:
@@ -2790,10 +2886,7 @@ class Assembler:
             finally:
                 self.reading = None
             if reads is not None:
-                deps = self.equ_deps.setdefault(label.upper(), {})
-                for name, forward in reads.items():
-                    deps[name] = deps.get(name) or forward
-                self.equ_text.setdefault(label.upper(), ops[0].strip())
+                self.note_definition((label.upper(), 0), 'EQU', ops[0], reads)
             # An external plus a constant makes the symbol an alias of the
             # external.  A value only the linker can compute, e.g. HIGH BUF
             # with BUF relocatable, makes the symbol stand for the
@@ -2815,6 +2908,8 @@ class Assembler:
             # DRI extension: allow register names as values
             op_upper = ops[0].strip().upper()
             link_expr = None
+            name = label.upper()
+            k = self.set_count.get(name, 0) + 1  # this SET's node: (name, k)
             if op_upper in REGS:
                 val, seg = REGS[op_upper], ADDR_ABSOLUTE
             elif op_upper in REGPAIRS:
@@ -2826,12 +2921,17 @@ class Assembler:
                 # this line makes: in pass 1 an X not yet SET reads 0, as it
                 # always has, rather than the previous iteration's final X
                 # (see forward_value()), which would never settle.
-                self.defining = label.upper()
+                reads = {} if self.pass_num == 1 else None
+                self.defining = name
+                self.reading = reads
                 try:
                     ev = self.eval_operand(ops[0],
                                            allow_undefined=(self.pass_num == 1))
                 finally:
                     self.defining = None
+                    self.reading = None
+                if reads is not None:
+                    self.note_definition((name, k), operator, ops[0], reads)
                 val, seg, ext, _ = ev.as_tuple()
                 if ev.kind in ('expr', 'bad'):
                     link_expr = ev  # see EQU
@@ -2852,6 +2952,7 @@ class Assembler:
             sym.redefinable = True
             sym.link_expr = link_expr
             sym.line = self.line_num
+            self.set_count[name] = k
             return True
 
         # DB - define bytes
@@ -3888,6 +3989,7 @@ class Assembler:
         self.cond_false_depth = 0
         self.cond_else_levels = set()
         self.radix = 10  # Default radix resets each pass (a .RADIX re-applies)
+        self.set_count = {}
         # Same reasoning as the radix: a .Z80/.8080 re-applies on every
         # pass, so the mode must start each pass at the default.  Left
         # over from the previous pass, a .Z80 anywhere in the file made
@@ -4053,8 +4155,9 @@ class Assembler:
             self.current_common = None
             self.errors = []  # Clear errors between iterations
             self.local_counter = 0  # Reset LOCAL symbol counter for consistent naming
-            self.equ_deps = {}
-            self.equ_text = {}
+            self.def_deps = {}
+            self.def_text = {}
+            self.def_line = {}
             # Clear symbol definitions (but keep promoted_jr)
             # We need to rebuild symbol table each time
             # since addresses change when JR->JP promotion happens
@@ -4084,7 +4187,7 @@ class Assembler:
             # A circular definition, once it has settled or shows up twice
             # (the first time through, conditional assembly on a symbol
             # still undefined may have read other lines).
-            cycle, depth = self.equ_cycle_and_depth()
+            cycle, depth, _ = self.definition_graph()
             if cycle and (settled or frozenset(cycle) == prev_cycle):
                 self.report_circular(cycle)
                 return False
