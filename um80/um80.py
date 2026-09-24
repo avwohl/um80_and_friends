@@ -99,6 +99,9 @@ class ExprValue:
     kind says what the value is once the program is linked:
       'abs'   known now; value is the answer.
       'rel'   the address `value' in segment `seg': a relocatable word.
+              When it is an address plus or minus a constant, `rpn' holds
+              the two as separate extension link items, the form a
+              link-time expression that uses it is written in.
       'ext'   external `name' plus the constant `value'.
       'expr'  anything else computed from relocatable or external values
               with operators LINK-80 can evaluate - HIGH(BUF+128), LOW EXT,
@@ -372,6 +375,9 @@ class Assembler:
         compute, which the symbol then stands for wherever it is used.
         """
         name = name.upper()
+        if ev.kind == 'rel' and ev.rpn:
+            # A symbol is one address (its operands are not kept).
+            ev = ExprValue(ev.value, ev.seg, block=ev.block)
         sym = self.symbols.get(name)
         if sym is None:
             sym = Symbol(name)
@@ -988,14 +994,31 @@ class Assembler:
                 and left_seg == right_seg and left.block == right.block)
         block = left.block if left.kind == 'rel' else right.block
         if simple:
-            return ExprValue(result, result_seg, block=block)
+            ev = ExprValue(result, result_seg, block=block)
+            if ev.kind == 'rel':
+                # An address plus or minus a constant: one relocatable word,
+                # but in a link-time expression the operands as the source
+                # has them (see _link_items()).
+                ev.rpn = self._link_items(left) + self._link_items(right) \
+                    + [(EXT_ITEM_OPERATOR, self._LINK_BINARY_OPS[op])]
+            return ev
         return self._link_binary(op, left, right, result, result_seg)
 
     def _link_items(self, ev):
-        """The postfix extension link items that compute `ev' at link time."""
+        """The postfix extension link items that compute `ev' at link time.
+
+        An address plus or minus a constant is written as MACRO-80 3.44
+        writes it, the address and the constant each an item of its own:
+        `HIGH(C1+100H)' is C(common, C1) C(abs, 100H) A(+) A(HIGH).  um80
+        folded the constant into the address, C(common, C1+100H), and
+        LINK-80 3.44 gets a COMMON-relative value past the end of its block
+        wrong.  (A symbol is one value, EQU C1+100H included, as in M80.)
+        """
         if ev.kind == 'abs':
             return [(EXT_ITEM_VALUE, ADDR_ABSOLUTE, ev.value & 0xFFFF)]
         if ev.kind == 'rel':
+            if ev.rpn:
+                return list(ev.rpn)
             if ev.seg == ADDR_COMMON_REL:
                 return [(EXT_ITEM_VALUE, ev.seg, ev.value & 0xFFFF, ev.block)]
             return [(EXT_ITEM_VALUE, ev.seg,
@@ -1275,15 +1298,16 @@ class Assembler:
                 self.current_line_bytes.append(value & 0xFF)
         self.loc += 1
 
-    def emit_word(self, value, seg_type=ADDR_ABSOLUTE, block=None):
-        """Emit a 16-bit word to current segment."""
+    def emit_word(self, value, seg_type=ADDR_ABSOLUTE, block=None, ev=None):
+        """Emit a 16-bit word to current segment (`ev': the operand it is)."""
         if (seg_type == ADDR_COMMON_REL and self.current_common is not None
                 and block is not None and block != self.current_common):
             # An address in another COMMON block, from inside this one:
             # selecting that block would also move the loading there, so it
-            # is a one-item link-time expression with this block selected
-            # again before the store.
-            self.emit_link_expr(ExprValue(value, seg_type, block=block), 2)
+            # is a link-time expression with this block selected again
+            # before the store.
+            self.emit_link_expr(ev if ev is not None
+                                else ExprValue(value, seg_type, block=block), 2)
             return
         if self.pass_num == 2:
             self.select_for_load()
@@ -1403,7 +1427,7 @@ class Assembler:
     def emit_word_operand(self, ev):
         """Emit a 16-bit operand (address of JMP/CALL/LXI, DW, ...)."""
         if ev.kind in ('abs', 'rel'):
-            self.emit_word(ev.value, ev.seg, ev.block)
+            self.emit_word(ev.value, ev.seg, ev.block, ev)
         elif ev.kind == 'ext':
             self.emit_external_ref(ev.name, ev.value)
         elif ev.kind == 'expr':

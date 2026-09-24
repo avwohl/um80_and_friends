@@ -48,6 +48,17 @@ evaluates them. The format was established by running the genuine M80 and L80
   byte there. um80 does not copy that: its values are the arithmetically
   correct ones, so a binary rebuilt with um80 can differ from an M80-built
   reference in those fields.)
+- um80 assembler: in a link-time expression a constant added to an address
+  was folded into it: `MVI A,HIGH(C1+100H)`, C1 at offset 0 of COMMON
+  `/BLK1/`, went out as the one extension item C(common, 0100H). MACRO-80
+  writes the address and the constant as items of their own,
+  C(common, 0) C(abs, 0100H) A(+), and LINK-80 miscomputes a
+  COMMON-relative value that lies past the end of its block: with BLK1 300H
+  bytes long, `HIGH(C1+400H)` linked in L80 to A0H instead of 05H. um80 now
+  writes M80's form, the operands in source order, in every segment. (L80
+  gets the folded form wrong for M80's own objects too, which fold an `EQU`
+  such as `X EQU C1+400H` and a word such as `DW C1+400H`; ul80 computes
+  all of them right.)
 - um80 assembler: `X EQU HIGH BUF` now stands for the expression, so `MVI A,X`
   is linked like `MVI A,HIGH BUF`. It was the constant high byte of BUF's
   offset. (M80 3.44 gets this one wrong too: it keeps BUF's segment, with the
