@@ -270,6 +270,14 @@ class Assembler:
         self.def_line = {}
         self.set_count = {}  # name -> SETs of it so far in this pass
         self.reading = None
+        # For predict_forward_values(): node -> (operator, operand, radix)
+        # of a definition that can be evaluated again away from its line
+        # (None if it cannot: it read $, TYPE or X##, or was made twice),
+        # and node -> the value it gave.  reading_pure is cleared while an
+        # operand is read if it reads something that depends on its line.
+        self.def_replay = {}
+        self.def_value = {}
+        self.reading_pure = True
         self.phase = None  # (run address, location counter) after .PHASE
         self.rel_common = None  # COMMON block last selected in the .REL
         self.reported_unlinkable = set()  # symbols report_unlinkable() named
@@ -491,6 +499,9 @@ class Assembler:
         none: `X SET X+1' with no X yet reads nothing).
         """
         name = sym.name
+        if name in OPCODE_VALUES:
+            # Read as the symbol here, as the opcode's byte away from here.
+            self.reading_pure = False
         if name == self.defining:
             k = self.set_count.get(name, 0)
             if k:
@@ -503,11 +514,83 @@ class Assembler:
 
     def note_definition(self, node, operator, text, reads):
         """Record what the EQU or SET `node' read (note_read())."""
+        self.def_replay[node] = None if node in self.def_deps or \
+            not self.reading_pure else (operator, text, self.radix)
         deps = self.def_deps.setdefault(node, {})
         for dep, forward in reads.items():
             deps[dep] = deps.get(dep) or forward
         self.def_text.setdefault(node, f"{node[0]} {operator} {text.strip()}")
         self.def_line.setdefault(node, self.line_num)
+
+    def predict_forward_values(self, order, defs):
+        """What forward references should read next time through pass 1,
+        or None if that is `defs'.
+
+        `defs' holds every symbol's value at the end of this time through,
+        which is what a forward reference reads next time; so a chain of N
+        EQUs, each defined in terms of the next one down, settles one link
+        per time through and the source is read N times (500 deep: 92 s).
+        Instead each EQU and SET is evaluated again here, in `order' (each
+        after the definitions it reads), with what it reads standing for
+        the values just worked out, which settles the chain in one go.  It
+        is only a guess - a label may yet move - so the next time through
+        still computes every value, and pass 1 is over only when those are
+        what the forward references read.  A definition that cannot be
+        evaluated away from its line (def_replay) keeps the value it gave.
+        """
+        values = {}
+        for node in order:
+            value = None
+            replay = self.def_replay.get(node)
+            if replay is not None:
+                env = {}
+                for dep in self.def_deps[node]:
+                    used = self.resolve_node(dep)
+                    known = values.get(used, self.def_value.get(used))
+                    if known is None:
+                        known = defs.get(dep[0])
+                    if known is not None:
+                        env[dep[0]] = known
+                value = self.evaluate_away(replay, env)
+            values[node] = value if value is not None \
+                else self.def_value.get(node)
+        guessed = None
+        for (name, k), value in values.items():
+            if (value is not None and name in defs
+                    and k == self.set_count.get(name, 0)
+                    and self.value_key(value) != self.value_key(defs[name])):
+                guessed = guessed or dict(defs)
+                guessed[name] = value
+        return guessed
+
+    def evaluate_away(self, replay, env):
+        """The value of an EQU or SET operand, `replay' = (operator,
+        operand, radix), with each symbol it reads standing for its value
+        in `env' - or None if that reports an error."""
+        operator, text, radix = replay
+        saved = (self.symbols, self.prev_defs, self.pass_num, self.defining,
+                 self.reading, self.errors, self.radix)
+        # With no symbol defined, every one read is looked up in prev_defs.
+        self.symbols, self.prev_defs, self.pass_num = {}, env, 1
+        self.defining = self.reading = None
+        self.errors, self.radix = [], radix
+        try:
+            ev = self.eval_operand(text, allow_undefined=True)
+            failed = bool(self.errors)
+        finally:
+            (self.symbols, self.prev_defs, self.pass_num, self.defining,
+             self.reading, self.errors, self.radix) = saved
+        # What the symbol then stands for, as define_value() and SET store
+        # it (symbol_value()).
+        if failed or ev.kind == 'bad':
+            return None
+        if ev.kind == 'expr':
+            return ev
+        if operator != 'EQU':
+            return None if ev.kind == 'ext' else ExprValue(ev.value, ev.seg)
+        if ev.kind == 'ext':
+            return ExprValue(ev.value, ext=True, name=ev.name)
+        return ExprValue(ev.value, ev.seg, block=ev.block)
 
     def resolve_node(self, node):
         """The definition a read recorded as `node' reads, now that the
@@ -838,6 +921,7 @@ class Assembler:
 
         # Handle special symbols
         if expr == '$':
+            self.reading_pure = False
             return self.here()
 
         # Operators are split lowest-precedence-first (recursive descent) in
@@ -1004,6 +1088,7 @@ class Assembler:
         # Lower 2 bits: mode (0=abs, 1=prog rel, 2=data rel, 3=common rel)
         # Bit 5 (20H): defined; Bit 7 (80H): external
         if prefix_operand(expr, 'TYPE') is not None:
+            self.reading_pure = False
             arg = expr[4:].strip()
             if re.match(r'^[A-Za-z_@?][A-Za-z0-9_@?$.]*$', arg):
                 sym = self.symbols.get(arg.upper())
@@ -1018,6 +1103,7 @@ class Assembler:
 
         # Handle ## suffix (6-character truncation operator, implies external)
         if expr.endswith('##'):
+            self.reading_pure = False
             # Truncate symbol to 6 chars and look it up
             sym_name = expr[:-2][:6]
             sym = self.lookup_symbol(sym_name)
@@ -2880,6 +2966,7 @@ class Assembler:
                 return True
             reads = {} if self.pass_num == 1 else None
             self.reading = reads
+            self.reading_pure = True
             try:
                 ev = self.eval_operand(ops[0],
                                        allow_undefined=(self.pass_num == 1))
@@ -2895,6 +2982,9 @@ class Assembler:
             # the HIGH: `X EQU HIGH BUF' then `MVI A,X' loads the LOW byte
             # of BUF.)
             self.define_value(label, ev)
+            sym = self.symbols.get(label.upper())
+            if reads is not None and sym is not None and sym.defined:
+                self.def_value[(sym.name, 0)] = self.symbol_value(sym)
             return True
 
         # SET/DEFL/ASET - like EQU but redefinable
@@ -2924,6 +3014,7 @@ class Assembler:
                 reads = {} if self.pass_num == 1 else None
                 self.defining = name
                 self.reading = reads
+                self.reading_pure = True
                 try:
                     ev = self.eval_operand(ops[0],
                                            allow_undefined=(self.pass_num == 1))
@@ -2953,6 +3044,8 @@ class Assembler:
             sym.link_expr = link_expr
             sym.line = self.line_num
             self.set_count[name] = k
+            if self.pass_num == 1:
+                self.def_value[(name, k)] = self.symbol_value(sym)
             return True
 
         # DB - define bytes
@@ -4125,20 +4218,28 @@ class Assembler:
         #
         # The table must also settle: an EQU (or anything else) whose value
         # depends on a symbol defined further down reads, the first time,
-        # a 0 for that symbol, and from then on its value at the end of the
-        # previous time through (forward_value()) - which is also what pass
-        # 2 reads above the defining line.  A chain of N such forward
-        # references settles after N repeats, so the limit on repeats grows
-        # with the longest chain (it was a flat 64, and the 65th EQU of a
-        # longer chain was reported as circular).  A chain that comes back
-        # to where it started is an error, whether or not it ever settles:
-        # `X EQU Y / Y EQU X' settled on 0 and assembled silently.
+        # a 0 for that symbol, and from then on the value prev_defs gives it
+        # (forward_value()); pass 1 is over when that is the value the pass
+        # computes, which is also what pass 2 reads above the defining line.
+        # prev_defs is each symbol's value at the end of the previous time
+        # through, with each EQU and SET evaluated again in the order they
+        # read each other (predict_forward_values()), so a chain of forward
+        # references settles in one repeat.  After three such guesses that
+        # were not what the pass then computed, prev_defs is only the values
+        # at the end of the time before: a chain of N forward references
+        # then settles after N repeats, so the limit on repeats grows with
+        # the longest chain (it was a flat 64, and the 65th EQU of a longer
+        # chain was reported as circular).  A chain that comes back to where
+        # it started is an error, whether or not it ever settles: `X EQU Y /
+        # Y EQU X' settled on 0 and assembled silently.
         slack = 64  # repeats beyond the EQU chains: labels, JR promotion
         prev_symbols = {}  # Symbol table from previous iteration for forward refs
         prev_defs = {}
         prev_keys = None
         prev_cycle = None
         iteration = 0
+        guessed = misses = 0  # times a guess was read, and was wrong
+        guessing = False
         while True:
             self.pass1_iteration = iteration  # Track iteration for JR range checking
             self.prev_symbols = prev_symbols  # Make available for JR range checking
@@ -4158,6 +4259,8 @@ class Assembler:
             self.def_deps = {}
             self.def_text = {}
             self.def_line = {}
+            self.def_replay = {}
+            self.def_value = {}
             # Clear symbol definitions (but keep promoted_jr)
             # We need to rebuild symbol table each time
             # since addresses change when JR->JP promotion happens
@@ -4183,11 +4286,13 @@ class Assembler:
                 name for name in set(keys) | set(prev_keys)
                 if keys.get(name) != prev_keys.get(name))
             prev_keys = keys
+            if guessing and not settled:
+                misses += 1
 
             # A circular definition, once it has settled or shows up twice
             # (the first time through, conditional assembly on a symbol
             # still undefined may have read other lines).
-            cycle, depth, _ = self.definition_graph()
+            cycle, depth, order = self.definition_graph()
             if cycle and (settled or frozenset(cycle) == prev_cycle):
                 self.report_circular(cycle)
                 return False
@@ -4201,7 +4306,15 @@ class Assembler:
                     and settled):
                 break  # Stable - no new promotions, no symbol still moving
             iteration += 1
-            if iteration < slack + depth:
+            if iteration < slack + depth + guessed:
+                guess = self.predict_forward_values(order, prev_defs) \
+                    if misses < 3 and not cycle else None
+                guessing = guess is not None
+                if guessing:
+                    guessed += 1
+                    prev_defs = guess
+                    prev_keys = {name: self.value_key(ev)
+                                 for name, ev in guess.items()}
                 continue
             if unsettled:
                 for name in unsettled[:10]:

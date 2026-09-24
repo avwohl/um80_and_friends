@@ -290,3 +290,62 @@ def test_an_earlier_set_is_not_in_the_cycle():
                         "\tDB TOTAL,CNT\n\tEND\n")
     assert ok, _errors(asm)
     assert _bytes(rel) == [3, 3, 3]
+
+
+def test_long_forward_chain_is_settled_in_a_few_readings():
+    """Settling one link per reading of the source made a chain of N
+    forward EQUs cost N readings: 500 deep took 92 s.  Each reading now
+    evaluates the EQUs and SETs again in the order they read each other,
+    and the next one checks that guess."""
+    n = 500
+    lines = ["\tASEG", "\tORG 100H", "\tDW A0"]
+    lines += [f"A{i}\t{'SET' if i % 7 == 6 else 'EQU'} A{i + 1}+1"
+              for i in range(n)]
+    lines += [f"A{n}\tEQU 5", "\tDW A0", "\tEND"]
+    ok, asm, rel = _asm("\n".join(lines) + "\n")
+    assert ok, _errors(asm)[:3]
+    assert _bytes(rel) == [(5 + n) & 0xFF, (5 + n) >> 8] * 2
+    assert asm.pass1_iteration <= 2
+
+
+def test_a_guess_that_moves_a_label_is_checked():
+    """DS of a chain's value moves L1, which ends another chain: the
+    first guess at B0 used L1 where it was before the DS grew."""
+    lines = ["\tCSEG", "\tDW B0", "\tDS A0", "L1:\tNOP"]
+    lines += [f"B{i}\tEQU B{i + 1}+1" for i in range(40)] + ["B40\tEQU L1"]
+    lines += [f"A{i}\tEQU A{i + 1}+1" for i in range(40)]
+    lines += ["A40\tEQU 10", "\tDW A0,B0,L1", "\tEND"]
+    linker = _link("\n".join(lines) + "\n")
+    l1 = 0x100 + 2 + 50
+    out = linker.output
+    assert (out[0] | out[1] << 8) == l1 + 40
+    end = 2 + 50 + 1
+    assert list(out[end:end + 6]) == [50, 0, (l1 + 40) & 0xFF, (l1 + 40) >> 8,
+                                      l1 & 0xFF, l1 >> 8]
+
+
+def test_guesses_through_dollar_radix_externals_and_link_time_values():
+    """$ is read where the EQU is, an operand under .RADIX 16 in hex, an
+    alias of an external and HIGH of a relocatable value stay what they
+    are when the chain above them is guessed."""
+    lines = ["\tASEG", "\tORG 100H", "\tDW C0", "\tDW D0"]
+    lines += [f"C{i}\tEQU C{i + 1}+1" for i in range(20)]
+    lines += ["C20\tEQU $+C21", "\t.RADIX 16", "C21\tEQU D0+10", "\t.RADIX 10"]
+    lines += [f"D{i}\tEQU D{i + 1}+10" for i in range(20)]
+    lines += ["D20\tEQU 1", "\tEND"]
+    ok, asm, rel = _asm("\n".join(lines) + "\n")
+    assert ok, _errors(asm)
+    d0 = 1 + 200
+    c0 = 0x104 + d0 + 0x10 + 20
+    assert _bytes(rel) == [c0 & 0xFF, c0 >> 8, d0, 0]
+
+    src = ["\tEXTRN EXA", "\tCSEG", "\tLXI H,X0", "\tMVI A,H0"]
+    src += [f"X{i}\tEQU X{i + 1}+1" for i in range(30)] + ["X30\tEQU EXA"]
+    src += [f"H{i}\tEQU H{i + 1}" for i in range(30)] + ["H30\tEQU HIGH BUF"]
+    src += ["\tDSEG", "\tDS 300H", "BUF:\tDS 1", "\tEND"]
+    other = "\tPUBLIC EXA\n\tCSEG\n\tDS 20H\nEXA:\tNOP\n\tEND\n"
+    linker = _link("\n".join(src) + "\n", other)
+    exa = 0x100 + 5 + 0x20
+    buf = 0x100 + 5 + 0x21 + 0x300
+    assert list(linker.output[:5]) == [0x21, (exa + 30) & 0xFF,
+                                       (exa + 30) >> 8, 0x3E, buf >> 8]

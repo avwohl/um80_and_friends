@@ -80,11 +80,17 @@ evaluates them. The format was established by running the genuine M80 and L80
   absolute 0: MP/M II's SUB utility, compiled from `SUB.PLM`
   (`declare rbuff(1) byte at (.minimum$buffer)`), stored its command buffer
   at address 0000H. Pass 1 is now repeated until the symbol table stops
-  changing, and from its second time on a forward reference reads the
-  value from the end of the time before, which is what pass 2 reads there
-  too — so X is 6. A chain of N such forward references needs N repeats,
-  and the limit grows with the longest chain in the source (plus 64 for
-  labels moved by forward sizes and JR promotion). EQUs and SETs defined in
+  changing, and a forward reference reads what the symbol's definition will
+  give: after each time through, the `EQU`s and `SET`s are evaluated again
+  in the order they read each other, and the next time through checks that
+  guess, reading the whole source again. Pass 1 is over when the values it
+  computes are the ones the forward references read, which is what pass 2
+  reads there too — so X is 6. A chain of 500 forward `EQU`s is read twice,
+  in 0.6 s; settled one link per time through, it took 92 s. (After three
+  wrong guesses a forward reference reads the value from the end of the
+  time before, one link per time through, and the limit on repeats grows
+  with the longest chain in the source, plus 64 for labels moved by forward
+  sizes and JR promotion.) EQUs and SETs defined in
   terms of each other are an error naming the cycle — "Cannot resolve the
   value of 'X': it is defined in terms of itself (X EQU Y, Y SET X)" —
   whether or not some value satisfies them, and so is a symbol whose value
