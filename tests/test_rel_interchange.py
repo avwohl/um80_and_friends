@@ -70,6 +70,17 @@ M80_XA = bytes.fromhex(
 M80_AX = bytes.fromhex(
     "84934c25000013503009680003340000960020501008c002034558549c0000009e")
 
+# \tcseg / \tdb 0 / \tcommon /blk1/ / \tdw c2 / \tdb 7 / \tcommon /blk2/ /
+# \tdb 9 / c2:\tds 1 / \tend - M80 selects BLK2 for the DW and does not
+# select BLK1 back; `common /blk2/' is then a set-location alone.
+M80_XCW = bytes.fromhex(
+    "84934c2280601109312cc6280401109312cca5000013501009680000020c424c4b31"
+    "97800041884989665c04000f2f000004cbc080270000009e")
+# The same with \tmvi a,low(c2) / \tmvi b,7 in BLK1.
+M80_XC = bytes.fromhex(
+    "84934c2280801109312cc6280401109312cca5000013501009680000020c424c4b31"
+    "9780000fa0c424c4b328910c0c04022241048890404000603cbc0000132f02009c00"
+    "00009e")
 # um80 0.3.34 on \textrn ext / \tcseg / \tnop / \tcall ext / \tnop /
 # \tcall ext / \tlxi h,ext / \tend: one chain through untyped words, each
 # the offset of the previous reference in CSEG, and item 14 without an
@@ -244,6 +255,20 @@ def test_old_um80_objects_still_link():
     ext = 0x100 + 0x123
     assert _word(linker.output, 0) == ext
     assert _word(linker.output, 3) == ext + 3
+
+
+def test_m80_operand_in_another_common_block():
+    """Selecting a COMMON block (item 1) says what a COMMON-relative value
+    is relative to; LINK-80 moves where bytes load only at a set-location.
+    ul80 loaded the rest of BLK1 into BLK2 once M80 selected BLK2 for an
+    operand (00 00 00 00 0D 01).  LINK-80: 00 05 01 07 09 00 and
+    00 3E 06 06 07 09 00 (the last byte is C2's DS)."""
+    with tempfile.TemporaryDirectory() as d:
+        linker = _link(d, ("XCW", M80_XCW))
+    assert bytes(linker.output[:5]) == bytes.fromhex("0005010709")
+    with tempfile.TemporaryDirectory() as d:
+        linker = _link(d, ("XC", M80_XC))
+    assert bytes(linker.output[:6]) == bytes.fromhex("003e06060709")
 
 
 def test_um80_0334_chain_through_untyped_words():

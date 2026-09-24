@@ -248,7 +248,11 @@ evaluates them. The format was established by running the genuine M80 and L80
   block (`DB`, FORTRAN's BLOCK DATA) went into the segment before the
   `COMMON` directive — overwriting the code after it — and ul80 dropped
   initialized COMMON data; both now land in the block, and the bytes a module
-  loads there are in the image. A `.PRL` header now reserves memory for
+  loads there are in the image. ul80 loads into the block selected at the
+  last set-location item, as LINK-80 does, not the one selected last: M80
+  selects another block for an operand inside a COMMON block and does not
+  select back (`COMMON /BLK1/` / `DW C2` / `DB 7`, C2 in BLK2), and ul80
+  loaded the rest of BLK1 into BLK2. A `.PRL` header now reserves memory for
   COMMON, which lies past the image: MP/M allocated none.
 - um80 assembler: with `--aseg`, code before the first `ORG` was loaded by
   the linker into CSEG, at the program base, although its labels are

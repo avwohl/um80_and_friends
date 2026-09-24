@@ -407,7 +407,11 @@ M80+ul80, um80+L80, um80+ul80):
 - each named COMMON block is placed on its own; a COMMON-relative word,
   extension value, public, chain head or set-location is preceded by
   special item 1 when it refers to another block than the one selected last;
-  bytes assembled into a COMMON block load there (DB, FORTRAN's BLOCK DATA);
+  bytes assembled into a COMMON block load there (DB, FORTRAN's BLOCK DATA).
+  Bytes load into the block that was selected at the last set-location, in
+  ul80 as in L80: M80 selects another block for an operand inside a COMMON
+  block and does not select back, and what follows still loads into the
+  first;
 - a `.REL` holding several modules (a LIB-80 library such as FORTRAN-80's
   FORLIB.REL) loads every one of them, and `ulib80 -c` stores each as a
   module of its own;

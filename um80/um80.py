@@ -1538,8 +1538,10 @@ class Assembler:
     def select_for_load(self):
         """Before loading into a COMMON block, make it the selected one again.
 
-        A reference to another block selects that one, and LINK-80 loads
-        into the selected block; so select this one back and say where.
+        A reference to another block selects that one.  LINK-80 goes on
+        loading into the block selected at the last set-location, so this
+        is not needed for the load (M80 does not select back), but it
+        keeps the selection and the load in step.
         """
         if (self.pass_num == 2 and self.current_common is not None
                 and self.rel_common != self.current_common):

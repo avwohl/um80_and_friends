@@ -193,7 +193,14 @@ class Linker:
 
         current_loc = 0  # Position within current segment
         current_seg = ADDR_PROGRAM_REL  # Default to code segment
-        current_block = None  # COMMON block selected by special item 1
+        # The COMMON block special item 1 selected last, which a
+        # COMMON-relative value refers to; and the block bytes load into,
+        # the one selected when the location was last set into COMMON.
+        # LINK-80 moves loading only at a set-location item: MACRO-80
+        # selects another block for an operand inside a COMMON block and
+        # does not select back, and the bytes after it still load where
+        # they were loading.
+        current_block = load_block = None
         first_abs_data = False  # Track if actual data bytes written to ASEG
         any_item = False
         more = False
@@ -203,8 +210,12 @@ class Linker:
         seg_buffers = {}  # segment key -> bytearray
 
         def seg_key(seg=None):
-            """The buffer key of segment type `seg' (default: the current)."""
-            seg = current_seg if seg is None else seg
+            """The buffer key of segment type `seg', a COMMON-relative value
+            being in the block selected last; by default, where bytes load
+            now."""
+            if seg is None:
+                return (ADDR_COMMON_REL, load_block) \
+                    if current_seg == ADDR_COMMON_REL else current_seg
             return (ADDR_COMMON_REL, current_block) if seg == ADDR_COMMON_REL \
                 else seg
 
@@ -303,6 +314,8 @@ class Linker:
             elif item_type == 'SET_LOC':
                 a_field = item[1]
                 addr_type, value = a_field
+                if addr_type == ADDR_COMMON_REL:
+                    load_block = current_block
                 # If emit_ds_zeros is enabled, fill gaps with zeros
                 # This handles DS directives which advance without emitting bytes
                 if self.emit_ds_zeros and value > 0:
@@ -351,8 +364,8 @@ class Linker:
                 module.commons[sym_name] = size
 
             elif item_type == 'SELECT_COMMON':
-                # What COMMON-relative items refer to, and load into, from
-                # here on.
+                # What COMMON-relative items refer to from here on (bytes
+                # load into it after the next set-location).
                 current_block = item[1]
 
             elif item_type == 'REQUEST_LIB':
