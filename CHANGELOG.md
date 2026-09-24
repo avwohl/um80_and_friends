@@ -292,6 +292,11 @@ evaluates them. The format was established by running the genuine M80 and L80
   loads at 0100H; it starts at the origin, as LINK-80 writes it (the same
   384 bytes as L80's for the example). Give `-p` for a raw image that
   starts elsewhere, e.g. a ROM at E000H.
+- ul80 linker: the gap an `ORG` or `DS` leaves in a module's absolute code
+  was written into the image as zeros, over whatever another module had
+  loaded there: a CSEG module at 0100H, then a module loading absolute
+  bytes at 0080H and 0300H, came out with the CSEG zeroed, without a
+  message. Only the bytes a module loads go into the image, as in LINK-80.
 - ul80 linker: in a `.PRL`/`.SPR` bitmap, a reference to `__END__`,
   `__BSS_START` or `__BSS_END`, or to a `PUBLIC` alias of one, was never
   marked: the linker computes them as absolute values, but they are program

@@ -80,6 +80,10 @@ class Module:
         # COMMON block); a COMMON block is otherwise uninitialized.
         self.common_data = {}
 
+        # The addresses the module loaded absolute (ASEG) bytes at: a DS or
+        # ORG gap between them loads nothing.
+        self.abs_loaded = set()
+
         # Item 14's A-field (the start address), None when the module was
         # written by um80 up to 0.3.48, which left the A-field out.
         self.entry = None
@@ -227,11 +231,11 @@ class Linker:
             buf[current_loc] = value
             if loaded and current_seg == ADDR_COMMON_REL:
                 module.common_data.setdefault(seg_key(), set()).add(current_loc)
-            if loaded and current_seg == ADDR_ABSOLUTE \
-                    and current_loc < module.code_start:
+            if loaded and current_seg == ADDR_ABSOLUTE:
+                module.abs_loaded.add(current_loc)
                 # Loaded below where ASEG was thought to start: `ORG 200H /
                 # DB 1 / ORG 180H / DB 4' lost the 4.
-                module.code_start = current_loc
+                module.code_start = min(module.code_start, current_loc)
 
         # Track relocations with segment-relative offsets before combining
         pending_relocations = []  # (seg key, seg_offset, reloc_type, block)
@@ -829,10 +833,18 @@ class Linker:
             if addr_end > hi:
                 hi = addr_end
 
-        def _placed(module, seg, start, end):
-            """Buffer offsets of `module' that go into the image."""
+        def _placed(module, seg, start, end, loaded=False):
+            """Buffer offsets of `module' that the image covers, or with
+            `loaded', that it takes bytes from.  Of ASEG that is only what
+            the module loaded: the gap an ORG or DS leaves is zeros in the
+            buffer, and those went over any code another module had there
+            (a CSEG at 0100H, after it a module loading at 0080H and
+            0300H)."""
             if isinstance(seg, tuple):
                 return [start + p for p in sorted(module.common_data.get(seg, ()))
+                        if start + p < end]
+            if seg == ADDR_ABSOLUTE and loaded:
+                return [start + p for p in sorted(module.abs_loaded)
                         if start + p < end]
             begin = max(start, module.code_start) if seg == ADDR_ABSOLUTE else start
             return range(begin, end)
@@ -861,7 +873,7 @@ class Linker:
 
         for module in self.modules:
             for seg, start, end in self._segment_ranges(module):
-                for o in _placed(module, seg, start, end):
+                for o in _placed(module, seg, start, end, loaded=True):
                     out = self._buf_offset_addr(module, o) - self.output_base
                     if 0 <= out < len(self.output):
                         self.output[out] = module.code[o]
