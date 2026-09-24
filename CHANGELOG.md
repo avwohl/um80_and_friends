@@ -105,10 +105,22 @@ evaluates them. The format was established by running the genuine M80 and L80
 - um80 assembler: `AND`, `OR`, `XOR`, `SHL`, `SHR` or a comparison applied to a
   relocatable or external value is an error when the result is assembled into
   an instruction or `DB`/`DW` (M80 flags these `R`, and DRI's RMAC `E`). LINK-80
-  has no such operators, and the offset-based value was silently wrong. `IF`,
-  `DS`, `ORG` and `EQU` evaluate such expressions as before, and absolute code
-  (`ASEG`, `--aseg`) is unaffected: HIGH/LOW of an absolute value is a constant
-  and no extension item is written.
+  has no such operators, and the offset-based value was silently wrong.
+  Absolute code (`ASEG`, `--aseg`) is unaffected: HIGH/LOW of an absolute
+  value is a constant and no extension item is written.
+- um80 assembler: a directive that uses its operand while assembling — `ORG`,
+  `DS`, `IF`/`IFE`/`COND`, `REPT`, `RST`, `IM`, `BIT`, `END`, `.RADIX` and
+  the macro `%` operator — refuses a value only the linker knows: an
+  external, `HIGH`/`LOW` or another link-time expression of a relocatable
+  value, or `AND`/`OR`/... of one (M80 flags all of these `R`). The value
+  it used was computed from segment offsets: `DS 100H-LOW($)` in a CSEG
+  aligned to the start of the segment rather than to a page, and
+  `X EQU LOW(LAB+5)` / `DS X` reserved the low byte of an offset. `IF 5-EXT`
+  and `REPT EXT+EXT`, errors in 0.3.48, would otherwise have become 0. A
+  relocatable address used as a number is still its offset (M80 flags
+  `IF LAB` and `DS LAB` too; um80 keeps accepting them), and `ORG $+10`
+  still moves within the segment; `ORG` to an address in another segment is
+  an error.
 - um80 assembler: a `PUBLIC` symbol equated to a link-time expression is an
   error — a `.REL` public carries an address or a constant.
 

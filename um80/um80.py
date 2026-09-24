@@ -1263,6 +1263,39 @@ class Assembler:
         self.errors.append(AssemblerError(
             f"{name}, used at line {self.line_num}: {why}", line))
 
+    def number_operand(self, text, directive, allow_undefined=False):
+        """Evaluate the operand of a directive that needs a number now.
+
+        ORG, DS, IF, REPT, RST, ... use the value while assembling, so it
+        cannot be one only the linker knows: an external, HIGH/LOW or any
+        other link-time expression of a relocatable value, or AND/OR/... of
+        one.  The assembly-time value of those is computed from segment
+        offsets and was silently used (`DS 100H-LOW($)' aligned to the
+        segment, not to the address); M80 flags them 'R'.  A relocatable
+        address is still taken as its offset, as before.  Reported in pass
+        2; the ExprValue is returned either way.
+        """
+        ev = self.eval_operand(text, allow_undefined)
+        if ev.kind not in ('abs', 'rel') and self.pass_num == 2:
+            self.error(f"{directive} needs a value the assembler knows, but "
+                       f"'{text.strip()}' {self.link_time_reason(ev)}")
+        return ev
+
+    @staticmethod
+    def link_time_reason(ev):
+        """Why `ev' has no value at assembly time, for a message."""
+        if ev.kind == 'ext':
+            return f"is the external symbol {ev.name}" + (
+                f"{ev.value:+d}" if ev.value else '')
+        if ev.kind == 'bad':
+            how = f"applies {ev.why} to a relocatable or external value"
+            if ev.origin:
+                how += f" (in {ev.origin[0]}, line {ev.origin[1]})"
+            return how
+        if any(item[0] == EXT_ITEM_SYMBOL for item in ev.rpn or ()):
+            return "depends on an external symbol"
+        return "depends on where the linker puts a segment"
+
     def emit_word_operand(self, ev):
         """Emit a 16-bit operand (address of JMP/CALL/LXI, DW, ...)."""
         if ev.kind in ('abs', 'rel'):
@@ -1599,7 +1632,7 @@ class Assembler:
             if len(ops) != 1:
                 self.error("RST requires one operand")
                 return True
-            val, seg, ext, name = self.parse_expression(ops[0])
+            val = self.number_operand(ops[0], 'RST').value
             if val > 7:
                 self.error("RST operand must be 0-7")
                 return True
@@ -2108,7 +2141,7 @@ class Assembler:
             if len(ops) != 2:
                 self.error(f"{operator} requires two operands")
                 return True
-            bit_val, seg, ext, name = self.parse_expression(ops[0])
+            bit_val = self.number_operand(ops[0], operator).value
             if bit_val < 0 or bit_val > 7:
                 self.error(f"Bit number must be 0-7: {bit_val}")
                 return True
@@ -2348,7 +2381,7 @@ class Assembler:
             if len(ops) != 1:
                 self.error("RST requires one operand")
                 return True
-            val, seg, ext, name = self.parse_expression(ops[0])
+            val = self.number_operand(ops[0], 'RST').value
             # Accept 0-7 or 0,8,16,24,32,40,48,56
             if val > 7:
                 if val not in (0, 8, 16, 24, 32, 40, 48, 56):
@@ -2409,7 +2442,7 @@ class Assembler:
             if len(ops) != 1:
                 self.error("IM requires one operand")
                 return True
-            val, seg, ext, name = self.parse_expression(ops[0])
+            val = self.number_operand(ops[0], 'IM').value
             if val not in (0, 1, 2):
                 self.error(f"Invalid interrupt mode: {val}")
                 return True
@@ -2429,10 +2462,14 @@ class Assembler:
             if len(ops) != 1:
                 self.error("ORG requires one operand")
                 return True
-            val, expr_seg_type, ext, name = self.parse_expression(ops[0])
-            if ext:
-                self.error("Cannot use external in ORG")
-                return True
+            ev = self.number_operand(ops[0], 'ORG')
+            val = ev.value & 0xFFFF
+            if ev.kind == 'rel' and ev.seg != self.seg_type \
+                    and self.pass_num == 2:
+                # `ORG $+10' moves within the segment; an address in
+                # another segment is no place in this one (M80: 'R').
+                self.error(f"ORG to '{ops[0].strip()}', an address in "
+                           f"another segment")
             self.loc = val
             # Track first ORG as segment origin, but ONLY for ASEG (absolute segment).
             # For relocatable segments (CSEG/DSEG), ORG just sets the location counter
@@ -2586,10 +2623,7 @@ class Assembler:
             if len(ops) < 1:
                 self.error("DS requires size operand")
                 return True
-            val, seg, ext, name = self.parse_expression(ops[0])
-            if ext:
-                self.error("Cannot use external in DS")
-                return True
+            val = self.number_operand(ops[0], operator).value & 0xFFFF
             if len(ops) >= 2:
                 fill = self.eval_operand(ops[1])
                 if fill.kind == 'bad':
@@ -2700,7 +2734,7 @@ class Assembler:
             saved_radix = self.radix
             self.radix = 10
             try:
-                val, _, _, _ = self.parse_expression(ops[0])
+                val = self.number_operand(ops[0], '.RADIX').value
             finally:
                 self.radix = saved_radix
             if val < 2 or val > 16:
@@ -2754,11 +2788,8 @@ class Assembler:
         # END - end of source
         if operator == 'END':
             if ops:
-                val, seg, ext, name = self.parse_expression(ops[0])
-                if ext:
-                    self.error("Cannot use external as entry point")
-                else:
-                    self.entry_point = (val, seg)
+                ev = self.number_operand(ops[0], 'END')
+                self.entry_point = (ev.value & 0xFFFF, ev.seg)
             return True
 
         # Conditional assembly
@@ -2766,7 +2797,8 @@ class Assembler:
             if self.cond_false_depth > 0:
                 self.cond_false_depth += 1
             else:
-                val, _, _, _ = self.parse_expression(ops[0] if ops else '0')
+                val = self.number_operand(ops[0] if ops else '0',
+                                          operator).value
                 if val == 0:
                     self.cond_false_depth = 1
             self.cond_stack.append(operator)
@@ -2776,7 +2808,8 @@ class Assembler:
             if self.cond_false_depth > 0:
                 self.cond_false_depth += 1
             else:
-                val, _, _, _ = self.parse_expression(ops[0] if ops else '0')
+                val = self.number_operand(ops[0] if ops else '0',
+                                          operator).value
                 if val != 0:
                     self.cond_false_depth = 1
             self.cond_stack.append(operator)
@@ -2920,7 +2953,8 @@ class Assembler:
             if self.cond_false_depth > 0:
                 self.cond_false_depth += 1
             else:
-                val, _, _, _ = self.parse_expression(ops[0] if ops else '0')
+                val = self.number_operand(ops[0] if ops else '0',
+                                          operator).value
                 if val == 0:
                     self.cond_false_depth = 1
             self.cond_stack.append(operator)
@@ -2990,7 +3024,7 @@ class Assembler:
             if not ops:
                 self.error("REPT requires a count")
                 return True
-            count, _, _, _ = self.parse_expression(ops[0])
+            count = self.number_operand(ops[0], 'REPT').value & 0xFFFF
             self.repeat_stack.append(('REPT', count, [], None, label))
             return True
 
@@ -3331,7 +3365,8 @@ class Assembler:
                     j += 1
                 expr = line[i + 1:j]
                 if expr:
-                    val, _, _, _ = self.parse_expression(expr, allow_undefined=True)
+                    val = self.number_operand(expr, 'The % operator',
+                                              allow_undefined=True).value & 0xFFFF
                     # Convert to current radix
                     if self.radix == 16:
                         result.append(f'{val:X}H')
