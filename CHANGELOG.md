@@ -222,10 +222,15 @@ evaluates them. The format was established by running the genuine M80 and L80
   found and stayed 0000H. And a word in a chain was marked in a `.PRL`/`.SPR`
   bitmap by the type of the link it held (program relative, for a link to
   another reference) rather than by the value filled in: two `CALL X` of an
-  absolute X marked the second. An object from um80 0.3.34 or earlier,
-  recognised by its item 14, is still read the old way: those chained an
-  external's references through untyped words, each the offset of the
-  previous reference in the same segment.
+  absolute X marked the second. An object from um80 0.3.48 or earlier,
+  recognised by its item 14 (no A-field), is still read the old way, an
+  absolute link being an offset in the segment of the word holding it.
+  That matters only for um80 0.2.0 to 0.3.34, which chained all the
+  references to an external through untyped words, each the offset of the
+  previous reference; 0.3.35 to 0.3.48 wrote a chain of one per reference,
+  whose link is 0 however it is read. (Where the references are in more
+  than one segment, a link does not say which segment it is in; see Known
+  issues.)
 - ul80 linker: special item 12 (chain address) was read and never applied.
   FORTRAN-80 writes every forward reference — a jump to a label further
   down, a FORMAT string, a constant after the code — as a chain through the
@@ -445,6 +450,21 @@ evaluates them. The format was established by running the genuine M80 and L80
   exactly 0 or 1 page when MP/M relocates the program — `HIGH(A)+HIGH(B)`,
   `200H-LAB`, `LAB*2` — cannot be expressed in the bitmap and is an error for
   `--prl`/`--spr`; it is linked normally for `.COM` and `.HEX`.
+
+### Known issues
+- ul80 linker: an object from um80 0.2.0 to 0.3.34 that refers to one
+  external from more than one segment does not link right, with this ul80
+  or any earlier one. Those releases chained all the references to an
+  external through untyped words, each holding the offset of the previous
+  reference in whichever segment that one was in, and the link does not
+  say which; ul80 follows each link in the segment of the word holding
+  it, so the chain goes astray at the first link that crosses to another
+  segment and the references before it keep their link values.
+  `EXTRN EXT` / `CSEG` / `CALL EXT` / `DSEG` / `DW EXT` assembled by um80
+  0.3.34 links to `CD 00 00` for the `CALL` (the `DW` gets EXT). (0.2.0 to
+  0.3.20 also put a module's DSEG bytes in its CSEG stream; ul80 0.3.48
+  and this one fill different wrong words there.) Assemble such a source
+  again with a current um80.
 
 ## [0.3.48] - 2026-09-24
 

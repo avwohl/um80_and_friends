@@ -273,10 +273,11 @@ def test_m80_operand_in_another_common_block():
 
 
 def test_um80_0334_chain_through_untyped_words():
-    """um80 0.2.1 to 0.3.34 chained an external's references through
-    untyped words holding the previous reference's offset in the same
-    segment.  Reading an absolute link as an ASEG address (as M80's is)
-    filled only the head: 00 CD 00 00 00 CD 02 00 21 1B 01."""
+    """um80 0.2.0 to 0.3.34 chained an external's references through
+    untyped words holding the previous reference's offset (here all in
+    CSEG, where ul80 looks for it).  Reading an absolute link as an ASEG
+    address (as M80's is) filled only the head: 00 CD 00 00 00 CD 02 00 21
+    1B 01."""
     with tempfile.TemporaryDirectory() as d:
         linker = _link(d, ("M2", V0334_M2), ("D", V0334_D))
     assert linker.modules[0].legacy_um80

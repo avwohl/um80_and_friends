@@ -193,7 +193,10 @@ assembles into a COMMON block are loaded there.
 A chain (the references to an external, or a FORTRAN-80 forward reference
 closed by special item 12) is followed through every word by the type of its
 links; an absolute link is an address in ASEG, except in an object from um80
-0.3.34 or earlier, where it is an offset in the segment of the word holding it.
+0.3.48 or earlier, where it is an offset in the segment of the word holding it.
+(um80 0.2.0 to 0.3.34 chained an external's references through such untyped
+links across segments, which cannot be followed where they cross: assemble
+such an object again.)
 .IP \(bu 2
 If a module defines the global $MEMRY, the word there is set to the first free
 address after the data and COMMON, as LINK-80 sets it (FORTRAN-80's library
