@@ -45,8 +45,10 @@ class Module:
         # External references (chains to be fixed up)
         self.externals = {}  # name -> list of (buf_offset of the chain head, segment key)
 
-        # Internal chains (forward references resolved within module)
-        self.chains = {}  # offset -> list of offsets to fix
+        # Special item 12 (chain address): (buf_offset of the chain head,
+        # segment key, offset) - every word of the chain gets the address
+        # of that offset in that segment, where the item appeared.
+        self.chain_addresses = []
 
         # Common blocks
         self.commons = {}  # name -> size
@@ -218,7 +220,7 @@ class Linker:
         # Track relocations with segment-relative offsets before combining
         pending_relocations = []  # (seg key, seg_offset, reloc_type, block)
         pending_externals = []  # (name, seg key, head_offset)
-        pending_chains = []  # (chain key, head_offset, cur key, cur_offset)
+        pending_chains = []  # item 12: (chain key, head, cur key, cur_offset)
         pending_exprs = []  # (seg key, seg_offset, size, items)
         pending_offsets = []  # (seg key, seg_offset, sign, a_field, block)
         expr_items = []  # extension items read since the last store
@@ -326,7 +328,8 @@ class Linker:
                         module.code_start = value
 
             elif item_type == 'CHAIN_ADDRESS':
-                # Internal forward reference chain - store segment-relative
+                # A forward reference (FORTRAN-80 writes every one this
+                # way): the chain gets the current location's address.
                 a_field = item[1]
                 addr_type, head = a_field
                 pending_chains.append((seg_key(addr_type), head, seg_key(),
@@ -468,13 +471,14 @@ class Linker:
                                   seg_buf_start.get(ADDR_ABSOLUTE, len(code_bytes)))
             module.externals[sym_name].append((buf_head, norm(key)))
 
-        # Convert pending chains to buffer offsets
+        # Item 12: the chain head as a buffer offset; the address it gets
+        # stays a segment and an offset until the segments are placed.
         for chain_key, head, cur_key, cur_offset in pending_chains:
-            buf_head = buf_offset(chain_key, head, len(code_bytes))
-            buf_cur = buf_offset(cur_key, cur_offset, len(code_bytes))
-            if buf_head not in module.chains:
-                module.chains[buf_head] = []
-            module.chains[buf_head].append((buf_cur, norm(chain_key)))
+            if chain_key == ADDR_ABSOLUTE and head == 0:
+                continue  # an empty chain, as for an external
+            module.chain_addresses.append(
+                (buf_offset(chain_key, head, len(code_bytes)), norm(cur_key),
+                 cur_offset))
 
         if expr_items:
             self.error(f"Module {module.name}: link-time expression has no "
@@ -857,6 +861,15 @@ class Linker:
                 for head, _ in refs:
                     self._fill_chain(module, mod_idx, head, target_addr, moves)
 
+            # Item 12: the address of where the item appeared, in every
+            # word of the chain (ul80 read the item and never applied it,
+            # so FORTRAN-80's forward jumps kept their chain links).
+            for head, key, offset in module.chain_addresses:
+                seg_type, block = key if isinstance(key, tuple) else (key, None)
+                value = self.relocate_value(module, offset, seg_type, block)
+                self._fill_chain(module, mod_idx, head, value & 0xFFFF,
+                                 seg_type != ADDR_ABSOLUTE)
+
         # Apply relocations for program-relative, data-relative, and common-relative addresses
         for mod_idx, module in enumerate(self.modules):
             for buf_offset, seg_type, _, block in module.relocations:
@@ -892,7 +905,32 @@ class Linker:
         # Fields computed from extension link items, last: every segment is
         # placed and every symbol known, and each field's placeholder bytes
         # are already in the image to be overwritten.
-        return self.apply_expressions()
+        ok = self.apply_expressions()
+        self.store_memry()
+        return ok
+
+    def store_memry(self):
+        """Store the first free address in the word at $MEMRY, as LINK-80.
+
+        If a module defines the global $MEMRY, LINK-80 3.44 overwrites the
+        word there with the address of the first byte after the data area
+        (its /E summary prints the same number): FORTRAN-80's FORLIB
+        (module DSKDRV) allocates its file buffers from it.  Probed with
+        L80: it is written whatever the module loaded there, in DSEG or
+        CSEG, and it is the end of the data area even when /D puts that
+        below the program.  ul80 puts data and COMMON after the code, so
+        that is __END__.  The value is a program address: it moves in a
+        .PRL.
+        """
+        if '$MEMRY' not in self.globals or not self.globals['$MEMRY'][3]:
+            return
+        addr = self._global_address('$MEMRY')[0]
+        end = self.globals['__END__'][1] & 0xFFFF
+        out = addr - self.output_base
+        if 0 <= out and out + 1 < len(self.output):
+            self.output[out] = end & 0xFF
+            self.output[out + 1] = end >> 8
+            self.external_relocations.append(out)
 
     # How a value moves when MP/M loads a page-relocatable image P pages
     # higher, for the bitmap in save_prl().  A value's `move' m says it

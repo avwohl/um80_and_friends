@@ -179,6 +179,17 @@ evaluates them. The format was established by running the genuine M80 and L80
   bitmap by the type of the link it held (program relative, for a link to
   another reference) rather than by the value filled in: two `CALL X` of an
   absolute X marked the second.
+- ul80 linker: special item 12 (chain address) was read and never applied.
+  FORTRAN-80 writes every forward reference - a jump to a label further
+  down, a FORMAT string, a constant after the code - as a chain through the
+  words that need the address and then item 12 where the address is, and
+  the words kept their chain links. And LINK-80 stores the address of the
+  first free byte after the program's data in the word at `$MEMRY` when a
+  module defines that global (FORLIB's DSKDRV allocates its file buffers
+  from it); ul80 left it 0000H. A 10-line DO/WRITE/FORMAT program compiled
+  with F80 and linked with FORLIB differed from L80's
+  `/P:100/D:19D3,T,FORLIB/S` in 10 bytes and stopped with `**DZ**`; its
+  image is now byte-identical and it prints `385 128.333`.
 - ul80 linker, ulib80: a `.REL` holding several modules — a LIB-80 library
   such as FORTRAN-80's FORLIB.REL, 106 modules — loaded only the first, and
   `ulib80 -c` stored it as one module. Every module is loaded, and ulib80

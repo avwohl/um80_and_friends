@@ -24,7 +24,8 @@ Control  A-field  B-field  Meaning
 9        A        -        External + offset (add A to the word here)
 10       A        -        Define Data area size
 11       A        -        Set location counter
-12       A        -        Chain address (A=head of chain)
+12       A        -        Chain address (A=head of a chain; every word
+                           of it gets the current location's address)
 13       A        -        Define program size (MACRO-80 types A program
                            relative; LINK-80 3.44 writes no output when
                            it is absolute)
