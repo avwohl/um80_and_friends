@@ -2614,7 +2614,9 @@ class Assembler:
             if self.pass_num == 2:
                 # ORG sets the location counter within the current segment.
                 # For relocatable segments (CSEG/DSEG), the segment type doesn't change.
-                # Only use ASEG if we're actually in ASEG.
+                # Only use ASEG if we're actually in ASEG.  It replaces the
+                # item an ASEG directive just before it held back.
+                self.output.drop_deferred_location()
                 self.select_common(self.current_common)
                 self.output.write_set_location(self.seg_type, val)
             return True
@@ -2783,6 +2785,7 @@ class Assembler:
                 self.current_seg = 'CSEG'
                 self.current_common = None
                 if self.pass_num == 2:
+                    self.output.drop_deferred_location()
                     self.output.write_set_location(self.seg_type, self.loc)
             return True
         if operator == 'DSEG':
@@ -2792,16 +2795,21 @@ class Assembler:
                 self.current_seg = 'DSEG'
                 self.current_common = None
                 if self.pass_num == 2:
+                    self.output.drop_deferred_location()
                     self.output.write_set_location(self.seg_type, self.loc)
             return True
         if operator == 'ASEG':
             if self.current_seg != 'ASEG' or self.current_common is not None:
-                # Emit SET_LOC so the linker loads into this segment again
-                # (leaving a COMMON block too, which did not set one).
+                # The linker has to load into ASEG from here on, but the
+                # item saying so is held back until something is loaded or
+                # reserved here, as MACRO-80 does: an ORG or another segment
+                # directive first replaces it.  LINK-80 takes a set-location
+                # item to ASEG 0000H for code loaded at 0000H, so `ASEG /
+                # ORG 100H' made it write a .COM from 0000H.
                 self.current_seg = 'ASEG'
                 self.current_common = None
                 if self.pass_num == 2:
-                    self.output.write_set_location(self.seg_type, self.loc)
+                    self.output.defer_set_location(self.seg_type, self.loc)
             return True
 
         # COMMON - define/select common block
@@ -2819,6 +2827,7 @@ class Assembler:
                 # load: um80 wrote the selection alone, so the linker went on
                 # loading them into the segment before - `DB 55H' in a
                 # COMMON block overwrote the CSEG byte after the code.
+                self.output.drop_deferred_location()
                 self.select_common(name)
                 self.output.write_set_location(ADDR_COMMON_REL, self.loc)
             return True
@@ -3958,7 +3967,9 @@ class Assembler:
         if self.default_seg == 'ASEG':
             # --aseg: the code before any ORG or segment directive is
             # absolute too.  The linker starts in CSEG, and loaded it there.
-            self.output.write_set_location(ADDR_ABSOLUTE, 0)
+            # Held back like an ASEG directive's, so a source that starts
+            # with an ORG does not say it loads at 0000H.
+            self.output.defer_set_location(ADDR_ABSOLUTE, 0)
         self.assemble_pass(lines, 2)
 
         if self.errors:

@@ -272,24 +272,56 @@ class RELWriter:
     def __init__(self, truncate_symbols=False):
         self.bits = BitWriter()
         self.truncate_symbols = truncate_symbols  # If True, truncate to 8 chars like M80
+        # A set-location item held back until another item is written
+        # (defer_set_location()).
+        self.deferred_loc = None
+
+    def defer_set_location(self, addr_type, addr):
+        """Set the location counter, but only if another item follows.
+
+        MACRO-80 3.44 writes the set-location item of an ASEG directive
+        this way: it goes out before the next item written, and an ORG or a
+        switch to another segment before then drops it
+        (drop_deferred_location()), as does the end of the writer's items
+        (append() does not carry it over).  LINK-80 3.44 takes a
+        set-location item to ASEG 0000H as code loaded there: um80 wrote
+        one at every ASEG directive, so `ASEG / ORG 100H' linked to a .COM
+        starting at 0000H.
+        """
+        self.deferred_loc = (addr_type, addr)
+
+    def drop_deferred_location(self):
+        """Forget a set-location item defer_set_location() held back."""
+        self.deferred_loc = None
+
+    def _flush_deferred(self):
+        """Write the set-location item held back, before another item."""
+        if self.deferred_loc is not None:
+            addr_type, addr = self.deferred_loc
+            self.deferred_loc = None
+            self._write_special(LINK_SET_LOC, a_field=(addr_type, addr))
 
     def write_absolute_byte(self, value):
         """Write an absolute byte (0 + 8 bits)."""
+        self._flush_deferred()
         self.bits.write_bit(0)
         self.bits.write_byte(value)
 
     def write_program_relative(self, value):
         """Write program-relative 16-bit value."""
+        self._flush_deferred()
         self.bits.write_bits(0b101, 3)  # 1 01
         self.bits.write_word(value)
 
     def write_data_relative(self, value):
         """Write data-relative 16-bit value."""
+        self._flush_deferred()
         self.bits.write_bits(0b110, 3)  # 1 10
         self.bits.write_word(value)
 
     def write_common_relative(self, value):
         """Write common-relative 16-bit value."""
+        self._flush_deferred()
         self.bits.write_bits(0b111, 3)  # 1 11
         self.bits.write_word(value)
 
@@ -348,6 +380,7 @@ class RELWriter:
 
     def _write_special(self, control, a_field=None, b_field=None):
         """Write a special LINK item."""
+        self._flush_deferred()
         self.bits.write_bits(0b100, 3)  # 1 00
         self.bits.write_bits(control, 4)
         if a_field is not None:
@@ -428,6 +461,7 @@ class RELWriter:
 
     def write_extension(self, data):
         """Extension link item (special item 4) with the given B-field bytes."""
+        self._flush_deferred()
         self.bits.write_bits(0b100, 3)
         self.bits.write_bits(LINK_EXTENSION, 4)
         self._write_raw_b_field(bytes(data))

@@ -180,6 +180,13 @@ evaluates them. The format was established by running the genuine M80 and L80
   the linker into CSEG, at the program base, although its labels are
   absolute from 0; an external referenced there was never filled in. The
   module now starts in ASEG.
+- um80 assembler: every `ASEG` directive wrote a set-location item to ASEG
+  0000H, even when nothing was assembled there. LINK-80 takes that item as
+  code loaded at 0000H: `ASEG` / `ORG 100H` / ... linked with L80 into a
+  .COM starting at 0000H (384 bytes, "Data 0000 010C" where M80's object
+  gives "Data 0100 010C"). As in MACRO-80, the item is now written only
+  when something is loaded or reserved in the segment before an `ORG` or
+  another segment directive replaces it; `--aseg` starts the same way.
 - ul80 linker: in a `.PRL`/`.SPR` bitmap, a reference to `__END__`,
   `__BSS_START` or `__BSS_END`, or to a `PUBLIC` alias of one, was never
   marked: the linker computes them as absolute values, but they are program
