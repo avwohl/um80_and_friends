@@ -16,7 +16,9 @@ it.  Where absolute code does land on relocatable code - the module's own,
 an earlier module's, or the data and COMMON that ul80 puts after all the
 code - or on another module's absolute code, L80 prints "%Overlaying
 Program area" (or Data area) and writes a mixture; ul80 fails the link
-with an error.
+with an error - or with --allow-overlap, for a patch or overlay module
+loaded over code on purpose, warns and writes the byte loaded last, as
+L80 does with /D.
 """
 
 import os
@@ -49,9 +51,10 @@ def _asm(d, name, source):
     return rp
 
 
-def _linker(d, *sources, origin=0x100):
+def _linker(d, *sources, origin=0x100, allow_overlap=False):
     linker = Linker()
     linker.code_base = origin
+    linker.allow_overlap = allow_overlap
     for i, src in enumerate(sources):
         if isinstance(src, bytes):
             p = os.path.join(d, f"M{i}.rel")
@@ -63,8 +66,8 @@ def _linker(d, *sources, origin=0x100):
     return linker
 
 
-def _link(d, *sources, origin=0x100):
-    linker = _linker(d, *sources, origin=origin)
+def _link(d, *sources, origin=0x100, allow_overlap=False):
+    linker = _linker(d, *sources, origin=origin, allow_overlap=allow_overlap)
     assert linker.link(), linker.errors
     return linker
 
@@ -269,3 +272,67 @@ def test_command_line_fails_without_writing_the_image():
         with open(os.path.join(d, "y.com"), "rb") as f:
             image = f.read()
         assert image[:24] == bytes([0xAA] * 16 + list(range(16, 24)))
+
+
+def _overlaid(*sources, n):
+    """The first `n' bytes from 0100H of the image --allow-overlap links,
+    and the warnings."""
+    with tempfile.TemporaryDirectory() as d:
+        linker = _link(d, *sources, allow_overlap=True)
+        return _at(linker, 0x100, n), "\n".join(linker.warnings)
+
+
+def test_allow_overlap_takes_the_byte_loaded_last():
+    """With --allow-overlap absolute code over other code is a warning, and
+    the image has the byte loaded last, as L80 (/D) writes it: a patch
+    module's over the code before it (a relocated word keeps the relocated
+    byte nothing replaced), and in one module the byte it loaded later,
+    absolute or not.  Each checked with M80 and L80 3.44."""
+    code = "\tCSEG\n\tLXI H,X\n\tNOP\nX:\tDW X\n\tDB 7\n\tEND\n"
+    image, warned = _overlaid(code, "\tASEG\n\tORG 105H\n\tDB 0AAH\n\tEND\n",
+                              n=7)
+    assert image == bytes([0x21, 0x04, 0x01, 0x00, 0x04, 0xAA, 0x07])
+    assert "Warning: Module M1: absolute code at 0105H overlaps the " \
+           "program area of module M0 (0100H-0106H)" in warned
+    image, _ = _overlaid(code, "\tASEG\n\tORG 101H\n\tDB 0AAH,0BBH\n\tEND\n",
+                         n=7)
+    assert image == bytes([0x21, 0xAA, 0xBB, 0x00, 0x04, 0x01, 0x07])
+    cases = {
+        "\tCSEG\n\tDB 1,2,3,4\n\tASEG\n\tORG 101H\n\tDB 9\n\tCSEG\n"
+        "\tDB 5\n\tEND\n": [1, 9, 3, 4, 5],
+        "\tASEG\n\tORG 101H\n\tDB 9\n\tCSEG\n\tDB 1,2,3,4\n\tEND\n":
+            [1, 2, 3, 4],
+        "\tCSEG\n\tNOP\nX:\tDW X\n\tDB 7\n\tASEG\n\tORG 102H\n\tDB 9\n"
+        "\tEND\n": [0, 1, 9, 7],
+        "\tASEG\n\tORG 102H\n\tDB 9\n\tCSEG\n\tNOP\nX:\tDW X\n\tDB 7\n"
+        "\tEND\n": [0, 1, 1, 7],
+    }
+    for source, want in cases.items():
+        image, warned = _overlaid(source, n=len(want))
+        assert image == bytes(want), source
+        assert "its own program area" in warned
+
+
+def test_allow_overlap_on_the_command_line():
+    """Without the switch the link fails and says how to link it anyway;
+    with it ul80 warns and writes the image."""
+    root = os.path.dirname(os.path.dirname(os.path.abspath(um80.__file__)))
+    with tempfile.TemporaryDirectory() as d:
+        _asm(d, "C", "\tCSEG\n\tDB 1,2,3,4\n\tEND\n")
+        _asm(d, "P", "\tASEG\n\tORG 102H\n\tDB 9\n\tEND\n")
+
+        def run(*args):
+            return subprocess.run(
+                [sys.executable, "-m", "um80.ul80", *args, "C.rel", "P.rel"],
+                cwd=d, env=dict(os.environ, PYTHONPATH=root),
+                capture_output=True, text=True, check=False)
+        r = run("-o", "x.com")
+        assert r.returncode == 1, r.stdout + r.stderr
+        assert "overlaps the program area of module C" in r.stderr
+        assert "--allow-overlap" in r.stderr
+        assert not os.path.exists(os.path.join(d, "x.com"))
+        r = run("--allow-overlap", "-o", "y.com")
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "Warning: Module P: absolute code at 0102H overlaps" in r.stderr
+        with open(os.path.join(d, "y.com"), "rb") as f:
+            assert f.read(4) == bytes([1, 2, 9, 4])

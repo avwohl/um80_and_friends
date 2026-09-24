@@ -53,6 +53,7 @@ ul80 -p E000 program.rel            # Set origin address (hex)
 ul80 --prl program.rel              # MP/M .PRL transient (linked at 100H)
 ul80 --prl --extra 1000 program.rel # ...asking MP/M for 1000H more memory
 ul80 --spr program.rel              # MP/M .SPR/.RSP system page (linked at 0)
+ul80 --allow-overlap a.rel patch.rel # Absolute code over other code: a warning
 ```
 
 ### Disassemble a COM file
@@ -441,7 +442,7 @@ to documented M80 behavior:
 | `test_symbol_class.py` | SET vs. EQU/label redefinability classes |
 | `test_z80_and_charconst.py` | `LD A,I`/`LD A,R` encoding, two-character constant byte order |
 | `test_linker_segments.py` | Absolute ASEG placement, mixed CSEG+ASEG, COMMON-only modules |
-| `test_linker_absolute_code.py` | A module's code placed above the absolute code loaded before it; absolute code overlapping anything is an error |
+| `test_linker_absolute_code.py` | A module's code placed above the absolute code loaded before it; absolute code overlapping anything is an error, or with `--allow-overlap` a warning and the byte loaded last in the image |
 | `test_linker_dupglobal.py` | Multiply-defined PUBLIC global is a link error |
 | `test_linker_loaded_over.py` | A byte loaded over a relocatable word or an item-12 chain word (an ORG back, a COMMON block declared again or shared) replaces that byte, as L80 relocates on loading |
 

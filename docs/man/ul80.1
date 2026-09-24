@@ -7,6 +7,7 @@ ul80 \- Microsoft LINK-80 compatible linker for 8080/Z80
 [\fB\-o\fR \fIoutput.com\fR]
 [\fB\-x\fR]
 [\fB\-\-prl\fR]
+[\fB\-\-allow\-overlap\fR]
 [\fB\-s\fR]
 [\fB\-S\fR \fIfile.sym\fR]
 [\fB\-p\fR \fIorigin\fR]
@@ -39,6 +40,12 @@ PRL files can be loaded at any page boundary in memory, useful for MP/M's
 multi-user environment. The output file contains a 256-byte header with
 code/BSS sizes, the code section, and a relocation bitmap that marks which
 bytes need page adjustment when loaded at a different address.
+.TP
+.B \-\-allow\-overlap
+Link absolute code that loads over other code \- a patch or overlay module \-
+with a warning, as LINK-80 does, instead of failing. The image has the byte
+loaded last: a later module's over an earlier one's, and in one module the
+byte it loaded later, as LINK-80 writes it when given /D.
 .TP
 .B \-s
 Generate a symbol file (.SYM) with an auto-generated name based on the output file.
@@ -74,7 +81,7 @@ when that is above where the code would go, as LINK-80 places it: after
 \fBASEG\fR / \fBORG 100H\fR in one module, the next module's code starts
 after that code. Absolute code that lands on a module's code, on the data
 or COMMON, or on another module's absolute code is an error, and no output
-is written. LINK-80 starts at 0103H when not given /P, which leaves room
+is written (a warning with \fB\-\-allow\-overlap\fR). LINK-80 starts at 0103H when not given /P, which leaves room
 for a JMP at 0100H in absolute code; ul80 starts at the origin, 0100H by
 default, so link such a program with \fB\-p 103\fR.
 .SH LINKING PROCESS

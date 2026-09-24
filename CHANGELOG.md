@@ -339,7 +339,8 @@ evaluates them. The format was established by running the genuine M80 and L80
   (its own, or an earlier module's), the data or COMMON after all the code,
   or another module's absolute code - is an error and no output is
   written; L80 warns "%Overlaying Program area" and writes a mixture of
-  the two. `ASEG` / `ORG 100H` / `JMP START` and a CSEG in one module is
+  the two (`--allow-overlap`, under Added, links it as L80 does with
+  `/D`). `ASEG` / `ORG 100H` / `JMP START` and a CSEG in one module is
   such a case at ul80's default origin, 0100H; L80's, 0103H, leaves room
   for the jump, and so does `-p 103`. A full MP/M II source build (2.0 and
   2.1) gives the same bytes in 42 of its 44 targets; `DDT.COM` and
@@ -413,6 +414,13 @@ evaluates them. The format was established by running the genuine M80 and L80
   an undefined symbol. ul80 still reads the old form.
 
 ### Added
+- ul80 linker: `--allow-overlap` links absolute code that loads over other
+  code — a patch or overlay module — with a warning, as LINK-80 does
+  ("%Overlaying Program area"), where it is otherwise an error (see Fixed).
+  The image has the byte loaded last: a later module's over an earlier
+  one's, and in one module the byte it loaded later, absolute or not, as
+  L80 writes it given `/D`; a relocated word keeps the relocated byte
+  nothing replaced. Without it, the error now says the switch exists.
 - ul80 linker: evaluates extension link items (`+ - * / MOD NOT HIGH LOW`,
   unary minus, externals, program/data/common-relative values) once every
   segment is placed, for `.COM`, `.HEX`, `.PRL` and `.SPR` output alike. An

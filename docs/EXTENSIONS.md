@@ -547,6 +547,15 @@ exactly such a jump; link the program with `-p 103`. An `ORG` back over a
 module's own absolute bytes is not an overlap: the later bytes load, as they
 do in the assembler.
 
+For a module that loads over code on purpose - a patch module linked after
+the program, an overlay - `ul80 --allow-overlap` makes each of these a
+warning and writes the image, with the byte loaded last in it: a later
+module's byte over an earlier one's, and in one module the byte it loaded
+later, whether absolute or not. That is what L80 writes when given `/D`
+(without `/D` it keeps some of the earlier bytes). A relocatable word that
+something is loaded over keeps the relocated byte nothing replaced, as in
+L80, which relocates a word as it loads it.
+
 ---
 
 ## Compatibility Matrix
@@ -570,7 +579,7 @@ do in the assembler.
 
 ## Version History
 
-- **Unreleased** — link-time expressions (REL extension link items): HIGH/LOW of relocatable and external values; `.REL` objects the genuine LINK-80 reads (item 14's A-field, item 9 for EXT+n, item 10 always, COMMON block selection, ASEG set-location held back); M80 objects ul80 links (typed chain links, item 12 chain address, `$MEMRY`); code placed above absolute code as L80 places it, and absolute code that overlaps anything an error
+- **Unreleased** — link-time expressions (REL extension link items): HIGH/LOW of relocatable and external values; `.REL` objects the genuine LINK-80 reads (item 14's A-field, item 9 for EXT+n, item 10 always, COMMON block selection, ASEG set-location held back); M80 objects ul80 links (typed chain links, item 12 chain address, `$MEMRY`); code placed above absolute code as L80 places it, and absolute code that overlaps anything an error (a warning with `--allow-overlap`); a byte loaded over a relocatable word replaces it, as L80 relocates on loading
 - **0.3.48** — `--spr`, `--extra` and `--aseg`; `--prl` links a transient at 100H
 - **0.3.33** — External symbol aliases (EQU external+offset) for z88dk compatibility
 - **0.3.21** — Extended REL format for long symbols, `-t/--truncate` switch

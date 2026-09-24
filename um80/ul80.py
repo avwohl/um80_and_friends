@@ -64,6 +64,11 @@ class Module:
         # replaces that byte of the relocated word.
         self.relocations = []
 
+        # Runs of bytes the module loaded, in the order it loaded them:
+        # (segment key, first offset, count).  With --allow-overlap the
+        # image gets them in this order, as LINK-80 loads them.
+        self.load_runs = []
+
         # Where each segment's bytes start in `code'.  The key is a segment
         # type, or (ADDR_COMMON_REL, name) for a COMMON block: every named
         # block is a segment of its own.
@@ -167,6 +172,11 @@ class Linker:
         self.emit_ds_zeros = True
         self.warnings = []
 
+        # Absolute code loaded over other code is an error unless this is
+        # set (--allow-overlap): then it is a warning, and the byte loaded
+        # last is the one in the image.
+        self.allow_overlap = False
+        self.overlaps = []  # the messages check_absolute_overlaps() gave
         # For each byte of the image, the index of the module whose byte it
         # is and the offset in that module's buffer (-1: none), set by
         # link().
@@ -272,6 +282,12 @@ class Linker:
             old = word_at.pop((key, current_loc), None)
             if old is not None:
                 old[0][-1] &= ~(1 << old[1])
+            runs = module.load_runs
+            if runs and runs[-1][0] == key \
+                    and runs[-1][1] + runs[-1][2] == current_loc:
+                runs[-1][2] += 1
+            else:
+                runs.append([key, current_loc, 1])
             if current_seg == ADDR_COMMON_REL:
                 module.common_data.setdefault(key, set()).add(current_loc)
             if current_seg == ADDR_ABSOLUTE:
@@ -554,6 +570,9 @@ class Linker:
                     (seg_buf_start[norm(key)] + seg_offset, reloc_type,
                      norm(key), block_of(block)
                      if reloc_type == ADDR_COMMON_REL else None, value, mask))
+        module.load_runs = [(seg_buf_start[norm(key)] + first, count)
+                            for key, first, count in module.load_runs
+                            if norm(key) in seg_buf_start]
 
         # Convert pending externals to buffer offsets
         for sym_name, key, head in pending_externals:
@@ -1010,7 +1029,7 @@ class Linker:
 
         # Which module's byte each byte of the image is, and at what offset
         # in its buffer: the later module's where two load the same byte
-        # (a COMMON block they share).
+        # (a COMMON block they share, or anything with --allow-overlap).
         self.owner_mod = array('i', [-1]) * len(self.output)
         self.owner_off = array('i', [-1]) * len(self.output)
 
@@ -1025,6 +1044,13 @@ class Linker:
             for seg, start, end in self._segment_ranges(module):
                 for o in _placed(module, seg, start, end, loaded=True):
                     _put(idx, module, o)
+            if self.allow_overlap:
+                # The module's own bytes in the order it loaded them, so
+                # that of its absolute code and its program or data area
+                # the byte loaded last is the one in the image.
+                for first, count in module.load_runs:
+                    for o in range(first, first + count):
+                        _put(idx, module, o)
 
         # Fix up external references
         # Track which (module_index, buf_offset) pairs are resolved externally
@@ -1151,10 +1177,14 @@ class Linker:
         LINK-80 prints "%Overlaying Program area" (or Data area) and writes
         a mixture of the two - with /D: the later bytes, without it partly
         the earlier ones.  The image is wrong either way, so here it is an
-        error and the link fails.  Absolute code a module loads twice
-        itself (an ORG back over its own bytes) is the module's business:
-        the later bytes load, as in the assembler.  Returns False if there
-        was any.
+        error and the link fails - unless allow_overlap is set
+        (--allow-overlap, for a patch or overlay module loaded over code on
+        purpose): then each is a warning and the byte loaded last is the
+        one in the image, a later module's over an earlier one's and, in
+        one module, the one it loaded later.  Absolute code a module loads
+        twice itself (an ORG back over its own bytes) is the module's
+        business: the later bytes load, as in the assembler.  Returns False
+        if there was any that is an error.
         """
         owner = {}  # address -> index of the module whose absolute byte it is
         found = []
@@ -1176,9 +1206,11 @@ class Linker:
                                     f"{self._whose(what, area_idx, idx)} "
                                     f"({first:04X}H-{end - 1:04X}H)")
                       for idx, addrs in hits.items()]
+        report = self.warning if self.allow_overlap else self.error
         for msg in found:
-            self.error(msg)
-        return not found
+            report(msg)
+        self.overlaps = found
+        return self.allow_overlap or not found
 
     def _whose(self, what, area_idx, idx):
         """`what' (an area of module `area_idx', or a COMMON block if
@@ -1620,6 +1652,11 @@ def main():
                        type=lambda x: int(x, 16) if not x.startswith(('0x', '0X')) else int(x, 0),
                        help='Extra memory (hex) a .PRL asks MP/M for beyond its '
                             'image, for storage placed at .MEMORY (GENMOD\'s third argument)')
+    parser.add_argument('--allow-overlap', action='store_true',
+                       help='Link absolute code that loads over other code (a '
+                            'patch or overlay module), with a warning, as '
+                            'LINK-80 does: the byte loaded last is the one in '
+                            'the image (default: an error)')
     parser.add_argument('--no-ds-zeros', action='store_true',
                        help='Do not emit zeros for DS (reserve space) directives (default: emit zeros)')
     parser.add_argument('-s', '--sym', action='store_true', help='Generate .SYM symbol file')
@@ -1646,6 +1683,7 @@ def main():
     linker.code_base = args.origin
     linker.page_zero_relative = prl_output
     linker.prl_extra = args.extra
+    linker.allow_overlap = args.allow_overlap
 
     # Emit zeros for DS directives (default: True)
     if args.no_ds_zeros:
@@ -1715,6 +1753,10 @@ def main():
     for err in linker.errors:
         print(err, file=sys.stderr)
     if not ok:
+        if linker.overlaps and not linker.allow_overlap:
+            print("(--allow-overlap links it anyway, with the byte loaded "
+                  "last in the image, as LINK-80 does after its "
+                  "%Overlaying warning)", file=sys.stderr)
         sys.exit(1)
 
     # Determine output filename
