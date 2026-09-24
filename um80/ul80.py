@@ -810,6 +810,11 @@ class Linker:
         followed right, in this ul80 or any earlier one.  (0.3.35 to 0.3.48
         wrote a chain of one per reference, whose link is 0 however it is
         read.)
+
+        Returns True when the chain ended at an absolute 0, as a chain
+        does, and False when a link led outside the bytes the module loaded
+        or back into the chain; the references past that point are not
+        filled.
         """
         link_types = module.link_types
         if link_types is None:
@@ -831,7 +836,7 @@ class Linker:
             if moves and stored & 2:
                 self.external_relocations.append(out)
             if link_type == ADDR_ABSOLUTE and link == 0:
-                break
+                return True
             if link_type == ADDR_COMMON_REL:
                 key = (ADDR_COMMON_REL, link_block)
             elif link_type == ADDR_ABSOLUTE and module.legacy_um80:
@@ -840,6 +845,7 @@ class Linker:
                 key = link_type
             start = module.seg_buf_start.get(key)
             cur = None if start is None else start + link
+        return False
 
     def _store_word(self, out, value, which):
         """Store the bytes of `value' at image offset `out' for which
@@ -1080,8 +1086,19 @@ class Linker:
                     else max(mod_idx, def_idx)
 
                 for head, _ in refs:
-                    self._fill_chain(module, mod_idx, head, target_addr, moves,
-                                     until)
+                    if not self._fill_chain(module, mod_idx, head, target_addr,
+                                            moves, until):
+                        # Nothing a correct object holds: the chain's
+                        # head or a link points outside what the module
+                        # loaded.  An object um80 0.3.48 assembled with
+                        # --aseg from a relocatable source is one (its code
+                        # went to CSEG, its chain heads stayed absolute).
+                        self.warning(
+                            f"Module {module.name}: a reference to "
+                            f"{base_name} leads outside the bytes the module "
+                            "loaded, so the references after it are not "
+                            "filled; an object um80 0.3.48 made with --aseg "
+                            "has to be reassembled")
 
             # Item 12: the address of where the item appeared, in every
             # word of the chain it heads (ul80 read the item and never
