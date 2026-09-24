@@ -46,6 +46,13 @@ evaluates them. The format was established by running the genuine M80 and L80
   is linked like `MVI A,HIGH BUF`. It was the constant high byte of BUF's
   offset. (M80 3.44 gets this one wrong too: it keeps BUF's segment, with the
   high byte of BUF's offset as the value.)
+- um80 assembler: a constant added to an external that already carries one
+  was lost — `EXT+2+3` linked to `EXT+3`, `(EXT+2)-1` to `EXT-1`,
+  `1+EXT+1` to `EXT+1`, and after `EQX EQU EXT+2`, `DW EQX+1` to `EXT+1`.
+  Only the newest constant was kept. (Present in 0.3.48 for words; with the
+  byte fields above it reached `MVI A,EQX+1` too.) `1 SHR (EXT-1)` also
+  stopped with a Python traceback ("negative shift count") instead of the
+  error for SHR on an external.
 - relformat: special link item 4 was returned as `UNKNOWN_SPECIAL` without
   consuming its B-field, so everything after it in the module was misread:
   ulib80 indexed four garbage "public symbols" from an M80 module that uses

@@ -607,7 +607,8 @@ class Assembler:
             op = expr[idx:idx+oplen].strip().upper()
             left = self.eval_operand(expr[:idx], allow_undefined)
             right = self.eval_operand(expr[idx+oplen:], allow_undefined)
-            left_val, right_val = left.value, right.value
+            # The offset beside an external may be negative (EXT-1).
+            left_val, right_val = left.value & 0xFFFF, right.value & 0xFFFF
             if op == '*':
                 result = (left_val * right_val) & 0xFFFF
             elif op in ('/', 'MOD'):
@@ -618,6 +619,8 @@ class Assembler:
                     result = (left_val // right_val) & 0xFFFF
                 else:
                     result = (left_val % right_val) & 0xFFFF
+            elif right_val > 15:
+                result = 0  # every bit shifted out
             elif op == 'SHL':
                 result = (left_val << right_val) & 0xFFFF
             else:
@@ -758,19 +761,35 @@ class Assembler:
         self.error(f"Cannot parse expression: '{expr}'")
         return ExprValue(0)
 
+    @staticmethod
+    def _ext_offset(value):
+        """The constant beside an external, as a signed 16-bit number.
+
+        `EXT-1' and `EXT+0FFFFH' are the same address; keeping the offset in
+        -8000H..7FFFH gives them one spelling and keeps `EXT-n' negative,
+        the form its external chain has always been written in.
+        """
+        return ((value + 0x8000) & 0xFFFF) - 0x8000
+
     def _add_sub(self, op, left, right):
         """left + right or left - right, as parse_expression() evaluates it."""
         if left.ext or right.ext:
             # External reference with offset.  A plain `symbol + constant'
-            # travels as um80's external chain; the constant is whichever
-            # side is not the external and the external keeps its sign.
+            # travels as an external reference with the constant beside it;
+            # that constant is the one the external already carries (EXT+2
+            # in EXT+2+3) plus or minus the one added now.
             if left.kind == 'ext' and right.kind == 'abs':
                 # SYM+n or SYM-n.
-                offset = -right.value if op == '-' else right.value
-                return ExprValue(offset, ext=True, name=left.name)
+                if op == '-':
+                    offset = left.value - right.value
+                else:
+                    offset = left.value + right.value
+                return ExprValue(self._ext_offset(offset), ext=True,
+                                 name=left.name)
             if op == '+' and left.kind == 'abs' and right.kind == 'ext':
                 # n+SYM.
-                return ExprValue(left.value, ext=True, name=right.name)
+                return ExprValue(self._ext_offset(left.value + right.value),
+                                 ext=True, name=right.name)
             # Anything else - n-SYM, SYM+SYM, SYM+label, HIGH(SYM)+1 - is an
             # expression for the linker (MACRO-80 writes the same ones as
             # extension link items).  The assembly-time tuple is what um80
@@ -779,12 +798,14 @@ class Assembler:
                 name, offset = left.name, 0
             elif left.ext:
                 name = left.name
-                offset = -right.value if op == '-' else right.value
+                offset = left.value - right.value if op == '-' \
+                    else left.value + right.value
             elif op == '-':
                 name, offset = right.name, 0
             else:
-                name, offset = right.name, left.value
-            return self._link_binary(op, left, right, offset,
+                name, offset = right.name, left.value + right.value
+            return self._link_binary(op, left, right,
+                                     self._ext_offset(offset),
                                      ext=True, name=name)
 
         if op == '+':

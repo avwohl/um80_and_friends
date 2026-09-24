@@ -96,3 +96,43 @@ def test_two_externals_in_one_expression_are_computed_by_the_linker():
         assert _operand(linker, 0) == foo + 0x1234, hex(_operand(linker, 0))
         assert _operand(linker, 1) == (foo - 0x1234) & 0xFFFF, \
             hex(_operand(linker, 1))
+
+
+def test_constant_added_to_an_offset_external_is_kept():
+    """EXT+2+3 is EXT+5: the constant EXT+2 already carries was dropped.
+
+    `_add_sub' kept only the constant on the right of the newest +/-, so
+    EXT+2+3 linked to EXT+3, (EXT+2)-1 to EXT-1 and 1+EXT+1 to EXT+1, and
+    `EQX EQU EXT+2' / `DW EQX+1' to EXT+1.  MACRO-80 3.44 lists these as
+    0005*, 0001*, 0002* and 0003*.
+    """
+    with tempfile.TemporaryDirectory() as d:
+        linker = _link(d, "\tEXTRN FOO\n\tCSEG\n"
+                          "\tLXI H,FOO+2+3\n\tLXI H,(FOO+2)-1\n"
+                          "\tLXI H,1+FOO+1\nEQX\tEQU FOO+2\n\tLXI H,EQX+1\n"
+                          "\tLXI H,FOO+5-2\n\tLXI H,(FOO+5)-(LAB-LAB)\n"
+                          "LAB:\tEND\n")
+        foo = 0x100 + 18 + 0x100
+        want = [foo + 5, foo + 1, foo + 2, foo + 3, foo + 3, foo + 5]
+        got = [_operand(linker, i) for i in range(6)]
+        assert got == want, [hex(v) for v in got]
+
+
+def test_byte_of_an_offset_external_keeps_the_whole_offset():
+    """MVI A,EQX+1 and HIGH(FOO+100H+1): the byte fields the linker fills
+    were built from the same truncated offset."""
+    with tempfile.TemporaryDirectory() as d:
+        linker = _link(d, "\tEXTRN FOO\n\tCSEG\nEQX\tEQU FOO+2\n"
+                          "\tMVI A,EQX+1\n\tMVI A,HIGH(FOO+100H+1)\n\tEND\n")
+        foo = 0x100 + 4 + 0x100
+        assert linker.output[1] == (foo + 3) & 0xFF, hex(linker.output[1])
+        assert linker.output[3] == (foo + 0x101) >> 8, hex(linker.output[3])
+
+
+def test_shift_by_a_negative_external_offset_is_an_error_not_a_crash():
+    """`1 SHR (EXT-1)' raised ValueError: negative shift count."""
+    with tempfile.TemporaryDirectory() as d:
+        ok, asm, _ = _rel(d, "A", "\tEXTRN FOO\n\tCSEG\n"
+                                  "\tDW 1 SHR (FOO-1)\n\tDW 2 SHL (FOO-1)\n\tEND\n")
+        assert not ok
+        assert any('SHR' in e.message for e in asm.errors), asm.errors
