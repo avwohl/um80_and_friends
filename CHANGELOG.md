@@ -276,6 +276,32 @@ evaluates them. The format was established by running the genuine M80 and L80
   the 1, and after `DS 10H` / `ORG 4` / `DB 1`, a later `CSEG` at 10H, past
   the `DS`. um80 went on where the segment was left (0181H, 5), so a source
   that does this assembled into another layout than M80's.
+- ul80 linker: a byte loaded over a relocatable word was relocated as if it
+  were the word. ul80 relocated after loading everything, adding the
+  segment base to whatever bytes had been loaded over the word since: an
+  `ORG` back (`CSEG` / `NOP` / `X: DW X` / `ORG 1` / `DB 5,6` linked to
+  00 05 07, and `ORG 1` / `DW X` to 00 01 02, the base added twice),
+  another module loading the same bytes of a COMMON block, and — once um80
+  started every `COMMON` statement at the beginning of its block, as
+  MACRO-80 does (above) — a block declared again: `COMMON /C/` /
+  `C1: DW C1` / `DB 7` / `COMMON /C/` / `DB 9,9` linked to 0C 0A 07, where
+  L80 gives 09 09 07. LINK-80 relocates a word as it loads it, so a byte
+  loaded there later just replaces that byte, and the other byte keeps its
+  relocated value (`ORG 1` / `DB 5` gives 00 05 01); ul80 now does the
+  same, and a `.PRL`/`.SPR` bitmap no longer marks a byte something was
+  loaded over. The chain of special item 12 is filled when the item is
+  read, as L80 fills it, so bytes loaded over one of its words afterwards
+  stay; ul80 followed it at the end, through whatever had been loaded over
+  it. An external's chain is filled when L80 fills it, once the module and
+  the one defining the external are both loaded, so bytes a later module
+  loads over it in a shared COMMON block stay too. Items 8 and 9 (external
+  plus or minus a constant) and link-time expressions are still applied
+  last, to whatever is there then, as L80 applies them. Every case was
+  checked against the genuine M80 and L80 3.44, with M80's objects and
+  um80's; in 406 random single-module programs of `CSEG`, `DSEG`, `ASEG`,
+  `COMMON`, `ORG`, `DS`, `DB` and `DW` that L80 links, ul80 now links
+  um80's object to L80's bytes in every one (two of the first 120 differed
+  before). No source in the corpus of 1363 changes.
 - um80 assembler: a segment's size (items 13 and 10) was its location at
   the end, which after an `ORG` back undercounts it: `CSEG` / `ORG 20H` /
   `DB 1` / `ORG 10H` / `DB 2` said 11H bytes, and the next module was

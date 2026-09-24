@@ -431,6 +431,16 @@ M80+ul80, um80+L80, um80+ul80):
   the address of the location where it appears: FORTRAN-80 writes every
   forward reference (a jump to a label further down, a FORMAT string, a
   constant after the code) that way;
+- a byte loaded over a word the linker has yet to finish is handled as L80
+  handles it. L80 relocates a word as it loads it and fills an item-12
+  chain when it reads the item, so a byte loaded there afterwards - an `ORG`
+  back, a `COMMON` block declared again (every `COMMON` statement starts at
+  the beginning of its block), another module loading the same COMMON
+  bytes - replaces that byte, and the other byte of the word keeps its
+  finished value. An external's chain is filled once the module and the
+  one defining the external are both loaded, so what a later module loads
+  over it stays. Items 8 and 9 and link-time expressions are applied at the
+  end of the link, to whatever is there then;
 - if a module defines the global `$MEMRY`, the word there gets the address
   of the first free byte after the data area, as L80 stores it (FORTRAN-80's
   FORLIB allocates its file buffers from it). L80 overwrites the word

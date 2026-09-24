@@ -11,6 +11,7 @@ Library modules are automatically extracted to resolve undefined symbols.
 import sys
 import os
 import argparse
+from array import array
 from pathlib import Path
 
 from um80 import __version__
@@ -45,16 +46,22 @@ class Module:
         # External references (chains to be fixed up)
         self.externals = {}  # name -> list of (buf_offset of the chain head, segment key)
 
-        # Special item 12 (chain address): (buf_offset of the chain head,
-        # segment key, offset) - every word of the chain gets the address
-        # of that offset in that segment, where the item appeared.
+        # Special item 12 (chain address): (buf_offset of a word of the
+        # chain, segment key, offset, bytes) - the word gets the address of
+        # that offset in that segment, where the item appeared.  The chain
+        # is followed when the item is read, as LINK-80 fills it then; `bytes'
+        # has bit 0 (the low byte) and bit 1 (the high byte) set for the
+        # bytes of the word nothing was loaded over after that.
         self.chain_addresses = []
 
         # Common blocks
         self.commons = {}  # name -> size
 
         # Relocation info: (buf_offset, reloc_type, segment key of the
-        # location, COMMON block of a COMMON-relative value or None).
+        # location, COMMON block of a COMMON-relative value or None, the
+        # value loaded, bytes) - `bytes' as for chain_addresses: LINK-80
+        # relocates a word as it loads it, so a byte loaded over it later
+        # replaces that byte of the relocated word.
         self.relocations = []
 
         # Where each segment's bytes start in `code'.  The key is a segment
@@ -93,7 +100,8 @@ class Module:
         self.legacy_um80 = False
 
         # buf_offset -> (relocation type, COMMON block) of each relocatable
-        # word, built when a chain is first followed (Linker._fill_chain()).
+        # word still whole, built when a chain is first followed
+        # (Linker._fill_chain()).
         self.link_types = None
 
 
@@ -158,6 +166,12 @@ class Linker:
         # must be contiguous in the output. Default is True for compatibility.
         self.emit_ds_zeros = True
         self.warnings = []
+
+        # For each byte of the image, the index of the module whose byte it
+        # is and the offset in that module's buffer (-1: none), set by
+        # link().
+        self.owner_mod = array('i')
+        self.owner_off = array('i')
 
     def error(self, msg):
         self.errors.append(f"Error: {msg}")
@@ -226,25 +240,82 @@ class Linker:
             return (ADDR_COMMON_REL, current_block) if seg == ADDR_COMMON_REL \
                 else seg
 
+        # The word each byte loaded so far belongs to, if it is a relocatable
+        # word or a word an item-12 chain filled: (segment key, offset) ->
+        # (record, 0 for its low byte or 1 for its high byte).  A record is a
+        # list whose last element is a mask of the bytes still its own.
+        # LINK-80 relocates a word as it loads it and fills an item-12 chain
+        # as it reads the item, so a byte loaded there afterwards (an ORG
+        # back, a COMMON block declared again) simply replaces that byte,
+        # and the other keeps what LINK-80 stored.  ul80 kept the relocation
+        # and added the segment base to whatever was loaded over the word.
+        word_at = {}
+
+        def claim(rec):
+            """Make the word of `rec' the owner of its two bytes."""
+            for i in (0, 1):
+                where = (rec[0], rec[1] + i)
+                old = word_at.get(where)
+                if old is not None:
+                    old[0][-1] &= ~(1 << old[1])
+                word_at[where] = (rec, i)
+
         def write_byte_to_seg(value, loaded=True):
             """Write a byte at current_loc in current segment's buffer."""
-            buf = seg_buffers.setdefault(seg_key(), bytearray())
+            key = seg_key()
+            buf = seg_buffers.setdefault(key, bytearray())
             while len(buf) <= current_loc:
                 buf.append(0)
             buf[current_loc] = value
-            if loaded and current_seg == ADDR_COMMON_REL:
-                module.common_data.setdefault(seg_key(), set()).add(current_loc)
-            if loaded and current_seg == ADDR_ABSOLUTE:
+            if not loaded:
+                return
+            old = word_at.pop((key, current_loc), None)
+            if old is not None:
+                old[0][-1] &= ~(1 << old[1])
+            if current_seg == ADDR_COMMON_REL:
+                module.common_data.setdefault(key, set()).add(current_loc)
+            if current_seg == ADDR_ABSOLUTE:
                 module.abs_loaded.add(current_loc)
                 module.abs_top = max(module.abs_top, current_loc + 1)
                 # Loaded below where ASEG was thought to start: `ORG 200H /
                 # DB 1 / ORG 180H / DB 4' lost the 4.
                 module.code_start = min(module.code_start, current_loc)
 
+        def fill_chain(key, off, cur_key, cur_offset):
+            """Item 12: every word of the chain at `off' in segment `key'
+            gets the address of `cur_offset' in `cur_key'.  Each link is
+            typed by the relocation of the word holding it, as in
+            Linker._fill_chain(), and absolute 0 ends the chain."""
+            if key == ADDR_ABSOLUTE and off == 0:
+                return  # an empty chain, as for an external
+            seen = set()
+            while (key, off) not in seen:
+                seen.add((key, off))
+                buf = seg_buffers.get(key)
+                if buf is None or not 0 <= off < len(buf) - 1:
+                    break
+                link = buf[off] | (buf[off + 1] << 8)
+                low, high = word_at.get((key, off)), word_at.get((key, off + 1))
+                link_type, link_block = ADDR_ABSOLUTE, None
+                if low is not None and high is not None and low[0] is high[0] \
+                        and low[1] == 0 and len(low[0]) == 6:
+                    link_type, link_block = low[0][2], low[0][3]
+                rec = [key, off, cur_key, cur_offset, 3]
+                claim(rec)  # the link it held is not relocated now
+                pending_chains.append(rec)
+                if link_type == ADDR_ABSOLUTE and link == 0:
+                    break
+                key = (ADDR_COMMON_REL, link_block) \
+                    if link_type == ADDR_COMMON_REL else link_type
+                off = link
+
         # Track relocations with segment-relative offsets before combining
-        pending_relocations = []  # (seg key, seg_offset, reloc_type, block)
+        # [seg key, seg_offset, reloc_type, block, value, bytes]
+        pending_relocations = []
         pending_externals = []  # (name, seg key, head_offset)
-        pending_chains = []  # item 12: (chain key, head, cur key, cur_offset)
+        # item 12, a word of a chain: [seg key, offset, cur key, cur_offset,
+        # bytes]
+        pending_chains = []
         pending_exprs = []  # (seg key, seg_offset, size, items)
         pending_offsets = []  # (seg key, seg_offset, sign, a_field, block)
         expr_items = []  # extension items read since the last store
@@ -277,15 +348,17 @@ class Linker:
                               'DATA_REL': ADDR_DATA_REL,
                               'COMMON_REL': ADDR_COMMON_REL}[item_type]
                 value = item[1]
-                write_byte_to_seg(value & 0xFF)
                 # Record relocation at low byte position; a COMMON-relative
                 # value is relative to the block selected last.
-                pending_relocations.append(
-                    (seg_key(), current_loc, reloc_type,
-                     current_block if reloc_type == ADDR_COMMON_REL else None))
+                rec = [seg_key(), current_loc, reloc_type,
+                       current_block if reloc_type == ADDR_COMMON_REL else None,
+                       value, 3]
+                write_byte_to_seg(value & 0xFF)
                 current_loc += 1
                 write_byte_to_seg((value >> 8) & 0xFF)
                 current_loc += 1
+                claim(rec)
+                pending_relocations.append(rec)
 
             elif item_type == 'PROGRAM_NAME':
                 module.name = item[1]
@@ -360,8 +433,7 @@ class Linker:
                 # way): the chain gets the current location's address.
                 a_field = item[1]
                 addr_type, head = a_field
-                pending_chains.append((seg_key(addr_type), head, seg_key(),
-                                       current_loc))
+                fill_chain(seg_key(addr_type), head, seg_key(), current_loc)
 
             elif item_type == 'DEFINE_PROG_SIZE':
                 a_field = item[1]
@@ -473,13 +545,15 @@ class Linker:
                 return seg_buf_start[key] + offset
             return fallback + offset
 
-        # Convert segment-relative relocations to buffer offsets
-        for key, seg_offset, reloc_type, block in pending_relocations:
-            if norm(key) in seg_buf_start:
+        # Convert segment-relative relocations to buffer offsets; a word
+        # loaded over entirely, or filled by an item-12 chain, has none.
+        for key, seg_offset, reloc_type, block, value, mask in \
+                pending_relocations:
+            if mask and norm(key) in seg_buf_start:
                 module.relocations.append(
                     (seg_buf_start[norm(key)] + seg_offset, reloc_type,
                      norm(key), block_of(block)
-                     if reloc_type == ADDR_COMMON_REL else None))
+                     if reloc_type == ADDR_COMMON_REL else None, value, mask))
 
         # Convert pending externals to buffer offsets
         for sym_name, key, head in pending_externals:
@@ -499,14 +573,13 @@ class Linker:
                                   seg_buf_start.get(ADDR_ABSOLUTE, len(code_bytes)))
             module.externals[sym_name].append((buf_head, norm(key)))
 
-        # Item 12: the chain head as a buffer offset; the address it gets
-        # stays a segment and an offset until the segments are placed.
-        for chain_key, head, cur_key, cur_offset in pending_chains:
-            if chain_key == ADDR_ABSOLUTE and head == 0:
-                continue  # an empty chain, as for an external
-            module.chain_addresses.append(
-                (buf_offset(chain_key, head, len(code_bytes)), norm(cur_key),
-                 cur_offset))
+        # Item 12: each word of the chain as a buffer offset; the address it
+        # gets stays a segment and an offset until the segments are placed.
+        for key, off, cur_key, cur_offset, mask in pending_chains:
+            if mask and norm(key) in seg_buf_start:
+                module.chain_addresses.append(
+                    (seg_buf_start[norm(key)] + off, norm(cur_key),
+                     cur_offset, mask))
 
         if expr_items:
             self.error(f"Module {module.name}: link-time expression has no "
@@ -687,34 +760,42 @@ class Linker:
             return self.common_bases.get(seg[1], self.common_base) + rel
         return module.code_base + rel
 
-    def _fill_chain(self, module, mod_idx, head, value, moves):
+    def _fill_chain(self, module, mod_idx, head, value, moves, until):
         """Store `value' in every word of the chain that starts at `head'.
 
-        A chain is LINK-80's list of the places one value goes (the
-        references to an external, item 6; a forward reference, item 12):
-        each word holds the address of the next, typed like any other word
-        - program, data or COMMON relative, or absolute, which is an address
-        in ASEG - and absolute 0 ends it.  `head' is a buffer offset in
-        `module'.  Every word filled is recorded in chained_locs, so the
-        relocation pass (which would add a segment base to the value) and
-        the .PRL bitmap (which would mark it by the type of the link it
-        held) leave it alone; `moves' says whether the value moves with the
-        program, for the bitmap.  An absolute link was read as an offset in
-        the segment of the word holding it: MACRO-80 chains a CSEG
-        reference to one in ASEG that way, and that one was left 0000H.
+        A chain is LINK-80's list of the places a value goes (the references
+        to an external, item 6): each word holds the address of the next,
+        typed like any other word - program, data or COMMON relative, or
+        absolute, which is an address in ASEG - and absolute 0 ends it.
+        `head' is a buffer offset in `module'.  Every word filled is
+        recorded in chained_locs, so the relocation pass (which would add a
+        segment base to the value) and the .PRL bitmap (which would mark it
+        by the type of the link it held) leave it alone; `moves' says
+        whether the value moves with the program, for the bitmap.  An
+        absolute link was read as an offset in the segment of the word
+        holding it: MACRO-80 chains a CSEG reference to one in ASEG that
+        way, and that one was left 0000H.
+
+        LINK-80 fills the chain once the module has been loaded and the
+        external defined, which is at the end of module `until' (the later
+        of the two): a byte a later module loads over a word of the chain,
+        in a COMMON block they share, is not overwritten.
 
         Except in an object from um80 up to 0.3.48 (legacy_um80: item 14
-        has no A-field).  From 0.2.1 to 0.3.34 um80 chained the references
-        to an external through untyped words, each the offset of the
-        previous reference in its own segment, and ul80 has always read
-        those that way; read as ASEG addresses, only the head was filled.
-        (0.3.35 to 0.3.48 wrote a chain of one per reference, whose link
-        is absolute 0 either way.)
+        has no A-field).  um80 0.2.0 to 0.3.34 chained all the references to
+        an external through untyped words, each the offset of the previous
+        reference in whichever segment that one was in - the link does not
+        say which.  ul80 reads it as an offset in the segment of the word
+        holding it (read as an ASEG address, only the head was filled), so
+        a chain whose references are in more than one segment is not
+        followed right, in this ul80 or any earlier one.  (0.3.35 to 0.3.48
+        wrote a chain of one per reference, whose link is 0 however it is
+        read.)
         """
         link_types = module.link_types
         if link_types is None:
             link_types = module.link_types = {
-                r[0]: (r[1], r[3]) for r in module.relocations}
+                r[0]: (r[1], r[3]) for r in module.relocations if r[5] == 3}
         cur = head
         visited = set()  # Prevent infinite loops
         while (cur is not None and cur not in visited
@@ -724,11 +805,12 @@ class Linker:
             link = module.code[cur] | (module.code[cur + 1] << 8)
             link_type, link_block = link_types.get(cur, (ADDR_ABSOLUTE, None))
             out = self._buf_offset_addr(module, cur) - self.output_base
-            if 0 <= out and out + 1 < len(self.output):
-                self.output[out] = value & 0xFF
-                self.output[out + 1] = (value >> 8) & 0xFF
-                if moves:
-                    self.external_relocations.append(out)
+            stored = self._store_word(
+                out, value, [0 <= out + i < len(self.output)
+                             and self.owner_mod[out + i] <= until
+                             for i in (0, 1)])
+            if moves and stored & 2:
+                self.external_relocations.append(out)
             if link_type == ADDR_ABSOLUTE and link == 0:
                 break
             if link_type == ADDR_COMMON_REL:
@@ -739,6 +821,27 @@ class Linker:
                 key = link_type
             start = module.seg_buf_start.get(key)
             cur = None if start is None else start + link
+
+    def _store_word(self, out, value, which):
+        """Store the bytes of `value' at image offset `out' for which
+        `which' (low byte, high byte) is true.  Returns a mask of those
+        stored: 1 the low byte, 2 the high byte."""
+        stored = 0
+        for i in (0, 1):
+            if which[i]:
+                self.output[out + i] = (value >> (8 * i)) & 0xFF
+                stored |= 1 << i
+        return stored
+
+    def _own(self, mod_idx, buf_offset, out, mask):
+        """(low, high): whether each byte of the word at buffer offset
+        `buf_offset' of module `mod_idx', image offset `out', is in `mask'
+        and is still the byte that module loaded there - nothing loaded
+        later went over it."""
+        return [bool(mask >> i & 1) and 0 <= out + i < len(self.output)
+                and self.owner_mod[out + i] == mod_idx
+                and self.owner_off[out + i] == buf_offset + i
+                for i in (0, 1)]
 
     def calculate_addresses(self):
         """Calculate base addresses for all modules.
@@ -905,12 +1008,23 @@ class Linker:
         self.output_base = lo
         self.output = bytearray(max(0, hi - lo))
 
-        for module in self.modules:
+        # Which module's byte each byte of the image is, and at what offset
+        # in its buffer: the later module's where two load the same byte
+        # (a COMMON block they share).
+        self.owner_mod = array('i', [-1]) * len(self.output)
+        self.owner_off = array('i', [-1]) * len(self.output)
+
+        def _put(idx, module, o):
+            out = self._buf_offset_addr(module, o) - self.output_base
+            if 0 <= out < len(self.output):
+                self.output[out] = module.code[o]
+                self.owner_mod[out] = idx
+                self.owner_off[out] = o
+
+        for idx, module in enumerate(self.modules):
             for seg, start, end in self._segment_ranges(module):
                 for o in _placed(module, seg, start, end, loaded=True):
-                    out = self._buf_offset_addr(module, o) - self.output_base
-                    if 0 <= out < len(self.output):
-                        self.output[out] = module.code[o]
+                    _put(idx, module, o)
 
         # Fix up external references
         # Track which (module_index, buf_offset) pairs are resolved externally
@@ -926,44 +1040,50 @@ class Linker:
                 if base_name not in self.globals:
                     continue
 
-                target_addr, _, target_value, target_seg_type = \
+                target_addr, def_idx, target_value, target_seg_type = \
                     self._global_address(base_name)
                 target_addr += expr_offset
                 # Under MP/M page zero belongs to the memory segment, so a
                 # reference to BDOS/FCB/TBUFF relocates like any program
                 # address.
                 moves = self._moves(base_name, target_value, target_seg_type)
+                # LINK-80 fills the chain when both this module and the
+                # one defining the symbol are loaded (the linker's own
+                # symbols: at the end).
+                until = len(self.modules) if base_name in self.moving \
+                    else max(mod_idx, def_idx)
 
                 for head, _ in refs:
-                    self._fill_chain(module, mod_idx, head, target_addr, moves)
+                    self._fill_chain(module, mod_idx, head, target_addr, moves,
+                                     until)
 
             # Item 12: the address of where the item appeared, in every
-            # word of the chain (ul80 read the item and never applied it,
-            # so FORTRAN-80's forward jumps kept their chain links).
-            for head, key, offset in module.chain_addresses:
+            # word of the chain it heads (ul80 read the item and never
+            # applied it, so FORTRAN-80's forward jumps kept their chain
+            # links).  The chain was followed when the module was loaded.
+            for buf_offset, key, offset, mask in module.chain_addresses:
                 seg_type, block = key if isinstance(key, tuple) else (key, None)
                 value = self.relocate_value(module, offset, seg_type, block)
-                self._fill_chain(module, mod_idx, head, value & 0xFFFF,
-                                 seg_type != ADDR_ABSOLUTE)
+                out = self._buf_offset_addr(module, buf_offset) - self.output_base
+                stored = self._store_word(
+                    out, value, self._own(mod_idx, buf_offset, out, mask))
+                if seg_type != ADDR_ABSOLUTE and stored & 2:
+                    self.external_relocations.append(out)
 
-        # Apply relocations for program-relative, data-relative, and common-relative addresses
+        # Apply relocations for program-relative, data-relative, and
+        # common-relative addresses: to the value each word was loaded with,
+        # in each byte of it nothing was loaded over later.
         for mod_idx, module in enumerate(self.modules):
-            for buf_offset, seg_type, _, block in module.relocations:
+            for buf_offset, seg_type, _, block, value, mask in module.relocations:
                 # Skip locations already resolved by external reference fixup
                 if (mod_idx, buf_offset) in resolved_external_locs:
                     continue
 
                 # Output offset for the reference (ASEG absolute, CSEG/DSEG rebased)
                 abs_offset = self._buf_offset_addr(module, buf_offset) - self.output_base
-
-                if abs_offset >= 0 and abs_offset + 1 < len(self.output):
-                    # Read current value
-                    value = self.output[abs_offset] | (self.output[abs_offset + 1] << 8)
-                    # Apply relocation based on what the value points to
-                    value = self.relocate_value(module, value, seg_type, block)
-                    # Write relocated value
-                    self.output[abs_offset] = value & 0xFF
-                    self.output[abs_offset + 1] = (value >> 8) & 0xFF
+                value = self.relocate_value(module, value, seg_type, block)
+                self._store_word(abs_offset, value,
+                                 self._own(mod_idx, buf_offset, abs_offset, mask))
 
         # Items 9 and 8: the constant of EXT+n / EXT-n, added once the word
         # holds EXT.  (They were read and ignored: every JMP EXT+3 in an
@@ -1402,14 +1522,15 @@ class Linker:
         # chain holds what link() filled in, not the link its relocation
         # record describes: external_relocations has it if that moves.
         for mod_idx, module in enumerate(self.modules):
-            for buf_offset, _, _, _ in module.relocations:
+            for buf_offset, _, _, _, _, mask in module.relocations:
                 if (mod_idx, buf_offset) in self.chained_locs:
                     continue
                 abs_offset = self._buf_offset_addr(module, buf_offset) \
                     - self.output_base
                 high_byte_offset = abs_offset + 1
 
-                if 0 <= high_byte_offset < code_length:
+                # Not a byte loaded over later, which is not an address.
+                if self._own(mod_idx, buf_offset, abs_offset, mask)[1]:
                     # Set bit in bitmap
                     # Bit 7 of byte 0 = code byte 0, bit 6 = code byte 1, etc.
                     byte_idx = high_byte_offset // 8
