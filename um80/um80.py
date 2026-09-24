@@ -151,7 +151,16 @@ class Segment:
         self.org = 0  # Starting origin (first ORG or 0)
         self.org_set = False  # Whether org has been set
         self.size = 0  # High water mark
+        # Where a CSEG, DSEG or ASEG directive goes on in the segment: the
+        # most of the locations set in it and those it was left at (see
+        # Assembler.enter_segment()).
+        self.mark = 0
         self.data = bytearray()
+
+    def extent(self):
+        """The segment's size: the most of the locations reached in it."""
+        top = max(self.size, self.loc)
+        return top - self.org if self.org_set else top
 
 
 class Macro:
@@ -296,7 +305,60 @@ class Assembler:
             com.loc = value
             com.size = max(com.size, value)  # a COMMON block's size
         else:
-            self.segments[self.current_seg].loc = value
+            seg = self.segments[self.current_seg]
+            seg.loc = value
+            # A segment's size is also the most it reached: after an ORG
+            # back, the location at the end undercounts it (`ORG 20H / DB 1
+            # / ORG 10H / DB 2' is 21H bytes, where um80 said 11H and so
+            # the next module was linked over the 1).
+            seg.size = max(seg.size, value)
+
+    def mark_location(self, value=None):
+        """Note a location set in the current segment (ORG, DS) or the one
+        it is left at: a later CSEG, DSEG or ASEG goes on from the most of
+        them."""
+        if self.current_common is None:
+            seg = self.segments[self.current_seg]
+            seg.mark = max(seg.mark, seg.loc if value is None else value)
+
+    def leave_segment(self):
+        """Before a segment or COMMON directive."""
+        self.mark_location()
+
+    def enter_segment(self, name):
+        """CSEG, DSEG or ASEG: go on in segment `name' where MACRO-80 does.
+
+        MACRO-80 3.44 keeps for each segment the most of the locations set
+        in it (ORG, the end of a DS) and of those it was left at, and a
+        segment directive goes on from there - not from where the segment
+        was left, if an ORG went back below an earlier one.  `ASEG / ORG
+        200H / DB 1,2,3 / ORG 180H / DB 4 / CSEG / DB 5 / ASEG / DB 6' puts
+        the 6 at 0200H, over the 1; so does ASEG alone in place of `CSEG /
+        DB 5 / ASEG'.  After `DS 10H / ORG 4 / DB 1', CSEG goes on at 10H,
+        past the DS.  um80 went on where the segment was left (0181H, 5).
+        """
+        self.leave_segment()
+        moved = self.current_seg != name or self.current_common is not None
+        self.current_seg = name
+        self.current_common = None
+        seg = self.segments[name]
+        if seg.loc != seg.mark:
+            seg.loc = seg.mark
+            moved = True
+        if moved and self.pass_num == 2:
+            if name == 'ASEG':
+                # The linker has to load into ASEG from here on, but the
+                # item saying so is held back until something is loaded or
+                # reserved here, as MACRO-80 does: an ORG or another segment
+                # directive first replaces it.  LINK-80 takes a set-location
+                # item to ASEG 0000H for code loaded at 0000H, so `ASEG /
+                # ORG 100H' made it write a .COM from 0000H.
+                self.output.defer_set_location(self.seg_type, self.loc)
+            else:
+                # So the linker loads into this segment again (leaving a
+                # COMMON block too, which did not set one).
+                self.output.drop_deferred_location()
+                self.output.write_set_location(self.seg_type, self.loc)
 
     @property
     def pc(self):
@@ -2926,6 +2988,7 @@ class Assembler:
                 self.error(f"ORG to '{ops[0].strip()}', an address in "
                            f"another segment")
             self.loc = val
+            self.mark_location(val)
             # Track first ORG as segment origin, but ONLY for ASEG (absolute segment).
             # For relocatable segments (CSEG/DSEG), ORG just sets the location counter
             # without affecting symbol relocation. This handles "org $-1" patterns
@@ -3122,41 +3185,12 @@ class Assembler:
                     self.select_common(self.current_common)
                     self.output.write_set_location(self.seg_type, new_loc)
                 self.loc += val
+                self.mark_location()
             return True
 
         # CSEG/DSEG/ASEG - segment selection
-        if operator == 'CSEG':
-            if self.current_seg != 'CSEG' or self.current_common is not None:
-                # Emit SET_LOC so the linker loads into this segment again
-                # (leaving a COMMON block too, which did not set one).
-                self.current_seg = 'CSEG'
-                self.current_common = None
-                if self.pass_num == 2:
-                    self.output.drop_deferred_location()
-                    self.output.write_set_location(self.seg_type, self.loc)
-            return True
-        if operator == 'DSEG':
-            if self.current_seg != 'DSEG' or self.current_common is not None:
-                # Emit SET_LOC so the linker loads into this segment again
-                # (leaving a COMMON block too, which did not set one).
-                self.current_seg = 'DSEG'
-                self.current_common = None
-                if self.pass_num == 2:
-                    self.output.drop_deferred_location()
-                    self.output.write_set_location(self.seg_type, self.loc)
-            return True
-        if operator == 'ASEG':
-            if self.current_seg != 'ASEG' or self.current_common is not None:
-                # The linker has to load into ASEG from here on, but the
-                # item saying so is held back until something is loaded or
-                # reserved here, as MACRO-80 does: an ORG or another segment
-                # directive first replaces it.  LINK-80 takes a set-location
-                # item to ASEG 0000H for code loaded at 0000H, so `ASEG /
-                # ORG 100H' made it write a .COM from 0000H.
-                self.current_seg = 'ASEG'
-                self.current_common = None
-                if self.pass_num == 2:
-                    self.output.defer_set_location(self.seg_type, self.loc)
+        if operator in ('CSEG', 'DSEG', 'ASEG'):
+            self.enter_segment(operator)
             return True
 
         # COMMON - define/select common block
@@ -3168,7 +3202,13 @@ class Assembler:
                     name = name[1:-1]
             if name not in self.common_blocks:
                 self.common_blocks[name] = Segment(name, ADDR_COMMON_REL)
+            self.leave_segment()
             self.current_common = name
+            # Every COMMON statement starts at the beginning of its block,
+            # as in MACRO-80 and FORTRAN (a block declared again lays its
+            # contents over the same storage); um80 went on from where the
+            # block was left.  Its size stays the most any statement used.
+            self.loc = 0
             if self.pass_num == 2:
                 # Select the block and say where in it the bytes that follow
                 # load: um80 wrote the selection alone, so the linker went on
@@ -4099,7 +4139,7 @@ class Assembler:
         # Reset segment locations for pass 2
         if pass_num == 2:
             for seg in self.segments.values():
-                seg.loc = 0
+                seg.loc = seg.size = seg.mark = 0
             for com in self.common_blocks.values():
                 com.loc = 0
                 com.size = 0
@@ -4248,7 +4288,7 @@ class Assembler:
             self.prev_defs = prev_defs
             # Reset state for pass 1
             for seg in self.segments.values():
-                seg.loc = 0
+                seg.loc = seg.size = seg.mark = 0
                 seg.org = 0
                 seg.org_set = False
             for com in self.common_blocks.values():
@@ -4385,8 +4425,8 @@ class Assembler:
                                                      cname if cname else ' ')
         cseg = self.segments['CSEG']
         dseg = self.segments['DSEG']
-        cseg_size = cseg.loc - cseg.org if cseg.org_set else cseg.loc
-        dseg_size = dseg.loc - dseg.org if dseg.org_set else dseg.loc
+        cseg_size = cseg.extent()
+        dseg_size = dseg.extent()
         # Item 10 even for no DSEG at all, as MACRO-80 writes it: without
         # it LINK-80 3.44 drops the constant of an item 9 in ASEG (`DW
         # EXT+1' there linked to EXT).
@@ -4541,8 +4581,8 @@ def main():
 
     cseg = asm.segments['CSEG']
     dseg = asm.segments['DSEG']
-    cseg_size = cseg.loc - cseg.org if cseg.org_set else cseg.loc
-    dseg_size = dseg.loc - dseg.org if dseg.org_set else dseg.loc
+    cseg_size = cseg.extent()
+    dseg_size = dseg.extent()
 
     print(f"Assembled {args.input} -> {output_path}")
     print(f"  Code segment: {cseg_size} bytes (ORG {cseg.org:04X}H)" if cseg.org_set else f"  Code segment: {cseg_size} bytes")

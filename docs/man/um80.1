@@ -107,9 +107,14 @@ Select data segment (data-relative).
 .TP
 .B ASEG
 Select absolute segment.
+.PP
+As in MACRO-80, a segment directive goes on at the most of the locations set
+in the segment (by ORG, or the end of a DS) and of those it was left at: after
+an ORG back below an earlier ORG, not where the segment was left.
 .TP
 .B COMMON \fR/\fIname\fR/
-Select or define a COMMON block.
+Select or define a COMMON block. Each COMMON statement starts at the beginning
+of its block, as in MACRO-80 (FORTRAN's rule).
 .SS External Linkage
 .TP
 .B PUBLIC \fIsymbol\fR[,\fIsymbol\fR]...

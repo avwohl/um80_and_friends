@@ -265,6 +265,24 @@ evaluates them. The format was established by running the genuine M80 and L80
   gives "Data 0100 010C"). As in MACRO-80, the item is now written only
   when something is loaded or reserved in the segment before an `ORG` or
   another segment directive replaces it; `--aseg` starts the same way.
+- um80 assembler: where a segment or `COMMON` directive goes on, as in
+  MACRO-80 3.44. Every `COMMON` statement starts at the beginning of its
+  block (the MACRO-80 manual gives FORTRAN's rule: a block declared again
+  lays its contents over the same storage); um80 went on where the block was
+  left. And MACRO-80 keeps for each of CSEG, DSEG and ASEG the most of the
+  locations set in it (`ORG`, the end of a `DS`) and of those it was left
+  at, and `CSEG`/`DSEG`/`ASEG` goes on from there: after `ASEG` / `ORG 200H`
+  / `DB 1,2,3` / `ORG 180H` / `DB 4`, a later `ASEG` goes on at 0200H, over
+  the 1, and after `DS 10H` / `ORG 4` / `DB 1`, a later `CSEG` at 10H, past
+  the `DS`. um80 went on where the segment was left (0181H, 5), so a source
+  that does this assembled into another layout than M80's.
+- um80 assembler: a segment's size (items 13 and 10) was its location at
+  the end, which after an `ORG` back undercounts it: `CSEG` / `ORG 20H` /
+  `DB 1` / `ORG 10H` / `DB 2` said 11H bytes, and the next module was
+  linked over the 1. It is the most the segment reached, 21H. (MACRO-80
+  says 20H: its size is the most of the locations set and the one at the
+  end, which leaves out the bytes loaded past the highest `ORG`, and L80
+  then links the next module over the last of them.)
 - ul80 linker: absolute code `ORG`ed below the first byte a module loaded in
   ASEG was dropped without a message: `ASEG` / `ORG 200H` / `DB 1` /
   `ORG 180H` / `DB 4` came out with only the 1 (ul80 took the first address
