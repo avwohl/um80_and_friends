@@ -519,6 +519,15 @@ cases, each checked with the genuine M80 and L80 3.44:
     that item, as M80 does, only when something is loaded or reserved in
     ASEG before an `ORG` replaces it.)
 
+- **Library search.** ul80 searches the libraries, each in turn and its
+  modules in library order, until nothing more loads; LINK-80's `/S` makes
+  one pass, so a reference to a module earlier in the library than the one
+  that makes it stays undefined in L80 ("Undefined Global") and is loaded
+  by ul80. Of 150 random library links, the 127 L80 links cleanly are
+  byte-identical, and the 18 differences are all such backward references.
+- **A COMMON block declared larger the second time.** L80 keeps the first
+  declaration's size ("%2nd COMMON Larger"), ul80 the largest.
+
 ul80 has no counterpart of `/D`; to compare with L80, give L80 `/D:` the
 address where ul80 puts the data (the end of the code).
 

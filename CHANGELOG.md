@@ -28,8 +28,9 @@ evaluates them. The format was established by running the genuine M80 and L80
   Rebuilding all of MP/M II (41 targets) with this change alone changes
   exactly that byte of `GENSYS.COM`; every `.SPR`,
   `.PRL`, `.RSP` and other `.COM` is byte-identical. (The forward-`EQU` and
-  `.MEMORY` fixes below also change `SUBMIT.PRL`, and the relocation bitmaps
-  of `ED`, `PIP`, `SDIR` and `STAT.PRL`.) (DRI built LDRLWR with Intel's
+  `.MEMORY` fixes below also change the relocation bitmaps of `ED`, `PIP`,
+  `SDIR`, `STAT`, `SPOOL` and `SUBMIT.PRL`, and the forward-`EQU` fix changes
+  the `SUBMIT` that uplm80 0.3.6 compiles from DRI's unaltered `SUB.PLM`.) (DRI built LDRLWR with Intel's
   ASM80 and ISIS LINK/LOCATE — see `MPMLDR/GENSYS.SUB` — whose object format
   carries byte relocations; DRI's own RMAC rejects the line with an `E`.)
 - um80 assembler: any other relocatable or external value in a one-byte field
@@ -383,8 +384,22 @@ evaluates them. The format was established by running the genuine M80 and L80
   constant 1234H was marked. It is the symbol, in both.
 - ul80 linker: the modules a library search loaded, and so the image, came
   out in an order that changed from run to run (the search went through a
-  Python set of undefined names). The search is LINK-80's: each library in
-  turn, its modules in library order.
+  Python set of undefined names). The order is now LINK-80's: each library
+  in turn, its modules in library order. ul80 goes on searching until
+  nothing more loads, where LINK-80's `/S` makes one pass and leaves a
+  reference to a module earlier in the library undefined, so the two lay
+  such a link out differently (see `docs/EXTENSIONS.md`).
+- ul80 linker: an external chain whose head, or a link, leads outside the
+  bytes the module loaded was followed that far and dropped without a word,
+  leaving the references after it unfilled. No correct object holds one; the
+  objects um80 0.3.48 assembled with `--aseg` from relocatable sources do
+  (their code went to CSEG, their chain heads stayed absolute). ul80 now
+  warns, naming the module and the symbol. **Reassemble any object 0.3.48
+  made with `--aseg`.**
+- um80 assembler: an empty COMMON block (`COMMON /X/` with nothing in it)
+  got no size item (special item 5). MACRO-80 writes it with size 0, and
+  LINK-80 stops with "?Loading Error" at the select of a block it was never
+  given a size for, so such an object could not be loaded by L80.
 - ul80 linker: "link-time expression has no store operator" was printed as
   an error, but the image was written with the field left 0 and ul80
   exited 0. The link fails.
@@ -437,7 +452,11 @@ evaluates them. The format was established by running the genuine M80 and L80
   The image has the byte loaded last: a later module's over an earlier
   one's, and in one module the byte it loaded later, absolute or not, as
   L80 writes it given `/D`; a relocated word keeps the relocated byte
-  nothing replaced. Without it, the error now says the switch exists.
+  nothing replaced. Without it, the error now says the switch exists. Where
+  a patch loads over a word of an external's chain, ul80 still fills every
+  reference by following each module's own links, where L80 follows the
+  patched bytes as a link: 191 of 199 random patch links are byte-identical
+  to L80 `/D`, 7 differ that way and 1 by the `/D` layout.
 - ul80 linker: evaluates extension link items (`+ - * / MOD NOT HIGH LOW`,
   unary minus, externals, program/data/common-relative values) once every
   segment is placed, for `.COM`, `.HEX`, `.PRL` and `.SPR` output alike. An
@@ -481,6 +500,18 @@ evaluates them. The format was established by running the genuine M80 and L80
   0.3.20 also put a module's DSEG bytes in its CSEG stream; ul80 0.3.48
   and this one fill different wrong words there.) Assemble such a source
   again with a current um80.
+- ul80 linker: a `.PRL`/`.SPR` relocation bitmap can disagree with the image
+  where an external's chain word, a `HIGH`/`LOW` field or an item-9 word is
+  loaded over (an `ORG` back over it, or a later module loading the same
+  COMMON bytes and defining the external): a mark set when the chain is
+  filled can outlive the byte. Every such program is garbage in for L80 too,
+  which follows the corrupted chain elsewhere or hangs. 938 random programs
+  without such an overwrite all satisfy the page-shift property (the bitmap
+  moved by k pages equals the image linked k pages higher).
+- um80 assembler (as in every earlier release): a symbol named like a
+  register (`E`, `A`, `B`) cannot be used in an expression ("Register 'e'
+  used as value"), and a directive written in column 1 (`public fcb`) is
+  taken for a label. MACRO-80 accepts both.
 
 ## [0.3.48] - 2026-09-24
 
