@@ -177,6 +177,19 @@ def test_um80_writes_what_link80_reads():
                           ('END_FILE',)]
 
 
+def test_data_size_is_written_when_there_is_no_data():
+    """MACRO-80 writes item 10 (data size) in every module, 0 when there
+    is no DSEG, and LINK-80 3.44 needs it: without it, `DW EXT+1' in ASEG
+    (item 9, then a chain of one) linked in L80 to EXT - the constant was
+    lost - where the same object with the item gives EXT+1."""
+    with tempfile.TemporaryDirectory() as d:
+        rel = _asm(d, "A", "\tEXTRN EXT\n\tASEG\n\tORG 4000H\n"
+                           "\tDW EXT+1\n\tEND\n")
+    items = RELReader(rel).read_all()
+    assert items[1] == ('DEFINE_DATA_SIZE', (ADDR_ABSOLUTE, 0))
+    assert [i[0] for i in items].count('DEFINE_PROG_SIZE') == 0
+
+
 def test_um80_and_m80_objects_link_together():
     """um80's EXT+3 / EXT-1 and M80's, in one program."""
     with tempfile.TemporaryDirectory() as d:

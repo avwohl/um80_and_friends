@@ -4018,8 +4018,10 @@ class Assembler:
         dseg = self.segments['DSEG']
         cseg_size = cseg.loc - cseg.org if cseg.org_set else cseg.loc
         dseg_size = dseg.loc - dseg.org if dseg.org_set else dseg.loc
-        if dseg_size > 0:
-            self.output.write_define_data_size(dseg_size)
+        # Item 10 even for no DSEG at all, as MACRO-80 writes it: without
+        # it LINK-80 3.44 drops the constant of an item 9 in ASEG (`DW
+        # EXT+1' there linked to EXT).
+        self.output.write_define_data_size(dseg_size)
         if cseg_size > 0:
             self.output.write_define_program_size(cseg_size)
         self.output.append(body)

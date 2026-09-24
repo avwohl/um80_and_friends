@@ -155,6 +155,10 @@ evaluates them. The format was established by running the genuine M80 and L80
   gives the same bytes. (LINK-80 still refuses a symbol of 8 or more
   characters, and an external of 7 or more inside a link-time expression;
   see `docs/EXTENSIONS.md`.)
+- um80 assembler: a module with no DSEG had no item 10 (data size), which
+  MACRO-80 writes in every module, 0 if need be. Without it LINK-80 drops
+  the constant of an external plus offset in ASEG: `ASEG` / `ORG 4000H` /
+  `DW EXT+1` linked in L80 to EXT. It is always written now.
 - relformat: the reader read item 14 without its A-field, so every object
   MACRO-80 or LINK-80 wrote fell out of step after its first module:
   `ulib80 -c` on FORTRAN-80's FORLIB.REL crashed (UnicodeEncodeError) and
