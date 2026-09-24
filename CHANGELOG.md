@@ -2,7 +2,7 @@
 
 All notable changes to the um80 toolchain are documented here.
 
-## [Unreleased]
+## [0.3.49] - 2026-09-24
 
 `LOW`/`HIGH` of a relocatable or external value, and any such value in a
 one-byte field, are now computed by the linker. MACRO-80 3.44 and LINK-80 3.44
@@ -484,8 +484,9 @@ evaluates them. The format was established by running the genuine M80 and L80
   DRI made the two with `GENHEX` and `GENMOD` (`UTIL1/DDT.SUB`), not a
   linker, and the mpm2 recipe (`UTIL1_TARGETS`) has to do the same before
   this release is used for that build; mpm2's branch `fix/ddt-genmod`
-  (commit 0386288) does, and builds all 44 targets for V2.0 and V2.1 with
-  this ul80, its `DDT.COM` starting as DRI's. Linking the old way with
+  (commit 0386288, merged for mpm2's next release) does, and builds all 44
+  targets for V2.0 and V2.1 with this ul80, its `DDT.COM` and `RDT.PRL`
+  byte-identical to DRI's. Linking the old way with
   `--allow-overlap` gives exactly the old, wrong `DDT.COM`.
 - ul80 linker: an object from um80 0.2.0 to 0.3.34 that refers to one
   external from more than one segment does not link right, with this ul80
