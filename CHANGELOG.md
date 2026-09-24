@@ -365,7 +365,8 @@ evaluates them. The format was established by running the genuine M80 and L80
   0103H-019AH overlaps absolute code of module DDT0MO". `DDT1ASM` is
   assembled at 0000H, and its code went over `DDT0MOV`'s relocator: the
   `.COM` started at 0000H with a `JMP 0683H` of `DDT1ASM`'s. DRI put the
-  three together with `GENHEX` and `GENMOD` (`DDT.SUB`), not a linker.
+  three together with `GENHEX` and `GENMOD` (`DDT.SUB`), not a linker
+  (see Known issues).
 - ul80 linker: in a `.PRL`/`.SPR` bitmap, a reference to `__END__`,
   `__BSS_START` or `__BSS_END`, or to a `PUBLIC` alias of one, was never
   marked: the linker computes them as absolute values, but they are program
@@ -454,6 +455,19 @@ evaluates them. The format was established by running the genuine M80 and L80
   `--prl`/`--spr`; it is linked normally for `.COM` and `.HEX`.
 
 ### Known issues
+- MP/M II's source build (`tools/build.py` in the mpm2 repository, V2.0
+  and `--version 2.1`) stops with "Build complete: 42 succeeded, 2
+  failed": `DDT.COM` and `RDT.PRL`, which it links from DRI's absolute
+  `DDT0MOV`, `DDT1ASM` and `DDT2MON` with ul80, fail with "Module DDT1AS:
+  absolute code at 0100H, 0103H-019AH overlaps absolute code of module
+  DDT0MO". The error is right: the `DDT.COM` that recipe linked (mpm2's
+  committed `bin/src/DDT.COM`) starts `C3 83 06`, DRI's `01 94 11 C3 47 01`.
+  DRI made the two with `GENHEX` and `GENMOD` (`UTIL1/DDT.SUB`), not a
+  linker, and the mpm2 recipe (`UTIL1_TARGETS`) has to do the same before
+  this release is used for that build; mpm2's branch `fix/ddt-genmod`
+  (commit 0386288) does, and builds all 44 targets for V2.0 and V2.1 with
+  this ul80, its `DDT.COM` starting as DRI's. Linking the old way with
+  `--allow-overlap` gives exactly the old, wrong `DDT.COM`.
 - ul80 linker: an object from um80 0.2.0 to 0.3.34 that refers to one
   external from more than one segment does not link right, with this ul80
   or any earlier one. Those releases chained all the references to an
