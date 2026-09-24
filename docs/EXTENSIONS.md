@@ -264,17 +264,37 @@ This is useful for:
 
 ### MP/M PRL Format Support
 
-ul80 can output MP/M Page Relocatable (.PRL) format:
+ul80 can output MP/M's two page-relocatable formats:
 
 ```bash
-ul80 --prl program.rel              # Output program.prl
-ul80 --prl -o output.prl a.rel b.rel
+ul80 --prl program.rel                  # Transient .PRL, linked at 100H
+ul80 --prl --extra 1000 -o pip.prl a.rel b.rel
+ul80 --spr -o xdos.spr a.rel b.rel      # System page .SPR/.RSP, linked at 0
 ```
 
-PRL files contain:
-- A relocation bitmap for page-aligned loading
-- Offset header for MP/M loader
-- Position-independent code support
+Both carry a 256-byte header, the image, and a relocation bitmap with one bit
+per byte of the image; MP/M adds the load page to every byte the bitmap marks.
+
+- **`--prl`** is a transient. MP/M loads it at `segment_bottom + 100H` but its
+  relocator adds only the segment's base page, so the image is linked at 100H,
+  exactly like a `.COM`.
+- **`--spr`** is a system page (`.SPR`, `.RSP`, `.BRS`), loaded at the segment
+  base itself and linked at 0.
+- **`--extra HEX`** is the memory a `.PRL` asks for beyond its image, for
+  storage a PL/M program places at `.MEMORY` — GENMOD's third argument
+  (`genmod pip.hex pip.prl $1000`).
+
+Page zero belongs to the process's memory segment under MP/M, so in either
+format a resolved reference to an absolute symbol below 100H (the BDOS entry at
+0005H, the default FCB at 005CH, the DMA buffer at 0080H) is marked for
+relocation. An absolute symbol at or above 100H stays absolute.
+
+### Absolute assembly (`--aseg`)
+
+M80 starts a file in CSEG, so an `ORG` is an offset within a relocatable
+segment. DRI's MAC has no relocatable segments: its sources are absolute and an
+`ORG` is an absolute address. `um80 --aseg` starts the file in ASEG, which
+assembles MAC sources the way MAC does.
 
 ---
 
@@ -292,12 +312,13 @@ PRL files contain:
 | PUSH A / POP A | ✗ | ✓ | ✓ | ✗ |
 | EQU external+offset | ✗ | ✓ | ✗ | ✓ |
 | `__END__` symbol | ✗ | ✓ | ✗ | ✗ |
-| PRL output | ✗ | ✓ | (RMAC) | ✗ |
+| PRL / SPR output | ✗ | ✓ | (RMAC) | ✗ |
 
 ---
 
 ## Version History
 
+- **0.3.48** — `--spr`, `--extra` and `--aseg`; `--prl` links a transient at 100H
 - **0.3.33** — External symbol aliases (EQU external+offset) for z88dk compatibility
 - **0.3.21** — Extended REL format for long symbols, `-t/--truncate` switch
 - **0.3.20** — DRI extensions (!, HIGH(), $, register aliases, PUSH A)

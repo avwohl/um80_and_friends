@@ -2,6 +2,71 @@
 
 All notable changes to the um80 toolchain are documented here.
 
+## [0.3.48] - 2026-09-24
+
+Five defects found by building all of MP/M II V2.0 and V2.1 from Digital
+Research's sources and comparing the result against DRI's binaries. Each has a
+regression test that fails with its fix reverted.
+
+### Changed
+- ul80 linker: `--prl` now links a transient at 100H. MP/M loads a `.PRL` at
+  `segment_bottom + 100H` but its relocator (NUCLEUS/CLI.ASM, `relocate`) adds
+  only the segment's base *page* to the bytes the bitmap marks, so the extra
+  page has to come from the link, exactly as for a `.COM`. It was linked at 0,
+  which put every relocated address a page below the code: source-built MP/M
+  utilities loaded, printed nothing and dropped the session. DRI's binaries
+  state the convention — the highest relocatable word in `STAT.PRL` is its
+  program length plus 100H. **A `.PRL` linked with `--prl` by an earlier
+  release was wrong; relink it.**
+- ul80 linker: system pages (`.SPR`, `.RSP`, `.BRS`), which MP/M loads at the
+  segment base and which really are linked at 0, have their own switch,
+  `--spr`.
+- ul80 linker: in page-relocatable output a resolved reference to an absolute
+  symbol below 100H — the BDOS entry at 0005H, the default FCB at 005CH, the
+  DMA buffer at 0080H — is now marked for relocation, because under MP/M page
+  zero belongs to the process's memory segment. DRI got the same effect by
+  linking twice at different offsets (PLM_WORK/X0100.ASM and X0200.ASM) and
+  letting GENMOD diff the results; DRI's `DIR.PRL` marks twelve `CALL 5`
+  sites. An absolute symbol at or above 100H stays absolute.
+
+### Added
+- ul80 linker: `--extra HEX`, the memory a `.PRL` asks MP/M for beyond its
+  image, for storage a PL/M program places at `.MEMORY`. Nothing in the object
+  files says how much, so DRI named it at build time as GENMOD's third
+  argument; its ASM, ED, PIP and SDIR reserve 1000H and RDT 1500H.
+- um80 assembler: `--aseg` assembles a source written for DRI's MAC the way MAC
+  does — absolute, so an `ORG` is an address rather than an offset in CSEG.
+  MP/M II's assembler is seven such modules, each with its own `ORG`, which DRI
+  assembled separately and concatenated as HEX; assembled as relocatable they
+  were stacked end to end and `ASM.PRL` came out at 36971 bytes against DRI's
+  8171. With `--aseg` it is 8176 bytes, and the `BOOT.HEX` it produces from
+  `BOOT.ASM` is byte-identical to the one DRI's own `ASM.PRL` produces.
+
+### Fixed
+- um80 assembler: an offset subtracted from an external symbol kept its sign.
+  `LXI H,PDTBL-34H` assembled to `PDTBL+34H` — the two branches that separate
+  the constant from the symbol were swapped, so the constant to the right of a
+  `-` was added and the one to the left negated. `SYM+n` and `n+SYM` were
+  right, which is why it survived. `n-SYM` (a negated symbol) and an expression
+  naming two externals cannot be carried in a `.REL` file and are now errors
+  rather than wrong code. In MP/M II's CLI this put every process descriptor
+  reference 68H bytes past the table, so a source-built system warm-booted
+  instead of running any transient.
+- um80 assembler: a label named after a mnemonic assembled to the opcode byte.
+  An opcode name stands for its own byte (`DB MOV` is 40H), and um80 applied
+  that before looking in the symbol table, so `CALL ADD` assembled to
+  `CALL 0080H` (80H is `ADD A,B`) even where `ADD` was a defined procedure. A
+  defined or external symbol now wins; the opcode byte remains for names that
+  are not symbols. MP/M II's `STAT.PLM` declares `add: procedure`, and STAT
+  executed its own command tail at 0080H and restarted, printing its drive
+  line 1837 times.
+- ul80 linker: `__END__` exported to another module was zero. A PL/M
+  `AT (.MEMORY)` compiles to a public alias of `__END__`, which has to be
+  registered before externals are resolved but has no value until every
+  segment is placed; it is now recomputed once the bases are known. SDIR's
+  hash table is declared that way in one module and used from another, and it
+  cleared 256 bytes from address 0, BDOS vector included.
+
 ## [0.3.47] - 2026-09-23
 
 ### Documentation

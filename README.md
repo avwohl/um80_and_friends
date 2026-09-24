@@ -39,6 +39,7 @@ um80 -g program.mac                 # Export all symbols as PUBLIC (for debug)
 um80 -t program.mac                 # Truncate symbols to 8 chars (M80 compat)
 um80 -e ".z80" program.mac          # Execute code before source (set Z80 mode)
 um80 --pre macros.mac program.mac   # Include file before source
+um80 --aseg program.asm             # Absolute, like DRI's MAC: ORG is an address
 ```
 
 ### Link object files
@@ -49,7 +50,9 @@ ul80 -o output.com a.rel b.rel      # Link multiple files
 ul80 -s program.rel                 # Generate symbol file (.sym)
 ul80 -S symbols.sym program.rel     # Specify symbol file name
 ul80 -p E000 program.rel            # Set origin address (hex)
-ul80 --prl program.rel              # Output MP/M .PRL format
+ul80 --prl program.rel              # MP/M .PRL transient (linked at 100H)
+ul80 --prl --extra 1000 program.rel # ...asking MP/M for 1000H more memory
+ul80 --spr program.rel              # MP/M .SPR/.RSP system page (linked at 0)
 ```
 
 ### Disassemble a COM file
