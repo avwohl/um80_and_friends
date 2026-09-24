@@ -4429,10 +4429,12 @@ class Assembler:
         # (a COMMON block's size is also the highest location reached in it:
         # the location at the end undercounts a block re-entered or ORGed
         # back).
+        # An empty block gets its size too: MACRO-80 writes item 5 with 0,
+        # and LINK-80 stops with '?Loading Error' at the SELECT_COMMON of a
+        # block it was never given a size for.
         for cname, com in self.common_blocks.items():
-            if com.size > 0:
-                self.output.write_define_common_size(ADDR_ABSOLUTE, com.size,
-                                                     cname if cname else ' ')
+            self.output.write_define_common_size(ADDR_ABSOLUTE, com.size,
+                                                 cname if cname else ' ')
         cseg = self.segments['CSEG']
         dseg = self.segments['DSEG']
         cseg_size = cseg.extent()
