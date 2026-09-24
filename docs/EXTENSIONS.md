@@ -455,6 +455,14 @@ cases, each checked with the genuine M80 and L80 3.44:
   COMMON blocks, which M80 assembles as a constant. um80's objects link to
   the arithmetically right value in L80 and ul80 alike; M80's do not, in
   either linker.
+- **M80 3.44 undercounts a segment after an `ORG` back.** Its segment size
+  is the most of the locations set and the one at the end, which leaves
+  out bytes loaded past the highest `ORG` (`ORG 20H` / `DB 1` / `ORG 10H`
+  / `DB 2` is 20H bytes, so L80 links the next module over the 1). um80
+  writes the most the segment reached, 21H. Where each byte goes matches
+  M80, including a segment directive going on at the highest location set
+  (not where the segment was left) and every `COMMON` statement starting
+  at the beginning of its block.
 - **L80 3.44 miscomputes a COMMON-relative value past the end of its block**
   (an `EQU` of one, a `DW` of one) — M80's objects and um80's give the same
   wrong bytes in L80; ul80 computes them right.
