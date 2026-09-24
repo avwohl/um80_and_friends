@@ -81,10 +81,15 @@ evaluates them. The format was established by running the genuine M80 and L80
   at address 0000H. Pass 1 is now repeated until the symbol table stops
   changing, and from its second time on a forward reference reads the
   value from the end of the time before, which is what pass 2 reads there
-  too — so X is 6. A definition that never settles, because a symbol is
-  defined in terms of itself, is an error ("Cannot resolve the value of
-  ..."), and so is a symbol whose value differs between the passes after it
-  was used (a phase error, e.g. after `IFDEF` of a later symbol). `SET` is
+  too — so X is 6. A chain of N such forward references needs N repeats,
+  and the limit grows with the longest chain in the source (64 more
+  for labels moved by forward sizes and JR promotion). EQUs defined in
+  terms of each other are an error naming the cycle — "Cannot resolve the
+  value of 'X': it is defined in terms of itself (X EQU Y, Y EQU X)" —
+  whether or not some value satisfies them, and so is a symbol whose value
+  still changes when the limit is reached (through a label its own value
+  moves) or differs between the passes after it was used (a phase error,
+  e.g. after `IFDEF` of a later symbol). `SET` is
   unchanged: a forward reference to a `SET` symbol reads its last value, as
   in M80, and `X SET X+1` reads the X of the line before. (MACRO-80 flags
   these forward uses `U`; um80 assembles the value they stand for.)

@@ -253,6 +253,13 @@ class Assembler:
         self.prev_symbols = {}  # name -> (value, seg_type), for JR/DJNZ
         self.prev_defs = {}  # name -> ExprValue
         self.defining = None  # the symbol a SET is defining, while it does
+        # The symbols each EQU's operand read in this time through pass 1:
+        # name -> {symbol read: True if it was not defined yet (a forward
+        # reference)}, and the operand's text; `reading' collects them
+        # while an EQU operand is evaluated.  See equ_cycle_and_depth().
+        self.equ_deps = {}
+        self.equ_text = {}
+        self.reading = None
         self.phase = None  # (run address, location counter) after .PHASE
         self.rel_common = None  # COMMON block last selected in the .REL
         self.reported_unlinkable = set()  # symbols report_unlinkable() named
@@ -461,6 +468,66 @@ class Assembler:
                        f"defined, and its value is not the same in both "
                        f"passes ({sym.value & 0xFFFF:04X}H before this "
                        f"line, {new.value & 0xFFFF:04X}H here)")
+
+    def equ_cycle_and_depth(self):
+        """(cycle, depth) of the EQUs read in the last time through pass 1.
+
+        `cycle' is a list of EQU symbols each defined in terms of the next
+        and the last in terms of the first, with at least one of those
+        uses a forward reference (reading an earlier definition is not
+        circular: `X EQU 5 / Y EQU X / X EQU Y' is fine), or None.  `depth'
+        is the most forward references along any chain of EQUs, the number
+        of repeats of pass 1 the chain needs to settle.
+        """
+        deps = self.equ_deps
+        state, depth = {}, {}
+
+        def line_of(name):
+            sym = self.symbols.get(name)
+            return (sym.line if sym else 0), name
+
+        for root in sorted(deps, key=line_of):
+            if root in state:
+                continue
+            state[root] = 1  # on the stack
+            # (symbol, its uses not yet followed, forward edge into it)
+            stack = [(root, iter(sorted(deps[root].items())), False)]
+            while stack:
+                node, uses, _ = stack[-1]
+                for used, forward in uses:
+                    if used not in deps:
+                        continue  # a label, an external, a SET symbol
+                    if state.get(used) == 1:
+                        k = next(i for i, entry in enumerate(stack)
+                                 if entry[0] == used)
+                        if forward or any(entry[2] for entry in stack[k + 1:]):
+                            return [entry[0] for entry in stack[k:]], 0
+                        continue
+                    if used not in state:
+                        state[used] = 1
+                        stack.append((used, iter(sorted(deps[used].items())),
+                                      forward))
+                        break
+                else:
+                    stack.pop()
+                    state[node] = 2
+                    depth[node] = max(
+                        (depth[used] + (1 if forward else 0)
+                         for used, forward in deps[node].items()
+                         if used in depth), default=0)
+        return None, max(depth.values(), default=0)
+
+    def report_circular(self, cycle):
+        """Error for EQUs defined in terms of each other (`cycle')."""
+        first = min(range(len(cycle)), key=lambda i: (
+            self.symbols[cycle[i]].line if cycle[i] in self.symbols else 0))
+        cycle = cycle[first:] + cycle[:first]
+        chain = ', '.join(f"{name} EQU {self.equ_text.get(name, '?')}"
+                          for name in cycle)
+        sym = self.symbols.get(cycle[0])
+        self.errors.append(AssemblerError(
+            f"Cannot resolve the value of '{cycle[0]}': it is defined in "
+            f"terms of itself ({chain})", sym.line if sym else None))
 
     def lookup_symbol(self, name):
         """Look up a symbol, creating undefined entry if needed."""
@@ -890,6 +957,9 @@ class Assembler:
                 return ExprValue(OPCODE_VALUES[upper])
 
             sym = self.lookup_symbol(expr)
+            if self.reading is not None:
+                forward = not (sym.defined or sym.external)
+                self.reading[sym.name] = self.reading.get(sym.name) or forward
             if not (sym.defined or sym.external):
                 ev = self.forward_value(sym.name)
                 if ev is not None:
@@ -2666,7 +2736,18 @@ class Assembler:
             if op_upper in REGPAIRS_PUSHPOP:
                 self.define_symbol(label, REGPAIRS_PUSHPOP[op_upper], ADDR_ABSOLUTE)
                 return True
-            ev = self.eval_operand(ops[0], allow_undefined=(self.pass_num == 1))
+            reads = {} if self.pass_num == 1 else None
+            self.reading = reads
+            try:
+                ev = self.eval_operand(ops[0],
+                                       allow_undefined=(self.pass_num == 1))
+            finally:
+                self.reading = None
+            if reads is not None:
+                deps = self.equ_deps.setdefault(label.upper(), {})
+                for name, forward in reads.items():
+                    deps[name] = deps.get(name) or forward
+                self.equ_text.setdefault(label.upper(), ops[0].strip())
             # An external plus a constant makes the symbol an alias of the
             # external.  A value only the linker can compute, e.g. HIGH BUF
             # with BUF relocatable, makes the symbol stand for the
@@ -3896,14 +3977,19 @@ class Assembler:
         # depends on a symbol defined further down reads, the first time,
         # a 0 for that symbol, and from then on its value at the end of the
         # previous time through (forward_value()) - which is also what pass
-        # 2 reads above the defining line.  A chain N deep settles after N
-        # repeats; one that never settles defines a symbol in terms of
-        # itself.
-        max_iterations = 64  # Prevent infinite loops
+        # 2 reads above the defining line.  A chain of N such forward
+        # references settles after N repeats, so the limit on repeats grows
+        # with the longest chain (it was a flat 64, and the 65th EQU of a
+        # longer chain was reported as circular).  A chain that comes back
+        # to where it started is an error, whether or not it ever settles:
+        # `X EQU Y / Y EQU X' settled on 0 and assembled silently.
+        slack = 64  # repeats beyond the EQU chains: labels, JR promotion
         prev_symbols = {}  # Symbol table from previous iteration for forward refs
         prev_defs = {}
         prev_keys = None
-        for iteration in range(max_iterations):
+        prev_cycle = None
+        iteration = 0
+        while True:
             self.pass1_iteration = iteration  # Track iteration for JR range checking
             self.prev_symbols = prev_symbols  # Make available for JR range checking
             self.prev_defs = prev_defs
@@ -3919,6 +4005,8 @@ class Assembler:
             self.current_common = None
             self.errors = []  # Clear errors between iterations
             self.local_counter = 0  # Reset LOCAL symbol counter for consistent naming
+            self.equ_deps = {}
+            self.equ_text = {}
             # Clear symbol definitions (but keep promoted_jr)
             # We need to rebuild symbol table each time
             # since addresses change when JR->JP promotion happens
@@ -3945,6 +4033,15 @@ class Assembler:
                 if keys.get(name) != prev_keys.get(name))
             prev_keys = keys
 
+            # A circular definition, once it has settled or shows up twice
+            # (the first time through, conditional assembly on a symbol
+            # still undefined may have read other lines).
+            cycle, depth = self.equ_cycle_and_depth()
+            if cycle and (settled or frozenset(cycle) == prev_cycle):
+                self.report_circular(cycle)
+                return False
+            prev_cycle = frozenset(cycle) if cycle else None
+
             # Always run at least 2 iterations:
             # - Iteration 0 builds symbol table (can't check range yet)
             # - Iteration 1 checks range with symbol values from iteration 0
@@ -3952,18 +4049,23 @@ class Assembler:
             if (iteration >= 1 and len(self.promoted_jr) == prev_promotions
                     and settled):
                 break  # Stable - no new promotions, no symbol still moving
-        else:
+            iteration += 1
+            if iteration < slack + depth:
+                continue
             if unsettled:
                 for name in unsettled[:10]:
                     sym = self.symbols.get(name)
                     self.errors.append(AssemblerError(
-                        f"Cannot resolve the value of '{name}': it changes "
-                        f"every time the source is read, so it is defined "
-                        f"in terms of itself (directly or through other "
-                        f"symbols)", sym.line if sym else None))
+                        f"Cannot resolve the value of '{name}': it was still "
+                        f"changing after the source was read {iteration} "
+                        f"times, so it depends on itself - through the "
+                        f"address of a label that its own value moves (a DS,"
+                        f" ORG or IF of a symbol defined further down)",
+                        sym.line if sym else None))
                 return False
             # Warn about promotions on last iteration
-            self.warnings.append(f"Warning: JR/DJNZ promotion did not stabilize after {max_iterations} iterations")
+            self.warnings.append(f"Warning: JR/DJNZ promotion did not stabilize after {iteration} iterations")
+            break
 
         # Report promotions
         if self.promoted_jr and not self.strict_jr:

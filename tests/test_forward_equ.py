@@ -196,3 +196,52 @@ def test_export_all_does_not_announce_a_forward_link_time_equ():
         if item[0] == 'ENTRY_SYMBOL':
             names.append(item[1])
     assert 'HB' not in names
+
+
+def test_long_reversed_chain_settles():
+    """Each repeat of pass 1 settles one more forward reference, so a chain
+    of N EQUs each defined in terms of the next needs N repeats.  Pass 1
+    stopped after 64 and reported the 65th and later as "defined in terms
+    of itself"; the limit now grows with the chain."""
+    n = 100
+    lines = ["\tASEG", "\tORG 100H", "\tDW S0"]
+    lines += [f"S{i}\tEQU S{i + 1}+1" for i in range(n)]
+    lines += [f"S{n}\tEQU 1000H", "\tDW S0", "\tEND"]
+    ok, asm, rel = _asm("\n".join(lines) + "\n")
+    assert ok, _errors(asm)[:3]
+    value = 0x1000 + n
+    assert _bytes(rel) == [value & 0xFF, value >> 8] * 2
+
+
+def _circular(source):
+    ok, asm, _ = _asm(source)
+    assert not ok, "a circular definition assembled"
+    return " ".join(_errors(asm))
+
+
+def test_circular_equs_with_a_fixed_point_are_an_error():
+    """`X EQU Y / Y EQU X' settled on X = Y = 0 and assembled silently, as
+    did any pair whose value satisfies both (AA = BB+1, BB = AA-1)."""
+    for src in ("\tASEG\n\tORG 100H\n\tDB X\nX\tEQU Y\nY\tEQU X\n\tEND\n",
+                "\tASEG\n\tORG 100H\nX\tEQU Y\nY\tEQU X\n\tDB X\n\tEND\n",
+                "\tCSEG\nAA\tEQU BB+1\nBB\tEQU AA-1\n\tDW AA,BB\n\tEND\n",
+                "\tCSEG\n\tDW X\nX\tEQU X\n\tEND\n"):
+        text = _circular(src)
+        assert "defined in terms of itself" in text, (src, text)
+    text = _circular("\tASEG\n\tORG 100H\nP\tEQU Q\nQ\tEQU R\nR\tEQU P\n"
+                     "\tDB P\n\tEND\n")
+    assert "P EQU Q, Q EQU R, R EQU P" in text
+
+
+def test_circular_equs_without_a_fixed_point_name_the_cycle():
+    text = _circular("\tASEG\n\tORG 100H\n\tDB X\nX\tEQU Y+1\n"
+                     "Y\tEQU X+1\n\tEND\n")
+    assert "X EQU Y+1, Y EQU X+1" in text
+
+
+def test_an_equ_restated_from_itself_is_not_circular():
+    """Redefined with the value it already has, through another symbol."""
+    ok, asm, rel = _asm("\tASEG\n\tORG 100H\nX\tEQU 5\nY\tEQU X\nX\tEQU Y\n"
+                        "\tDB X,Y\n\tEND\n")
+    assert ok, _errors(asm)
+    assert _bytes(rel) == [5, 5]
