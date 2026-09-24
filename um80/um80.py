@@ -311,7 +311,8 @@ class Assembler:
             # back, the location at the end undercounts it (`ORG 20H / DB 1
             # / ORG 10H / DB 2' is 21H bytes, where um80 said 11H and so
             # the next module was linked over the 1).
-            seg.size = max(seg.size, value)
+            if value > seg.size:
+                seg.size = value
 
     def mark_location(self, value=None):
         """Note a location set in the current segment (ORG, DS) or the one
@@ -600,13 +601,22 @@ class Assembler:
         what the forward references read.  A definition that cannot be
         evaluated away from its line (def_replay) keeps the value it gave.
         """
-        values = {}
+        values, affected = {}, set()
         for node in order:
             value = None
+            # Only a definition that reads a forward reference, or one
+            # that such a definition decides, can come out another way.
+            reads = self.def_deps[node]
+            if any(forward or self.resolve_node(dep) in affected
+                   for dep, forward in reads.items()):
+                affected.add(node)
+            else:
+                values[node] = self.def_value.get(node)
+                continue
             replay = self.def_replay.get(node)
             if replay is not None:
                 env = {}
-                for dep in self.def_deps[node]:
+                for dep in reads:
                     used = self.resolve_node(dep)
                     known = values.get(used, self.def_value.get(used))
                     if known is None:
