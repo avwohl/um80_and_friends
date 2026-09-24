@@ -265,6 +265,15 @@ evaluates them. The format was established by running the genuine M80 and L80
   gives "Data 0100 010C"). As in MACRO-80, the item is now written only
   when something is loaded or reserved in the segment before an `ORG` or
   another segment directive replaces it; `--aseg` starts the same way.
+- ul80 linker: absolute code `ORG`ed below the first byte a module loaded in
+  ASEG was dropped without a message: `ASEG` / `ORG 200H` / `DB 1` /
+  `ORG 180H` / `DB 4` came out with only the 1 (ul80 took the first address
+  loaded for the start of the module's ASEG). The 4 is at 0180H now, as in
+  LINK-80. And a `.COM` whose only code is absolute and above the origin
+  (`-p`, 0100H by default) started at its lowest byte, which CP/M then
+  loads at 0100H; it starts at the origin, as LINK-80 writes it (the same
+  384 bytes as L80's for the example). Give `-p` for a raw image that
+  starts elsewhere, e.g. a ROM at E000H.
 - ul80 linker: in a `.PRL`/`.SPR` bitmap, a reference to `__END__`,
   `__BSS_START` or `__BSS_END`, or to a `PUBLIC` alias of one, was never
   marked: the linker computes them as absolute values, but they are program

@@ -227,6 +227,11 @@ class Linker:
             buf[current_loc] = value
             if loaded and current_seg == ADDR_COMMON_REL:
                 module.common_data.setdefault(seg_key(), set()).add(current_loc)
+            if loaded and current_seg == ADDR_ABSOLUTE \
+                    and current_loc < module.code_start:
+                # Loaded below where ASEG was thought to start: `ORG 200H /
+                # DB 1 / ORG 180H / DB 4' lost the 4.
+                module.code_start = current_loc
 
         # Track relocations with segment-relative offsets before combining
         pending_relocations = []  # (seg key, seg_offset, reloc_type, block)
@@ -1168,13 +1173,20 @@ class Linker:
         return text[1:-1] if text.startswith('(') and text.endswith(')') else text
 
     def save_com(self, filename):
-        """Save as CP/M .COM file."""
-        # For .COM file, code loads and executes at 0x100
-        # Only prepend JMP if entry point is not at 0x100
+        """Save as CP/M .COM file: the image from the origin (-p, 100H by
+        default), or from below it if absolute code lies there.
+
+        A program with only absolute code above the origin (`ASEG / ORG
+        200H') started at its lowest byte, which CP/M then loaded at 0100H;
+        LINK-80 writes the .COM from the origin, as here.
+        """
+        data = bytes(self.output)
+        if self.output_base > self.code_base:
+            data = bytes(self.output_base - self.code_base) + data
         with open(filename, 'wb') as f:
-            f.write(bytes(self.output))
+            f.write(data)
             # Pad to CP/M record boundary (128 bytes)
-            remainder = len(self.output) % 128
+            remainder = len(data) % 128
             if remainder:
                 f.write(bytes(128 - remainder))
 
