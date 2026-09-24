@@ -234,6 +234,7 @@ def test_circular_equs_with_a_fixed_point_are_an_error():
 
 
 def test_circular_equs_without_a_fixed_point_name_the_cycle():
+    """The error names the EQUs of the cycle, operands and all."""
     text = _circular("\tASEG\n\tORG 100H\n\tDB X\nX\tEQU Y+1\n"
                      "Y\tEQU X+1\n\tEND\n")
     assert "X EQU Y+1, Y EQU X+1" in text

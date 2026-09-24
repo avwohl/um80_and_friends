@@ -63,6 +63,7 @@ COMOFF = ("\tCSEG\n\tMVI A,HIGH(C1+100H)\n\tMVI A,HIGH(C1+400H)\n"
 
 
 def test_constant_beside_a_common_address_is_its_own_operand():
+    """COMOFF: C(common, C1) C(abs, 100H) A(+), not C(common, C1+100H)."""
     with tempfile.TemporaryDirectory() as d:
         exprs = _expressions(_asm(d, "C", COMOFF))
     blk = ADDR_COMMON_REL

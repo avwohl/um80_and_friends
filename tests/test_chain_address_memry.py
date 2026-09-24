@@ -90,6 +90,7 @@ def _prl_marks(linker, d):
 
 
 def test_fortran80_forward_references():
+    """F80's own object: every chain gets its label's address."""
     with tempfile.TemporaryDirectory() as d:
         linker = _link(d, F80_T, _stub(T_EXTERNALS))
     data = 0x100 + 110
@@ -123,6 +124,7 @@ def _chain_module():
 
 
 def test_chain_address_fills_every_word_and_moves_in_a_prl():
+    """A two-word chain, and one filled with a DSEG address."""
     with tempfile.TemporaryDirectory() as d:
         linker = _link(d, _chain_module(), prl=True)
         marks = _prl_marks(linker, d)
@@ -146,6 +148,7 @@ def _asm(d, source):
 
 
 def test_memry_is_the_first_free_byte():
+    """A DSEG $MEMRY gets the end of the data, 0107H."""
     with tempfile.TemporaryDirectory() as d:
         linker = _link(d, _asm(d, MEMRY))
     # Code 0100-0102, data 0103-0106: $MEMRY at 0104H holds 0107H.
@@ -154,6 +157,7 @@ def test_memry_is_the_first_free_byte():
 
 
 def test_memry_counts_common_and_reserved_space_and_moves():
+    """DS and COMMON count; a .PRL marks the word."""
     src = MEMRY.replace("\tDB 9\n", "\tDB 9\n\tDS 30H\n\tCOMMON /CB/\n"
                                     "\tDS 20H\n")
     with tempfile.TemporaryDirectory() as d:
@@ -164,6 +168,7 @@ def test_memry_counts_common_and_reserved_space_and_moves():
 
 
 def test_memry_in_code_is_overwritten_too():
+    """In CSEG too, whatever the module loaded there (L80 3.44)."""
     src = ("\tPUBLIC $MEMRY\n\tCSEG\n$MEMRY:\tDB 1,2,3\n\tDS 50H\n\tDSEG\n"
            "\tDB 7\n\tEND\n")
     with tempfile.TemporaryDirectory() as d:

@@ -24,6 +24,7 @@ import sys
 import tempfile
 
 import um80
+from um80.relformat import RELWriter, ADDR_ABSOLUTE, ADDR_PROGRAM_REL
 from um80.um80 import Assembler
 from um80.ul80 import Linker
 from um80.ulib80 import Library
@@ -189,7 +190,6 @@ def test_chained_reference_to_an_absolute_symbol_is_not_marked():
     record said program relative, and the bitmap marked the word by it,
     although the word ends up holding X - here the constant 1234H, which
     does not move.  Only what the filled-in value is decides."""
-    from um80.relformat import (RELWriter, ADDR_ABSOLUTE, ADDR_PROGRAM_REL)
     with tempfile.TemporaryDirectory() as d:
         w = RELWriter()
         w.write_program_name("A")

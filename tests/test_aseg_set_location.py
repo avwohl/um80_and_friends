@@ -42,29 +42,34 @@ def _loc(addr_type, addr):
 
 
 def test_aseg_then_org_loads_at_the_org_only():
+    """HI.MAC: the ORG's item alone, as M80 writes it."""
     items = _items(HI)
     assert items[0] == _loc(ADDR_ABSOLUTE, 0x100)
     assert _loc(ADDR_ABSOLUTE, 0) not in items
 
 
 def test_aseg_with_code_at_zero_still_says_so():
+    """A byte at ASEG 0000H flushes the held-back item."""
     assert _items("\taseg\n\tdb 1\n\tend\n") == [
         _loc(ADDR_ABSOLUTE, 0), ('B', 1)]
 
 
 def test_aseg_left_before_anything_is_loaded():
+    """An ASEG left at once writes nothing."""
     # M80: P 0000, 01, P 0001, 02 - nothing for the ASEG.
     assert _items("\tcseg\n\tdb 1\n\taseg\n\tcseg\n\tdb 2\n\tend\n") == [
         ('B', 1), _loc(ADDR_PROGRAM_REL, 1), ('B', 2)]
 
 
 def test_aseg_reserved_space_writes_it():
+    """DS in ASEG flushes the held-back item before its own."""
     # M80: A 0000, A 0003, 01.
     assert _items("\taseg\n\tds 3\n\tdb 1\n\tend\n") == [
         _loc(ADDR_ABSOLUTE, 0), _loc(ADDR_ABSOLUTE, 3), ('B', 1)]
 
 
 def test_aseg_returned_to_says_where():
+    """Back in ASEG, the item carries where ASEG was left."""
     # M80: A 0000, 01, P 0000, 02, A 0001, 03.
     assert _items("\taseg\n\tdb 1\n\tcseg\n\tdb 2\n\taseg\n\tdb 3\n"
                   "\tend\n") == [

@@ -3934,17 +3934,10 @@ class Assembler:
 
                 marks = entry.get('marks', {})
 
-                def cells(first, chunk):
-                    # Each byte, then its mark or a space: a field the
-                    # linker finishes ends in ' " ! or * (M80's marks).
-                    return ''.join(f"{b:02X}{marks.get(first + i, ' ')}"
-                                   for i, b in enumerate(chunk)
-                                   ).rstrip().ljust(12)
-
                 if code_bytes:
                     addr_str = f"{addr:04X}"
                     # Show up to 4 bytes on first line
-                    bytes_str = cells(0, code_bytes[:4])
+                    bytes_str = self._listing_cells(code_bytes, marks, 0)
                 else:
                     addr_str = "    "
                     bytes_str = " " * 12
@@ -3953,8 +3946,17 @@ class Assembler:
 
                 # If more than 4 bytes, show continuation lines
                 for first in range(4, len(code_bytes), 4):
-                    bytes_str = cells(first, code_bytes[first:first + 4])
+                    bytes_str = self._listing_cells(code_bytes, marks, first)
                     f.write(f"       {addr + first:04X}  {bytes_str}\n")
+
+    @staticmethod
+    def _listing_cells(code_bytes, marks, first):
+        """The byte column for code_bytes[first:first+4]: each byte, then
+        its mark or a space - a field the linker finishes ends in ' " ! or
+        * (M80's marks)."""
+        return ''.join(f"{code_bytes[i]:02X}{marks.get(i, ' ')}"
+                       for i in range(first, min(first + 4, len(code_bytes)))
+                       ).rstrip().ljust(12)
 
     def assemble(self, source_file, pre_items=None):
         """Assemble a source file.
@@ -4110,7 +4112,8 @@ class Assembler:
                         sym.line if sym else None))
                 return False
             # Warn about promotions on last iteration
-            self.warnings.append(f"Warning: JR/DJNZ promotion did not stabilize after {iteration} iterations")
+            self.warnings.append(f"Warning: JR/DJNZ promotion did not "
+                                 f"stabilize after {iteration} iterations")
             break
 
         # Report promotions

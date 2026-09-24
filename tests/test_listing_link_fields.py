@@ -61,6 +61,7 @@ def _bytes_of(lines, text):
 
 
 def test_link_time_fields_list_placeholder_and_mark():
+    """Each kind of field, as MACRO-80 marks it."""
     lines = _listing(SOURCE)
     assert _bytes_of(lines, "mvi a,high(buf)") == '3E 00"'
     assert _bytes_of(lines, "mvi a,low(ext+3)") == "3E 00*"
