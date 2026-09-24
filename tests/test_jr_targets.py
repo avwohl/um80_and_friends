@@ -45,6 +45,9 @@ def test_unreachable_relative_target_is_an_error(body):
     ok, asm = _asm(HEAD + body + TAIL)
     assert not ok, "assembled silently"
     assert len(asm.errors) == 1, [e.message for e in asm.errors]
+    # Pass 1 promoted the far one to JP (its target read as 0) and the
+    # error came with "Note: 1 JR/DJNZ instruction(s) promoted to JP".
+    assert not [w for w in asm.warnings if "promoted" in w], asm.warnings
 
 
 def test_relative_jump_from_absolute_code_to_a_relocatable_label():

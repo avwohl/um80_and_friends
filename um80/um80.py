@@ -235,6 +235,9 @@ class Assembler:
         # Listing generation
         self.generate_listing = False
         self.current_line_bytes = []
+        # Index in current_line_bytes -> the mark listed after that byte:
+        # the field ending there is not final until the program is linked.
+        self.current_line_marks = {}
         self.current_line_start_loc = 0
         self.current_line_start_seg = 'CSEG'
 
@@ -355,6 +358,7 @@ class Assembler:
             self.current_line_start_loc = self.pc
             self.current_line_start_seg = self.current_seg
             self.current_line_bytes = []
+            self.current_line_marks = {}
 
     def _save_listing_entry(self, line):
         """Save a listing entry for the current line."""
@@ -364,6 +368,7 @@ class Assembler:
                 'addr': self.current_line_start_loc,
                 'seg': self.current_line_start_seg,
                 'bytes': self.current_line_bytes[:],
+                'marks': dict(self.current_line_marks),
                 'source': line
             })
 
@@ -1359,17 +1364,47 @@ class Assembler:
             self.select_common(self.current_common)
             self.output.write_set_location(ADDR_COMMON_REL, self.loc)
 
+    # How the listing marks a field the linker has yet to finish, as
+    # MACRO-80's listing does: after the field, the kind of value in it.
+    LIST_MARKS = {ADDR_PROGRAM_REL: "'", ADDR_DATA_REL: '"',
+                  ADDR_COMMON_REL: '!'}
+    LIST_MARK_EXTERNAL = '*'
+
+    def list_field(self, values, mark=None):
+        """Add the bytes of one field to the listing line, then its mark."""
+        if self.pass_num == 2 and self.generate_listing:
+            self.current_line_bytes.extend(v & 0xFF for v in values)
+            if mark:
+                self.current_line_marks[len(self.current_line_bytes) - 1] = mark
+
+    def link_mark(self, ev):
+        """The listing mark of a field the linker computes from `ev'.
+
+        `*' if it uses an external, as M80 marks one; otherwise the mark of
+        the segment of the first relocatable value in it.
+        """
+        items = self._link_items(ev)
+        if any(item[0] == EXT_ITEM_SYMBOL for item in items):
+            return self.LIST_MARK_EXTERNAL
+        for item in items:
+            if item[0] == EXT_ITEM_VALUE and item[1] != ADDR_ABSOLUTE:
+                return self.LIST_MARKS[item[1]]
+        return None
+
     def emit_byte(self, value):
         """Emit a byte to current segment."""
         if self.pass_num == 2:
             self.select_for_load()
             self.output.write_absolute_byte(value & 0xFF)
-            if self.generate_listing:
-                self.current_line_bytes.append(value & 0xFF)
+            self.list_field([value])
         self.loc += 1
 
-    def emit_word(self, value, seg_type=ADDR_ABSOLUTE, block=None, ev=None):
-        """Emit a 16-bit word to current segment (`ev': the operand it is)."""
+    def emit_word(self, value, seg_type=ADDR_ABSOLUTE, block=None, ev=None,
+                  mark=None):
+        """Emit a 16-bit word to current segment (`ev': the operand it is).
+
+        The listing shows it with `mark', or the mark of its segment.
+        """
         if (seg_type == ADDR_COMMON_REL and self.current_common is not None
                 and block is not None and block != self.current_common):
             # An address in another COMMON block, from inside this one:
@@ -1399,9 +1434,8 @@ class Assembler:
             elif seg_type == ADDR_COMMON_REL:
                 self.select_common(block)
                 self.output.write_common_relative(value)
-            if self.generate_listing:
-                self.current_line_bytes.append(value & 0xFF)
-                self.current_line_bytes.append((value >> 8) & 0xFF)
+            self.list_field([value, value >> 8],
+                            mark or self.LIST_MARKS.get(seg_type))
         self.loc += 2
 
     def emit_link_expr(self, ev, size):
@@ -1430,10 +1464,10 @@ class Assembler:
                                    else EXT_OP_STORE_WORD)
             for _ in range(size):
                 out.write_absolute_byte(0)
-            if self.generate_listing:
-                self.current_line_bytes.append(ev.value & 0xFF)
-                if size == 2:
-                    self.current_line_bytes.append((ev.value >> 8) & 0xFF)
+            # The listing shows the placeholder, as the .REL has it: the
+            # value computed from segment offsets (`MVI A,HIGH(BUF)' listed
+            # 3E 03 for BUF at DSEG 0300H) is not in the program.
+            self.list_field([0] * size, self.link_mark(ev))
         self.loc += size
 
     def report_unlinkable(self, ev):
@@ -1554,7 +1588,7 @@ class Assembler:
                                                        offset & 0xFFFF)
             self.ext_chains.setdefault(name, []).append(
                 (self.seg_type, self.loc, self.current_common))
-        self.emit_word(0)
+        self.emit_word(0, mark=self.LIST_MARK_EXTERNAL)
 
     def resolve_register_alias(self, name):
         """
@@ -1872,7 +1906,8 @@ class Assembler:
         return False  # Not a CPU instruction
 
     def relative_target(self, text, operator):
-        """(value, seg) of a JR/DJNZ target; in pass 2, refuse one it cannot reach.
+        """(value, seg, reachable) of a JR/DJNZ target; in pass 2, refuse
+        one it cannot reach.
 
         The displacement is target - (here + 2), so both must be in the
         same segment - which then moves as one - and known now.  LINK-80 has
@@ -1881,8 +1916,12 @@ class Assembler:
         external dropped), an address in another segment (`JR DLAB' from
         CSEG), or an absolute address from relocatable code or the other way
         round, is an error, as in M80 (E for an external, R otherwise).
+        `reachable' is False for these, so pass 1 does not promote the
+        jump to JP for being far from a target it read as 0 (the error
+        came with a "promoted to JP" note).
         """
         ev = self.eval_operand(text)
+        reachable = ev.kind in ('abs', 'rel') and ev.seg == self.pc_seg
         if self.pass_num == 2:
             if ev.kind not in ('abs', 'rel'):
                 self.error(f"{operator} to '{text.strip()}': its target "
@@ -1897,7 +1936,7 @@ class Assembler:
                     what = "an address in another segment"
                 self.error(f"{operator} to '{text.strip()}': {what}, so the "
                            f"distance depends on where the linker puts them")
-        return ev.value & 0xFFFF, ev.seg
+        return ev.value & 0xFFFF, ev.seg, reachable
 
     def parse_z80_indexed(self, operand):
         """Parse (IX+d) or (IY+d) operand.
@@ -2451,13 +2490,16 @@ class Assembler:
 
             if len(ops) == 1:
                 # Unconditional JR
-                val, seg = self.relative_target(ops[0], 'JR')
+                val, seg, reachable = self.relative_target(ops[0], 'JR')
                 # For forward refs on pass 1 iter>0, use prev_symbols if available
                 if can_check_range and val == 0 and self.pass_num == 1:
                     expr = ops[0].strip().upper()
                     prev_syms = getattr(self, 'prev_symbols', {})
                     if expr in prev_syms:
                         val, seg = prev_syms[expr]
+                        reachable = seg == self.pc_seg
+                # An unreachable target is an error, not a far one.
+                can_check_range = can_check_range and reachable
                 # Check if already promoted to JP
                 if self.line_num in self.promoted_jr:
                     # Emit JP instead (3 bytes)
@@ -2486,13 +2528,15 @@ class Assembler:
                 if cond not in Z80_JR_CONDITIONS:
                     self.error(f"Invalid condition for JR (only NZ,Z,NC,C): {cond}")
                     return True
-                val, seg = self.relative_target(ops[1], 'JR')
+                val, seg, reachable = self.relative_target(ops[1], 'JR')
                 # For forward refs on pass 1 iter>0, use prev_symbols if available
                 if can_check_range and val == 0 and self.pass_num == 1:
                     expr = ops[1].strip().upper()
                     prev_syms = getattr(self, 'prev_symbols', {})
                     if expr in prev_syms:
                         val, seg = prev_syms[expr]
+                        reachable = seg == self.pc_seg
+                can_check_range = can_check_range and reachable
                 # Check if already promoted to JP
                 if self.line_num in self.promoted_jr:
                     # Emit JP cc instead (3 bytes)
@@ -2532,13 +2576,15 @@ class Assembler:
             can_check_range = (self.pass_num == 2 or
                                (self.pass_num == 1 and getattr(self, 'pass1_iteration', 0) > 0))
 
-            val, seg = self.relative_target(ops[0], 'DJNZ')
+            val, seg, reachable = self.relative_target(ops[0], 'DJNZ')
             # For forward refs on pass 1 iter>0, use prev_symbols if available
             if can_check_range and val == 0 and self.pass_num == 1:
                 expr = ops[0].strip().upper()
                 prev_syms = getattr(self, 'prev_symbols', {})
                 if expr in prev_syms:
                     val, seg = prev_syms[expr]
+                    reachable = seg == self.pc_seg
+            can_check_range = can_check_range and reachable
             # Check if already promoted
             if self.line_num in self.promoted_jr:
                 # Emit DEC B + JP NZ instead (4 bytes)
@@ -3886,29 +3932,29 @@ class Assembler:
                 # Address: 4 hex digits (or blank if no code)
                 # Bytes: up to 4 bytes shown (8 hex chars with spaces)
 
+                marks = entry.get('marks', {})
+
+                def cells(first, chunk):
+                    # Each byte, then its mark or a space: a field the
+                    # linker finishes ends in ' " ! or * (M80's marks).
+                    return ''.join(f"{b:02X}{marks.get(first + i, ' ')}"
+                                   for i, b in enumerate(chunk)
+                                   ).rstrip().ljust(12)
+
                 if code_bytes:
                     addr_str = f"{addr:04X}"
                     # Show up to 4 bytes on first line
-                    bytes_shown = code_bytes[:4]
-                    bytes_str = ' '.join(f"{b:02X}" for b in bytes_shown)
-                    bytes_str = bytes_str.ljust(11)  # 4 bytes = "XX XX XX XX"
+                    bytes_str = cells(0, code_bytes[:4])
                 else:
                     addr_str = "    "
-                    bytes_str = "           "
+                    bytes_str = " " * 12
 
                 f.write(f"{line_num:5d}  {addr_str}  {bytes_str}  {source}\n")
 
                 # If more than 4 bytes, show continuation lines
-                if len(code_bytes) > 4:
-                    remaining = code_bytes[4:]
-                    cont_addr = addr + 4
-                    while remaining:
-                        chunk = remaining[:4]
-                        remaining = remaining[4:]
-                        bytes_str = ' '.join(f"{b:02X}" for b in chunk)
-                        bytes_str = bytes_str.ljust(11)
-                        f.write(f"       {cont_addr:04X}  {bytes_str}\n")
-                        cont_addr += len(chunk)
+                for first in range(4, len(code_bytes), 4):
+                    bytes_str = cells(first, code_bytes[first:first + 4])
+                    f.write(f"       {addr + first:04X}  {bytes_str}\n")
 
     def assemble(self, source_file, pre_items=None):
         """Assemble a source file.

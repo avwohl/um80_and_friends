@@ -116,6 +116,18 @@ evaluates them. The format was established by running the genuine M80 and L80
   `.REL`, and far enough from the segment start it was promoted to
   `JP 0000H`. LINK-80 has no PC-relative operator; these are errors now, as
   in M80 (`E`/`R`).
+- um80 assembler: the listing showed a field the linker computes as the
+  value worked out from segment offsets — `MVI A,HIGH(BUF)`, BUF at DSEG
+  0300H, listed `3E 03`, a byte that is in neither the `.REL` nor the
+  program. It lists the placeholder the `.REL` carries, and every field
+  the linker has yet to finish is marked after its last byte as MACRO-80
+  marks it: `'` program relative, `"` data relative, `!` COMMON, `*`
+  external (`3E 00"`, `00 00*`, `00 03"` for `DW BUF`, `01 00'02`). The
+  byte column is one character wider for the marks. And `JR EXT` far from
+  the start of its segment reported its error together with "Note: 1
+  JR/DJNZ instruction(s) promoted to JP": pass 1 promoted it for being far
+  from the 0 it read for the target. A target the jump cannot reach is no
+  longer promoted.
 - um80 assembler: expressions MACRO-80 accepts that um80 rejected or
   evaluated differently (each checked against M80 3.44): a word operator
   next to a tab or a parenthesis — `HIGH<TAB>X`, `X<TAB>AND<TAB>0FH`,
