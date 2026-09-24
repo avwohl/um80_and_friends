@@ -87,6 +87,13 @@ evaluates them. The format was established by running the genuine M80 and L80
   first line that used it. A `DS n,fill` with such a fill repeated the error
   once per byte; `PUBLIC` of a link-time `EQU` was reported at a line past
   `END` and is now reported at the `PUBLIC`.
+- um80 assembler: `JR`/`DJNZ` to an external, to a link-time expression,
+  to an address in another segment, or between absolute and relocatable
+  code assembled a meaningless displacement with no error: `JR EXT` came
+  out `18 FE`, a jump to itself, with the external missing from the
+  `.REL`, and far enough from the segment start it was promoted to
+  `JP 0000H`. LINK-80 has no PC-relative operator; these are errors now, as
+  in M80 (`E`/`R`).
 - relformat: special link item 4 was returned as `UNKNOWN_SPECIAL` without
   consuming its B-field, so everything after it in the module was misread:
   ulib80 indexed four garbage "public symbols" from an M80 module that uses

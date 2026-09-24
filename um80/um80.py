@@ -1674,6 +1674,34 @@ class Assembler:
 
         return False  # Not a CPU instruction
 
+    def relative_target(self, text, operator):
+        """(value, seg) of a JR/DJNZ target; in pass 2, refuse one it cannot reach.
+
+        The displacement is target - (here + 2), so both must be in the
+        same segment - which then moves as one - and known now.  LINK-80 has
+        no PC-relative operator.  An external or link-time target (`JR EXT'
+        came out 18 FE, a jump to itself, or promoted to JP 0000H with the
+        external dropped), an address in another segment (`JR DLAB' from
+        CSEG), or an absolute address from relocatable code or the other way
+        round, is an error, as in M80 (E for an external, R otherwise).
+        """
+        ev = self.eval_operand(text)
+        if self.pass_num == 2:
+            if ev.kind not in ('abs', 'rel'):
+                self.error(f"{operator} to '{text.strip()}': its target "
+                           f"{self.link_time_reason(ev)}, and a relative "
+                           f"jump needs the distance now")
+            elif ev.seg != self.seg_type:
+                if ev.seg == ADDR_ABSOLUTE:
+                    what = "an absolute address, but this code is relocatable"
+                elif self.seg_type == ADDR_ABSOLUTE:
+                    what = "a relocatable address, but this code is absolute"
+                else:
+                    what = "an address in another segment"
+                self.error(f"{operator} to '{text.strip()}': {what}, so the "
+                           f"distance depends on where the linker puts them")
+        return ev.value & 0xFFFF, ev.seg
+
     def parse_z80_indexed(self, operand):
         """Parse (IX+d) or (IY+d) operand.
 
@@ -2226,7 +2254,7 @@ class Assembler:
 
             if len(ops) == 1:
                 # Unconditional JR
-                val, seg, ext, name = self.parse_expression(ops[0])
+                val, seg = self.relative_target(ops[0], 'JR')
                 # For forward refs on pass 1 iter>0, use prev_symbols if available
                 if can_check_range and val == 0 and self.pass_num == 1:
                     expr = ops[0].strip().upper()
@@ -2261,7 +2289,7 @@ class Assembler:
                 if cond not in Z80_JR_CONDITIONS:
                     self.error(f"Invalid condition for JR (only NZ,Z,NC,C): {cond}")
                     return True
-                val, seg, ext, name = self.parse_expression(ops[1])
+                val, seg = self.relative_target(ops[1], 'JR')
                 # For forward refs on pass 1 iter>0, use prev_symbols if available
                 if can_check_range and val == 0 and self.pass_num == 1:
                     expr = ops[1].strip().upper()
@@ -2307,7 +2335,7 @@ class Assembler:
             can_check_range = (self.pass_num == 2 or
                                (self.pass_num == 1 and getattr(self, 'pass1_iteration', 0) > 0))
 
-            val, seg, ext, name = self.parse_expression(ops[0])
+            val, seg = self.relative_target(ops[0], 'DJNZ')
             # For forward refs on pass 1 iter>0, use prev_symbols if available
             if can_check_range and val == 0 and self.pass_num == 1:
                 expr = ops[0].strip().upper()
