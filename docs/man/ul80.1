@@ -159,13 +159,19 @@ binary-compatible, allowing object files created by the original M80 to be
 linked with ul80, and vice versa.
 .SH NOTES
 .IP \(bu 2
-Libraries are searched in the order specified on the command line.
+Libraries are searched in the order specified on the command line, and the
+modules of each in library order, as LINK-80 does.
 .IP \(bu 2
 Only modules containing symbols that satisfy undefined references are
-included from libraries.
+included from libraries. A library may be one made by ulib80 or by
+Microsoft's LIB-80 (.REL modules one after another).
+.IP \(bu 2
+Every module of a .REL file holding several is loaded.
 .IP \(bu 2
 COMMON blocks with the same name in different modules share storage;
-the largest size requested is allocated.
+the largest size requested is allocated. Each named block is placed on its
+own, after the data, in the order blocks are first declared. Bytes a module
+assembles into a COMMON block are loaded there.
 .IP \(bu 2
 Link-time expressions (REL extension link items, written by MACRO-80 3.44 and
 um80 for HIGH/LOW of relocatable or external values and the like) are

@@ -36,7 +36,7 @@ um80 program.mac                    # Creates program.rel
 um80 -o output.rel program.mac      # Specify output name
 um80 -l listing.prn program.mac     # Generate listing file
 um80 -g program.mac                 # Export all symbols as PUBLIC (for debug)
-um80 -t program.mac                 # Truncate symbols to 8 chars (M80 compat)
+um80 -t program.mac                 # Truncate symbols to 8 chars
 um80 -e ".z80" program.mac          # Execute code before source (set Z80 mode)
 um80 --pre macros.mac program.mac   # Include file before source
 um80 --aseg program.asm             # Absolute, like DRI's MAC: ORG is an address
@@ -275,13 +275,12 @@ exit status is 1, as for any other assembly error.
 
 ## Extended Symbol Names
 
-The original Microsoft REL format limits symbol names to 8 characters. um80/ul80 extend this to support symbols up to 255 characters, which is essential for:
+The original Microsoft REL format limits symbol names to 8 characters (and LINK-80 3.44 reads at most 7). um80/ul80 extend this to support symbols up to 255 characters, which is essential for:
 
-- External references with offsets (e.g., `MEMSEGTBL+2` stays intact instead of truncating to `MEMSEGTB`)
 - Long descriptive symbol names in modern code
 - Compatibility with source code written for other assemblers
 
-Use `-t` or `--truncate` to disable this extension for strict M80 compatibility.
+Use `-t` or `--truncate` to cut symbols to 8 characters. For objects the original LINK-80 is to read, keep names to 7 characters (6 for an external used in a link-time expression).
 
 See [docs/EXTENSIONS.md](docs/EXTENSIONS.md) for technical details on the extended REL format.
 

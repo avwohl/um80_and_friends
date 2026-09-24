@@ -251,6 +251,9 @@ Source files can use Unix (LF) or DOS (CR/LF) line endings.
 .IP \(bu 2
 Symbol names are converted to uppercase.
 .IP \(bu 2
-The .REL file format is binary-compatible with the original.
+The .REL file format is binary-compatible with the original: LINK-80 3.44
+loads um80's objects. LINK-80 refuses a symbol of more than 7 characters
+(more than 6 for an external inside a link-time expression), which um80
+writes in an extended form only ul80 reads; M80 itself keeps 6.
 .SH AUTHOR
 um80 project contributors.

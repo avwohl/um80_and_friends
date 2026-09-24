@@ -25,8 +25,10 @@ evaluates them. The format was established by running the genuine M80 and L80
   linker as a postfix program ending in a store operator, written just before
   the placeholder byte it fills — `C(prog,01A6H) LOW store-byte`, then `0` — and
   the linked byte is 6CH. Rebuilding all of MP/M II (41 targets) with this
-  release changes exactly that byte of `GENSYS.COM`; every `.SPR`, `.PRL`,
-  `.RSP` and other `.COM` is byte-identical. (DRI built LDRLWR with Intel's
+  change alone changes exactly that byte of `GENSYS.COM`; every `.SPR`,
+  `.PRL`, `.RSP` and other `.COM` is byte-identical. (The forward-`EQU` and
+  `.MEMORY` fixes below also change `SUBMIT.PRL`, and the relocation bitmaps
+  of `ED`, `PIP`, `SDIR` and `STAT.PRL`.) (DRI built LDRLWR with Intel's
   ASM80 and ISIS LINK/LOCATE — see `MPMLDR/GENSYS.SUB` — whose object format
   carries byte relocations; DRI's own RMAC rejects the line with an `E`.)
 - um80 assembler: any other relocatable or external value in a one-byte field
@@ -105,8 +107,8 @@ evaluates them. The format was established by running the genuine M80 and L80
   expression"; `OR` and `XOR` are one precedence level, left to right, so
   `1 OR 1 XOR 1` is 0 (as in DRI's MAC too), not 1; `''''` is 27H, not
   2727H; `DB 'A'+'B'` is the byte 83H, not the five bytes of the text;
-  `X##` of a local alias of an external or of a link-time `E'U` stands for
-  what `X` does; `EXT E' EXT` (offsets from one external) is a constant.
+  `X##` of a local alias of an external or of a link-time `EQU` stands for
+  what `X` does; `EXT EQ EXT` (offsets from one external) is a constant.
   Division stays unsigned and a leading minus still applies after `SHR`
   (`-4 SHR 1` is FFFEH): that is what DRI's MAC computes, and um80
   assembles MAC sources too (M80 3.44 divides signed and gives 7FFEH).
@@ -178,7 +180,6 @@ evaluates them. The format was established by running the genuine M80 and L80
   the linker into CSEG, at the program base, although its labels are
   absolute from 0; an external referenced there was never filled in. The
   module now starts in ASEG.
-
 - ul80 linker: in a `.PRL`/`.SPR` bitmap, a reference to `__END__`,
   `__BSS_START` or `__BSS_END`, or to a `PUBLIC` alias of one, was never
   marked: the linker computes them as absolute values, but they are program
@@ -203,7 +204,6 @@ evaluates them. The format was established by running the genuine M80 and L80
 - ul80 linker: `(BUF+255)/256` and `BUF MOD 256` of a relocatable BUF are
   `HIGH(BUF+255)` and `LOW(BUF)`, which a page bitmap can express; they were
   refused for `.PRL`/`.SPR` output.
-
 - ul80 linker, ulib80: a LIB-80 library (`.LIB` made by Microsoft's LIB-80:
   `.REL` modules one after another, like FORTRAN-80's FORLIB) was refused
   ("bad magic"). It is searched like a ulib80 library, and `ulib80 -l`/`-p`
@@ -219,10 +219,9 @@ evaluates them. The format was established by running the genuine M80 and L80
   relocatable or external value is an error when the result is assembled into
   an instruction or `DB`/`DW` (M80 flags these `R`, except a comparison of
   two externals, which it evaluates with both as 0; DRI's RMAC flags `E`).
-  Two addresses in one segment, or two offsets from one external, compare
-  as constants. LINK-80
-  has no such operators, and the offset-based value was silently wrong.
-  Absolute code (`ASEG`, `--aseg`) is unaffected: HIGH/LOW of an absolute
+  LINK-80 has no such operators, and the offset-based value was silently
+  wrong. Two addresses in one segment, or two offsets from one external,
+  compare as constants. Absolute code (`ASEG`, `--aseg`) is unaffected: HIGH/LOW of an absolute
   value is a constant and no extension item is written.
 - um80 assembler: a directive that uses its operand while assembling — `ORG`,
   `DS`, `IF`/`IFE`/`COND`, `REPT`, `RST`, `IM`, `BIT`, `END`, `.RADIX` and
