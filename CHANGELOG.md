@@ -109,6 +109,11 @@ evaluates them. The format was established by running the genuine M80 and L80
 - um80 assembler: in `.Z80` mode a labelled `SET` instruction —
   `X1: SET 7,(IX+1)` — was taken for the `SET` directive ("SET requires
   one operand"). With two operands it is the instruction.
+- um80 assembler: `.PHASE addr` / `.DEPHASE` were ignored, so the labels
+  and `$` of a block meant to run at `addr` got their load addresses
+  (`X: JP X` after `.PHASE 0F000H` assembled `C3 0001'`). They are the
+  absolute addresses the block runs at, as in M80; its bytes still load at
+  the current location.
 - relformat: special link item 4 was returned as `UNKNOWN_SPECIAL` without
   consuming its B-field, so everything after it in the module was misread:
   ulib80 indexed four garbage "public symbols" from an M80 module that uses

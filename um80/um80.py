@@ -244,6 +244,7 @@ class Assembler:
         self.prev_symbols = {}  # name -> (value, seg_type), for JR/DJNZ
         self.prev_defs = {}  # name -> ExprValue
         self.defining = None  # the symbol a SET is defining, while it does
+        self.phase = None  # (run address, location counter) after .PHASE
         self.reported_unlinkable = set()  # symbols report_unlinkable() named
 
     @property
@@ -259,6 +260,24 @@ class Assembler:
             self.common_blocks[self.current_common].loc = value
         else:
             self.segments[self.current_seg].loc = value
+
+    @property
+    def pc(self):
+        """The address the current instruction runs at: $, a label's value.
+
+        The location counter, except inside .PHASE addr ... .DEPHASE, where
+        code loaded here runs at `addr': the block's labels and $ are the
+        absolute addresses it runs at (M80 manual; checked against M80 3.44).
+        """
+        if self.phase is not None:
+            base, start = self.phase
+            return (base + self.loc - start) & 0xFFFF
+        return self.loc
+
+    @property
+    def pc_seg(self):
+        """The segment type of pc: absolute inside a .PHASE block."""
+        return ADDR_ABSOLUTE if self.phase is not None else self.seg_type
 
     @property
     def seg_type(self):
@@ -310,7 +329,7 @@ class Assembler:
     def _start_listing_line(self):
         """Prepare for listing capture at start of line processing."""
         if self.pass_num == 2 and self.generate_listing:
-            self.current_line_start_loc = self.loc
+            self.current_line_start_loc = self.pc
             self.current_line_start_seg = self.current_seg
             self.current_line_bytes = []
 
@@ -629,7 +648,7 @@ class Assembler:
 
         # Handle special symbols
         if expr == '$':
-            return ExprValue(self.loc, self.seg_type)
+            return ExprValue(self.pc, self.pc_seg)
 
         # Operators are split lowest-precedence-first (recursive descent) in
         # M80 precedence order. Unary operators (NOT; unary +/-; HIGH/LOW/NUL/
@@ -1717,10 +1736,10 @@ class Assembler:
                 self.error(f"{operator} to '{text.strip()}': its target "
                            f"{self.link_time_reason(ev)}, and a relative "
                            f"jump needs the distance now")
-            elif ev.seg != self.seg_type:
+            elif ev.seg != self.pc_seg:
                 if ev.seg == ADDR_ABSOLUTE:
                     what = "an absolute address, but this code is relocatable"
-                elif self.seg_type == ADDR_ABSOLUTE:
+                elif self.pc_seg == ADDR_ABSOLUTE:
                     what = "a relocatable address, but this code is absolute"
                 else:
                     what = "an address in another segment"
@@ -2294,7 +2313,7 @@ class Assembler:
                     self.emit_word(val, seg)
                     return True
                 # Calculate offset assuming JR (2 bytes)
-                offset = val - (self.loc + 2)
+                offset = val - (self.pc + 2)
                 if can_check_range and (offset < -128 or offset > 127):
                     if self.strict_jr:
                         if self.pass_num == 2:
@@ -2330,7 +2349,7 @@ class Assembler:
                     self.emit_word(val, seg)
                     return True
                 # Calculate offset assuming JR (2 bytes)
-                offset = val - (self.loc + 2)
+                offset = val - (self.pc + 2)
                 if can_check_range and (offset < -128 or offset > 127):
                     if self.strict_jr:
                         if self.pass_num == 2:
@@ -2376,7 +2395,7 @@ class Assembler:
                 self.emit_word(val, seg)
                 return True
             # Calculate offset assuming DJNZ (2 bytes)
-            offset = val - (self.loc + 2)
+            offset = val - (self.pc + 2)
             if can_check_range and (offset < -128 or offset > 127):
                 if self.strict_jr:
                     if self.pass_num == 2:
@@ -2834,8 +2853,19 @@ class Assembler:
                     self.output.write_request_library(op.strip())
             return True
 
-        # .PHASE/.DEPHASE - phase shift
-        if operator in ('.PHASE', '.DEPHASE'):
+        # .PHASE addr / .DEPHASE: code loaded here runs at addr (see pc).
+        if operator == '.PHASE':
+            if len(ops) != 1:
+                self.error(".PHASE requires one operand")
+                return True
+            ev = self.number_operand(ops[0], '.PHASE')
+            if ev.kind == 'rel' and self.pass_num == 2:
+                self.error(f".PHASE needs an absolute address, but "
+                           f"'{ops[0].strip()}' is relocatable")
+            self.phase = (ev.value & 0xFFFF, self.loc)
+            return True
+        if operator == '.DEPHASE':
+            self.phase = None
             return True
 
         # END - end of source
@@ -3247,7 +3277,7 @@ class Assembler:
         # Define label if present
         if label and (z80_set or upper_op not in
                       ('EQU', 'SET', 'DEFL', 'ASET', 'MACRO')):
-            self.define_symbol(label, self.loc, self.seg_type)
+            self.define_symbol(label, self.pc, self.pc_seg)
 
         if not operator:
             self._save_listing_entry(line)
@@ -3638,6 +3668,7 @@ class Assembler:
         # every label after it.  Exit 0, no diagnostic.
         self.z80_mode = False
         self.repeat_nest_depth = 0
+        self.phase = None
 
         # Reset segment locations for pass 2
         if pass_num == 2:
