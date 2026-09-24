@@ -2,6 +2,89 @@
 
 All notable changes to the um80 toolchain are documented here.
 
+## [Unreleased]
+
+`LOW`/`HIGH` of a relocatable or external value, and any such value in a
+one-byte field, are now computed by the linker. MACRO-80 3.44 and LINK-80 3.44
+pass them as REL "extension link items"; um80 writes the same items and ul80
+evaluates them. The format was established by running the genuine M80 and L80
+3.44 under a CP/M emulator and is described in `um80/relformat.py` and
+`docs/EXTENSIONS.md`.
+
+### Fixed
+- um80 assembler: `LOW(expr)` and `HIGH(expr)` (and M80's `LOW expr` /
+  `HIGH expr`) of a relocatable or external value assembled the byte of the
+  value's *offset within its segment* as an absolute byte, so no relocation
+  reached the linker. MP/M II's `MPMLDR/LDRLWR.ASM`, a CSEG module that GENSYS
+  links after `GENSYS.PLM`, does `mvi a,low(bitmap+128)`: in the linked
+  `GENSYS.COM` bitmap+128 is at 256CH, but the instruction came out
+  `MVI A,0A6H` — the low byte of its offset, 01A6H — so GENSYS read its
+  relocation bitmap record at the wrong time and generated a wrong `MPM.SYS`.
+  It only worked by accident in a one-module `.COM` whose CSEG starts at 0100H,
+  where `LOW` happens to agree (`HIGH` does not). The expression now goes to the
+  linker as a postfix program ending in a store operator, written just before
+  the placeholder byte it fills — `C(prog,01A6H) LOW store-byte`, then `0` — and
+  the linked byte is 6CH. Rebuilding all of MP/M II (41 targets) with this
+  release changes exactly that byte of `GENSYS.COM`; every `.SPR`, `.PRL`,
+  `.RSP` and other `.COM` is byte-identical. (DRI built LDRLWR with Intel's
+  ASM80 and ISIS LINK/LOCATE — see `MPMLDR/GENSYS.SUB` — whose object format
+  carries byte relocations; DRI's own RMAC rejects the line with an `E`.)
+- um80 assembler: any other relocatable or external value in a one-byte field
+  — `MVI A,BUF`, `DB LAB`, `CPI LOW(EXT+1)`, `LD (IX+OFF),HIGH BUF` — has the
+  same cure, which is what M80 does. An external there was an error
+  ("Cannot use external in immediate byte"): DRI's own `LDRLWR.ASM` could not
+  be assembled at all because of `sui low(sctbfr)`, which is why the MP/M tree
+  carries a rewritten copy. The Z80 `LD r,n` form silently assembled 0 for an
+  external.
+- um80 assembler: a word whose value is not `address + constant` — `-LAB`,
+  `LAB*2`, `LAB+LAB2`, the distance between a DSEG and a CSEG label,
+  `HIGH(EXT)`, `EXT+LAB` — assembled a value computed from segment offsets,
+  which is wrong wherever the linker puts the segment. It goes to the linker
+  too. (M80 3.44 gets several of these wrong in word fields; um80 does not copy
+  that.)
+- um80 assembler: `X EQU HIGH BUF` now stands for the expression, so `MVI A,X`
+  is linked like `MVI A,HIGH BUF`. It was the constant high byte of BUF's
+  offset. (M80 3.44 gets this one wrong too: it keeps BUF's segment, with the
+  high byte of BUF's offset as the value.)
+- relformat: special link item 4 was returned as `UNKNOWN_SPECIAL` without
+  consuming its B-field, so everything after it in the module was misread:
+  ulib80 indexed four garbage "public symbols" from an M80 module that uses
+  one. Item 8 (External − offset) has an A-field only, per the Microsoft
+  manual, but was read as if it had a B-field as well.
+- ul80 linker: a chain-external record whose head is absolute 0, in a module
+  with no absolute code, is an empty chain — M80 writes one to declare an
+  external used only inside an expression. It was followed as if a reference
+  sat at absolute 0.
+
+### Changed
+- um80 assembler: `n-SYM` and an expression naming two externals, errors since
+  0.3.48 because the `.REL` format "cannot carry them", are computed by the
+  linker the way M80 3.44 writes them. In `.PRL`/`.SPR` output they are
+  errors when the result would not move by exactly 0 or 1 page (see below).
+- um80 assembler: `AND`, `OR`, `XOR`, `SHL`, `SHR` or a comparison applied to a
+  relocatable or external value is an error when the result is assembled into
+  an instruction or `DB`/`DW` (M80 flags these `R`, and DRI's RMAC `E`). LINK-80
+  has no such operators, and the offset-based value was silently wrong. `IF`,
+  `DS`, `ORG` and `EQU` evaluate such expressions as before, and absolute code
+  (`ASEG`, `--aseg`) is unaffected: HIGH/LOW of an absolute value is a constant
+  and no extension item is written.
+- um80 assembler: a `PUBLIC` symbol equated to a link-time expression is an
+  error — a `.REL` public carries an address or a constant.
+
+### Added
+- ul80 linker: evaluates extension link items (`+ - * / MOD NOT HIGH LOW`,
+  unary minus, externals, program/data/common-relative values) once every
+  segment is placed, for `.COM`, `.HEX`, `.PRL` and `.SPR` output alike. An
+  object written by the real MACRO-80 3.44 links to the values LINK-80 3.44
+  computes for it.
+- ul80 linker: in `.PRL`/`.SPR` output a stored byte that is `HIGH` of an
+  address is marked in the relocation bitmap and one that is `LOW` of an
+  address is not (a page move never changes a low byte); a stored word that is
+  an address is marked on its high byte. A value that would not move by
+  exactly 0 or 1 page when MP/M relocates the program — `HIGH(A)+HIGH(B)`,
+  `200H-LAB`, `LAB*2` — cannot be expressed in the bitmap and is an error for
+  `--prl`/`--spr`; it is linked normally for `.COM` and `.HEX`.
+
 ## [0.3.48] - 2026-09-24
 
 Five defects found by building all of MP/M II V2.0 and V2.1 from Digital

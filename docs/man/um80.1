@@ -193,6 +193,13 @@ Symbols
 Current location counter ($)
 .PP
 Operators: + \- * / MOD AND OR XOR NOT SHL SHR HIGH LOW
+.PP
+An expression whose value depends on where the linker places a segment or on
+an external symbol, and that is not simply an address plus a constant (for
+example HIGH or LOW of a relocatable label, or any relocatable or external
+value in a one-byte field), is passed to the linker as REL extension link
+items, as MACRO-80 3.44 does. AND, OR, XOR, SHL, SHR and the comparisons have
+no linker operator and are errors on such a value in an instruction, DB or DW.
 .SH EXAMPLES
 .TP
 Assemble with default output:

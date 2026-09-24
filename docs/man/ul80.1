@@ -166,5 +166,12 @@ included from libraries.
 .IP \(bu 2
 COMMON blocks with the same name in different modules share storage;
 the largest size requested is allocated.
+.IP \(bu 2
+Link-time expressions (REL extension link items, written by MACRO-80 3.44 and
+um80 for HIGH/LOW of relocatable or external values and the like) are
+evaluated after all modules are placed. In .PRL/.SPR output a byte that is HIGH
+of an address is marked in the relocation bitmap and a byte that is LOW of an
+address is not; an expression that would not move by exactly 0 or 1 page is an
+error.
 .SH AUTHOR
 um80 project contributors.

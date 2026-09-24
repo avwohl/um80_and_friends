@@ -96,6 +96,10 @@ Both syntaxes are supported:
 - `LOW(expr)` and `HIGH(expr)` — DRI function-call style
 - `LOW expr` and `HIGH expr` — Original M80 style with space
 
+Of an absolute value the result is a constant. Of a relocatable or external
+value it depends on where the linker puts things, so um80 passes the expression
+to the linker — see [Link-time expressions](#link-time-expressions-rel-extension-link-items).
+
 ### Digit Separators in Numbers (`$`)
 
 The `$` character can be used as a visual separator within numeric literals for readability:
@@ -289,6 +293,57 @@ format a resolved reference to an absolute symbol below 100H (the BDOS entry at
 0005H, the default FCB at 005CH, the DMA buffer at 0080H) is marked for
 relocation. An absolute symbol at or above 100H stays absolute.
 
+A byte that is `HIGH` of an address, or a word that is an address, is marked
+in the bitmap; a byte that is `LOW` of an address is not, since adding a page
+never changes a low byte. A link-time expression whose value would not move by
+exactly 0 or 1 page (`HIGH(A)+HIGH(B)`, `200H-LAB`, `LAB*2`) cannot be
+expressed in the bitmap and is an error in either format.
+
+### Link-time expressions (REL extension link items)
+
+`MVI A,LOW(BUF+128)` with BUF in a relocatable segment needs a byte of an
+address nobody knows until link time. MACRO-80 3.44 and LINK-80 3.44 handle it
+with special link item 4, the "extension link item": its B-field starts with a
+kind byte, and three kinds form a postfix program for the linker.
+
+| Item | Bytes | Meaning |
+|------|-------|---------|
+| `A` | 41H, op | operator: 1 store as byte, 2 store as word, 3 HIGH, 4 LOW, 5 NOT, 6 unary minus, 7 minus, 8 plus, 9 multiply, 10 divide, 11 MOD |
+| `B` | 42H, name | push the value of external symbol *name* |
+| `C` | 43H, type, lo, hi | push a value; type 0 absolute, 1 program, 2 data, 3 common relative |
+
+Operands are pushed in source order and a binary operator pops its right
+operand first. Every expression ends in a store operator, which writes the
+result at the current location counter; the field itself follows as zero
+placeholder bytes, which load there and advance the counter. So
+`MVI A,LOW(BUF+128)` becomes the absolute byte 3EH, then
+`C(data, BUF+128) A(LOW) A(store byte)`, then the placeholder 00H.
+
+The published Microsoft manual defines only the item 4 container (and a COBOL
+overlay sentinel, 35H); the `A`/`B`/`C` kinds were established by assembling
+test sources with the genuine M80 3.44 and linking them with L80 3.44 under a
+CP/M emulator. Digital Research's LINK-80 lists item 4 as unused, and RMAC
+rejects `LOW`/`HIGH` of a relocatable value with an `E` error.
+
+um80 writes these items for:
+
+- `HIGH`, `LOW`, `NOT`, unary minus, `*`, `/` and `MOD` applied to a
+  relocatable or external value;
+- any relocatable or external value in a one-byte field (`MVI A,BUF`,
+  `DB LAB`, an `(IX+d)` displacement), as M80 does;
+- a word that is not simply an address plus a constant (`-LAB`, `LAB+LAB2`,
+  `DATALAB-CODELAB`, `n-EXT`, `EXT1+EXT2`, `HIGH(EXT)`).
+
+`AND`, `OR`, `XOR`, `SHL`, `SHR` and the comparisons have no linker operator,
+so applying one to a relocatable or external value in an instruction or
+`DB`/`DW` operand is an error (M80: `R`). An `EQU` or `SET` to a link-time
+expression stands for the expression wherever the symbol is used; such a symbol
+cannot be `PUBLIC`.
+
+ul80 evaluates the expressions once every module is placed and writes the
+results over the placeholders, for every output format, and reads objects
+written by the real M80 the same way.
+
 ### Absolute assembly (`--aseg`)
 
 M80 starts a file in CSEG, so an `ORG` is an offset within a relocatable
@@ -313,11 +368,13 @@ assembles MAC sources the way MAC does.
 | EQU external+offset | ✗ | ✓ | ✗ | ✓ |
 | `__END__` symbol | ✗ | ✓ | ✗ | ✗ |
 | PRL / SPR output | ✗ | ✓ | (RMAC) | ✗ |
+| HIGH/LOW of a relocatable value | ✓ (3.44) | ✓ | ✗ | ? |
 
 ---
 
 ## Version History
 
+- **Unreleased** — link-time expressions (REL extension link items): HIGH/LOW of relocatable and external values
 - **0.3.48** — `--spr`, `--extra` and `--aseg`; `--prl` links a transient at 100H
 - **0.3.33** — External symbol aliases (EQU external+offset) for z88dk compatibility
 - **0.3.21** — Extended REL format for long symbols, `-t/--truncate` switch

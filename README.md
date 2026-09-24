@@ -312,6 +312,14 @@ Extract the low or high byte of a 16-bit value using function-call syntax:
 
 Both `LOW(expr)` and `HIGH(expr)` syntax (with parentheses) and `LOW expr` / `HIGH expr` syntax (with space) are supported.
 
+When the operand is relocatable or external (`LOW(BUFFER)` above, with BUFFER
+in CSEG or DSEG), the byte depends on where the linker puts the segment, so
+um80 passes the expression to ul80 as REL extension link items — the same form
+MACRO-80 3.44 writes for LINK-80 3.44. The same happens for any relocatable or
+external value in a one-byte field (`MVI A,BUFFER`, `DB LABEL`). In MP/M
+`.PRL`/`.SPR` output a `HIGH` byte is marked in the relocation bitmap and a
+`LOW` byte is not. See [docs/EXTENSIONS.md](docs/EXTENSIONS.md#link-time-expressions-rel-extension-link-items).
+
 ### Digit Separators in Numbers (`$`)
 
 The `$` character can be used as a visual separator within numeric literals for readability:
