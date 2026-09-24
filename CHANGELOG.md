@@ -85,7 +85,9 @@ evaluates them. The format was established by running the genuine M80 and L80
   in the order they read each other, and the next time through checks that
   guess, reading the whole source again. Pass 1 is over when the values it
   computes are the ones the forward references read, which is what pass 2
-  reads there too — so X is 6. A chain of 500 forward `EQU`s is read twice,
+  reads there too — so X is 6. (MACRO-80 3.44 flags that forward use of X
+  `U` and assembles the 01 its pass 1 computed.) A chain of 500 forward
+  `EQU`s is read twice,
   in 0.6 s; settled one link per time through, it took 92 s. (After three
   wrong guesses a forward reference reads the value from the end of the
   time before, one link per time through, and the limit on repeats grows
@@ -97,11 +99,18 @@ evaluates them. The format was established by running the genuine M80 and L80
   still changes when the limit is reached (through a label its own value
   moves) or differs between the passes after it was used (a phase error,
   e.g. after `IFDEF` of a later symbol). A forward reference to a `SET`
-  symbol reads its last value, as in M80, and `X SET X+1` reads the X of
-  the line before, so each `SET` is a definition of its own: a chain may
-  run through `SET`s, and a `SET` that reads a later symbol whose value
-  comes from an earlier `SET` of the same name is no cycle. (MACRO-80 flags
-  these forward uses `U`; um80 assembles the value they stand for.)
+  symbol reads its last value — what its last `SET` gives, with every
+  symbol at its final value — and `X SET X+1` reads the X of the line
+  before, so each `SET` is a definition of its own: a chain may run
+  through `SET`s, and a `SET` that reads a later symbol whose value comes
+  from an earlier `SET` of the same name is no cycle. That differs from
+  MACRO-80 3.44 when the last value depends on a symbol defined further
+  down: M80 does not flag a forward read of a `SET` symbol, and silently
+  uses the value the symbol had at the end of its pass 1, computed while
+  the symbols below still had none (0). `DW X` / `X SET Y+1` / `DW X` /
+  `Y EQU 5` is 01 00 06 00 in M80 and in 0.3.48, 06 00 06 00 in um80 now
+  (`DW X` / `X SET 1` / `X SET 2` is 02 00 in all three). See "What still
+  differs" in `docs/EXTENSIONS.md`.
 - um80 assembler: `/` or `MOD` by a symbol defined further down, or by an
   external, was reported as "Division by zero" (its pass-1 value is 0).
   Only a constant 0 divisor is an error now; `MOD EXT` goes to the linker,

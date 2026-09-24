@@ -119,12 +119,29 @@ def test_forward_alias_of_an_external():
 
 
 def test_forward_set_reads_the_final_value_of_the_pass_before():
-    """A SET symbol read above any SET of it reads its last value, as in
-    M80 (verified: `DB Y / Y SET Z / Z SET 3' gives 03)."""
+    """A SET symbol read above any SET of it reads its last value; here Z's
+    is 3, as in M80 (checked: `Y SET Z / DB Y / Z SET 3 / DB Y' gives 03
+    03)."""
     ok, asm, rel = _asm("\tASEG\n\tORG 100H\nY\tSET Z\n\tDB Y\nZ\tSET 3\n"
                         "\tDB Y\n\tEND\n")
     assert ok, _errors(asm)
     assert _bytes(rel) == [3, 3]
+
+
+def test_forward_set_reads_its_value_with_later_symbols_defined():
+    """X's last value is Y+1 with Y at 5: 6 above the SET too.  This is
+    where um80 differs from M80 3.44, which reads the X of the end of its
+    pass 1, computed while Y had no value, and assembles 01 00 06 00
+    without a message (so did um80 0.3.48).  Without a later symbol in
+    the way the two agree: `DW X / X SET 1 / X SET 2' is 02 00 in M80."""
+    ok, asm, rel = _asm("\tASEG\n\tORG 100H\n\tDW X\nX\tSET Y+1\n\tDW X\n"
+                        "Y\tEQU 5\n\tEND\n")
+    assert ok, _errors(asm)
+    assert _bytes(rel) == [6, 0, 6, 0]
+    ok, asm, rel = _asm("\tASEG\n\tORG 100H\n\tDW X\nX\tSET 1\nX\tSET 2\n"
+                        "\tEND\n")
+    assert ok, _errors(asm)
+    assert _bytes(rel) == [2, 0]
 
 
 def test_set_of_itself_is_positional():

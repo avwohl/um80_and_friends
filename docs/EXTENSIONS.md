@@ -473,6 +473,18 @@ cases, each checked with the genuine M80 and L80 3.44:
   M80, including a segment directive going on at the highest location set
   (not where the segment was left) and every `COMMON` statement starting
   at the beginning of its block.
+- **A forward read of a `SET` symbol.** Above the `SET`s of X, um80 reads
+  the value the last one gives X, with every symbol at its final value;
+  M80 3.44 reads, without a message, the value X had at the end of its
+  pass 1, computed while the symbols defined further down had none yet
+  (0). `DW X` / `X SET Y+1` / `DW X` / `Y EQU 5` is 01 00 06 00 in M80
+  (and um80 0.3.48) and 06 00 06 00 in um80. They agree unless that value
+  depends on a symbol defined below the `SET` (`DW X` / `X SET 1` /
+  `X SET 2` is 02 00 in both). Of 173 random programs of forward `EQU`s,
+  `SET`s, `DS` and `IF` that M80 assembles without an error, 19 differ,
+  each through such a read (0.3.48 matched M80 in 17 of them). A forward
+  `EQU` chain is not silent in M80: `MVI A,X` / `X EQU FWD+1` /
+  `FWD EQU 5` is flagged `U` and assembles to 01, where um80 assembles 6.
 - **L80 3.44 miscomputes a COMMON-relative value past the end of its block**
   (an `EQU` of one, a `DW` of one) — M80's objects and um80's give the same
   wrong bytes in L80; ul80 computes them right.
