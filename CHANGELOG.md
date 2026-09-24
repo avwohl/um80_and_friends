@@ -23,9 +23,10 @@ evaluates them. The format was established by running the genuine M80 and L80
   It only worked by accident in a one-module `.COM` whose CSEG starts at 0100H,
   where `LOW` happens to agree (`HIGH` does not). The expression now goes to the
   linker as a postfix program ending in a store operator, written just before
-  the placeholder byte it fills — `C(prog,01A6H) LOW store-byte`, then `0` — and
-  the linked byte is 6CH. Rebuilding all of MP/M II (41 targets) with this
-  change alone changes exactly that byte of `GENSYS.COM`; every `.SPR`,
+  the placeholder byte it fills — `C(prog,0126H) C(abs,0080H) + LOW
+  store-byte` (bitmap, then 128), then `0` — and the linked byte is 6CH.
+  Rebuilding all of MP/M II (41 targets) with this change alone changes
+  exactly that byte of `GENSYS.COM`; every `.SPR`,
   `.PRL`, `.RSP` and other `.COM` is byte-identical. (The forward-`EQU` and
   `.MEMORY` fixes below also change `SUBMIT.PRL`, and the relocation bitmaps
   of `ED`, `PIP`, `SDIR` and `STAT.PRL`.) (DRI built LDRLWR with Intel's
@@ -82,17 +83,17 @@ evaluates them. The format was established by running the genuine M80 and L80
   changing, and from its second time on a forward reference reads the
   value from the end of the time before, which is what pass 2 reads there
   too — so X is 6. A chain of N such forward references needs N repeats,
-  and the limit grows with the longest chain in the source (64 more
-  for labels moved by forward sizes and JR promotion). EQUs defined in
-  terms of each other are an error naming the cycle — "Cannot resolve the
-  value of 'X': it is defined in terms of itself (X EQU Y, Y EQU X)" —
-  whether or not some value satisfies them, and so is a symbol whose value
-  still changes when the limit is reached (through a label its own value
-  moves) or differs between the passes after it was used (a phase error,
-  e.g. after `IFDEF` of a later symbol). `SET` is
-  unchanged: a forward reference to a `SET` symbol reads its last value, as
-  in M80, and `X SET X+1` reads the X of the line before. (MACRO-80 flags
-  these forward uses `U`; um80 assembles the value they stand for.)
+  and the limit grows with the longest chain in the source (plus 64 for
+  labels moved by forward sizes and JR promotion). EQUs defined in terms of
+  each other are an error naming the cycle — "Cannot resolve the value of
+  'X': it is defined in terms of itself (X EQU Y, Y EQU X)" — whether or
+  not some value satisfies them, and so is a symbol whose value still
+  changes when the limit is reached (through a label its own value moves)
+  or differs between the passes after it was used (a phase error, e.g.
+  after `IFDEF` of a later symbol). `SET` is unchanged: a forward reference
+  to a `SET` symbol reads its last value, as in M80, and `X SET X+1` reads
+  the X of the line before. (MACRO-80 flags these forward uses `U`; um80
+  assembles the value they stand for.)
 - um80 assembler: `/` or `MOD` by a symbol defined further down, or by an
   external, was reported as "Division by zero" (its pass-1 value is 0).
   Only a constant 0 divisor is an error now; `MOD EXT` goes to the linker,
@@ -168,10 +169,19 @@ evaluates them. The format was established by running the genuine M80 and L80
   writes no output when it is absolute); and a COMMON block's size has to
   come before anything refers to the block. um80 now writes all three the
   way M80 does, with the segment and COMMON sizes at the start of the
-  module. Linking the same programs with M80+L80, um80+L80 and um80+ul80
-  gives the same bytes. (LINK-80 still refuses a symbol of 8 or more
-  characters, and an external of 7 or more inside a link-time expression;
-  see `docs/EXTENSIONS.md`.)
+  module. (LINK-80 still refuses a symbol of 8 or more characters, and an
+  external of 7 or more inside a link-time expression; see
+  `docs/EXTENSIONS.md`.) Linked four ways — M80+L80, M80+ul80, um80+L80,
+  um80+ul80 — 26 of 41 test links give the same bytes all four ways. Of
+  the other 15, 3 differ where M80 3.44 miscompiles an expression (um80's
+  objects link to the right value in both linkers), 2 where L80 3.44
+  miscomputes a COMMON-relative value past the end of its block (for M80's
+  objects as for um80's), 8 where L80 lays the program out differently from
+  ul80 (COMMON before the data, data before the code without `/D`, code
+  above absolute code), and 2 that L80 refuses for M80's objects and um80's
+  alike ("?Intersecting Program area" / "Data area"). In every one um80's
+  objects link in L80 as M80's do, or to the right value where M80's do
+  not. `docs/EXTENSIONS.md` lists them.
 - um80 assembler: a module with no DSEG had no item 10 (data size), which
   MACRO-80 writes in every module, 0 if need be. Without it LINK-80 drops
   the constant of an external plus offset in ASEG: `ASEG` / `ORG 4000H` /
@@ -197,8 +207,8 @@ evaluates them. The format was established by running the genuine M80 and L80
   another reference) rather than by the value filled in: two `CALL X` of an
   absolute X marked the second.
 - ul80 linker: special item 12 (chain address) was read and never applied.
-  FORTRAN-80 writes every forward reference - a jump to a label further
-  down, a FORMAT string, a constant after the code - as a chain through the
+  FORTRAN-80 writes every forward reference — a jump to a label further
+  down, a FORMAT string, a constant after the code — as a chain through the
   words that need the address and then item 12 where the address is, and
   the words kept their chain links. And LINK-80 stores the address of the
   first free byte after the program's data in the word at `$MEMRY` when a
@@ -206,7 +216,9 @@ evaluates them. The format was established by running the genuine M80 and L80
   from it); ul80 left it 0000H. A 10-line DO/WRITE/FORMAT program compiled
   with F80 and linked with FORLIB differed from L80's
   `/P:100/D:19D3,T,FORLIB/S` in 10 bytes and stopped with `**DZ**`; its
-  image is now byte-identical and it prints `385 128.333`.
+  image is now byte-identical and it prints `385 128.333`. So is that of a
+  program with a subroutine, a function, an array argument, `IF`/`GOTO`
+  and `STOP` (0100H–1CF9H).
 - ul80 linker, ulib80: a `.REL` holding several modules — a LIB-80 library
   such as FORTRAN-80's FORLIB.REL, 106 modules — loaded only the first, and
   `ulib80 -c` stored it as one module. Every module is loaded, and ulib80
@@ -307,7 +319,9 @@ evaluates them. The format was established by running the genuine M80 and L80
   segment is placed, for `.COM`, `.HEX`, `.PRL` and `.SPR` output alike. An
   object written by the real MACRO-80 3.44 links to the values LINK-80 3.44
   computes for it, and one um80 writes links in LINK-80 to the values ul80
-  computes (except where M80 itself miscompiles; see above).
+  computes — except where L80 miscomputes a COMMON-relative value past the
+  end of its block, and where the two linkers place things differently
+  (see `docs/EXTENSIONS.md`).
 - ul80 linker: in `.PRL`/`.SPR` output a stored byte that is `HIGH` of an
   address is marked in the relocation bitmap and one that is `LOW` of an
   address is not (a page move never changes a low byte); a stored word that is

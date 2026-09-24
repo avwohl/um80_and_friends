@@ -334,7 +334,30 @@ operand first. Every expression ends in a store operator, which writes the
 result at the current location counter; the field itself follows as zero
 placeholder bytes, which load there and advance the counter. So
 `MVI A,LOW(BUF+128)` becomes the absolute byte 3EH, then
-`C(data, BUF+128) A(LOW) A(store byte)`, then the placeholder 00H.
+`C(data, BUF) C(abs, 128) A(plus) A(LOW) A(store byte)`, then the
+placeholder 00H.
+
+An address and a constant added to it are separate operands, as M80 writes
+them (`HIGH(5+C1)` is `C(abs, 5) C(common, C1) A(plus) A(HIGH)`). This is
+more than form: LINK-80 3.44 miscomputes a COMMON-relative `C` value that
+lies past the end of its block, so `HIGH(C1+400H)` with C1 at the start of a
+300H-byte block links right only as `C(common, C1) C(abs, 400H) A(plus)`.
+A symbol is one value, as in M80: after `X EQU C1+400H`, `HIGH X` is
+`C(common, C1+400H) A(HIGH)`, and a word is folded too (`DW C1+400H` is one
+COMMON-relative word) - L80 gets both wrong for M80's objects and um80's
+alike, and ul80 gets them right. um80 folds constant subexpressions (`2*3`
+is `C(abs, 6)`; M80 writes `C C A(*)`), which changes the `.REL` but not the
+linked value. In a CSEG or DSEG value L80 handles an offset of any size.
+
+The listing (`um80 -l`) shows such a field as the placeholder the `.REL`
+carries, marked after its last byte the way MACRO-80's listing marks a value
+the linker finishes: `'` program relative, `"` data relative, `!` COMMON,
+`*` external (an expression is marked `*` if it uses an external, else by
+its first relocatable operand). With BUF at DSEG 0300H, `MVI A,HIGH(BUF)`
+lists `3E 00"` (M80 lists `3E 03"`, a byte in neither the `.REL` nor the
+program) and `DW EXT+2` lists `00 00*` (M80: `0002*`, the constant of its
+item 9). A relocatable word shows its offset, as in M80: `DW BUF` lists
+`00 03"`.
 
 The published Microsoft manual defines only the item 4 container (and a COBOL
 overlay sentinel, 35H); the `A`/`B`/`C` kinds were established by assembling
@@ -387,7 +410,72 @@ M80+ul80, um80+L80, um80+ul80):
   bytes assembled into a COMMON block load there (DB, FORTRAN's BLOCK DATA);
 - a `.REL` holding several modules (a LIB-80 library such as FORTRAN-80's
   FORLIB.REL) loads every one of them, and `ulib80 -c` stores each as a
-  module of its own.
+  module of its own;
+- every module carries item 10 (data size), 0 when it has no DSEG, as M80
+  writes it: without it L80 drops the constant of an item 9 in ASEG
+  (`DW EXT+1` there links to EXT);
+- an `ASEG` directive's set-location item is held back until something is
+  loaded or reserved in the segment, as M80 does, and an `ORG` or another
+  segment directive before then replaces it. L80 takes a set-location to
+  ASEG 0000H for code loaded there, so `ASEG` / `ORG 100H` made it write a
+  `.COM` starting at 0000H;
+- a chain link typed absolute is an address in ASEG (M80 and DRI's RMAC chain
+  a CSEG reference to one in ASEG that way);
+- special item 12 (chain address) fills every word of the chain it heads with
+  the address of the location where it appears: FORTRAN-80 writes every
+  forward reference (a jump to a label further down, a FORMAT string, a
+  constant after the code) that way;
+- if a module defines the global `$MEMRY`, the word there gets the address
+  of the first free byte after the data area, as L80 stores it (FORTRAN-80's
+  FORLIB allocates its file buffers from it). L80 overwrites the word
+  whatever the module loaded there, and uses the end of the data area even
+  when `/D` puts that below the program; in ul80's layout, data and COMMON
+  after the code, that is `__END__`.
+
+An F80 program linked against FORLIB with `ul80 -x t.rel forlib.lib` gives
+the same image as `L80 /P:100/D:19D3,T,FORLIB/S` (`/D` where ul80 puts the
+data), 0100H through 1BCDH; so does a second one with a subroutine, a
+function and `STOP`. (`forlib.lib` is FORLIB.REL under another name: ul80
+searches a file named `.lib` and loads every module of a `.rel`.)
+
+#### What still differs
+
+The four-way comparison (M80+L80, M80+ul80, um80+L80, um80+ul80) of 41 test
+links gives the same bytes all four ways in 26, and differs only in these
+cases, each checked with the genuine M80 and L80 3.44:
+
+- **M80 3.44 miscompiles, um80 does not.** `DW -LAB`, `DW LAB*2`,
+  `DW EXT*2`, `DB HIGH(BUF)*2` and the like, and the distance between two
+  COMMON blocks, which M80 assembles as a constant. um80's objects link to
+  the arithmetically right value in L80 and ul80 alike; M80's do not, in
+  either linker.
+- **L80 3.44 miscomputes a COMMON-relative value past the end of its block**
+  (an `EQU` of one, a `DW` of one) — M80's objects and um80's give the same
+  wrong bytes in L80; ul80 computes them right.
+- **The linkers lay the program out differently** (the same for M80's
+  objects as for um80's, in each linker):
+  - L80 puts COMMON at the start of the data area, before the modules' data,
+    with `/D` or without, and without `/D` it loads each module's data just
+    before its code; ul80 puts all code, then all data, then COMMON (as L80
+    does with `/D` set to the end of the code, except for COMMON);
+  - after a module whose absolute code lies at or above the start of the
+    program area, L80 starts the next module's program area above that
+    code; ul80 goes on from the end of the previous module's code. With
+    `ASEG` / `ORG 100H` in one module and a CSEG in the next, ul80 loads
+    that CSEG over the absolute code, without a message;
+  - with `/D` given, L80 refuses a link in which absolute code lies above
+    the program or data area it meets ("?Intersecting Program area",
+    "?Intersecting Data area"), which ul80 links.
+
+ul80 has no counterpart of `/D`; to compare with L80, give L80 `/D:` the
+address where ul80 puts the data (the end of the code).
+
+To repeat these checks under `cpmemu`, run M80, L80 and F80 from a
+configuration file that sets `default_mode = binary` and
+`eol_convert = false`. By default cpmemu writes a file the CP/M program
+creates as text: it stops at the first 1AH and drops the CR of a CR LF, so a
+`.COM` or `.REL` holding those bytes comes out cut short or altered (L80
+seemed to write a 1-byte `.COM` for a program starting `21 1A 01`).
 
 ### Absolute assembly (`--aseg`)
 
@@ -419,7 +507,7 @@ assembles MAC sources the way MAC does.
 
 ## Version History
 
-- **Unreleased** — link-time expressions (REL extension link items): HIGH/LOW of relocatable and external values; `.REL` objects the genuine LINK-80 reads (item 14's A-field, item 9 for EXT+n, COMMON block selection)
+- **Unreleased** — link-time expressions (REL extension link items): HIGH/LOW of relocatable and external values; `.REL` objects the genuine LINK-80 reads (item 14's A-field, item 9 for EXT+n, item 10 always, COMMON block selection, ASEG set-location held back); M80 objects ul80 links (typed chain links, item 12 chain address, `$MEMRY`)
 - **0.3.48** — `--spr`, `--extra` and `--aseg`; `--prl` links a transient at 100H
 - **0.3.33** — External symbol aliases (EQU external+offset) for z88dk compatibility
 - **0.3.21** — Extended REL format for long symbols, `-t/--truncate` switch

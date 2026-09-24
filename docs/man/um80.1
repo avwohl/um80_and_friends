@@ -30,6 +30,11 @@ Specify the output file name. Default is the input file name with a .rel extensi
 .TP
 .BI \-l " listing.prn"
 Generate an assembly listing file showing source, generated code, and symbol table.
+A field the linker has yet to finish shows the bytes the .REL carries (the
+offset of a relocatable word; 0 for a field the linker computes or fills from
+an external) and is marked after its last byte as MACRO-80 marks it:
+\fB'\fR program relative, \fB"\fR data relative, \fB!\fR COMMON,
+\fB*\fR external.
 .TP
 .B \-g\fR, \fB\-\-globals
 Export all defined symbols as PUBLIC. This is useful for generating complete symbol

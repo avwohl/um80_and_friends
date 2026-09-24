@@ -173,6 +173,21 @@ the largest size requested is allocated. Each named block is placed on its
 own, after the data, in the order blocks are first declared. Bytes a module
 assembles into a COMMON block are loaded there.
 .IP \(bu 2
+A chain (the references to an external, or a FORTRAN-80 forward reference
+closed by special item 12) is followed through every word by the type of its
+links; an absolute link is an address in ASEG.
+.IP \(bu 2
+If a module defines the global $MEMRY, the word there is set to the first free
+address after the data and COMMON, as LINK-80 sets it (FORTRAN-80's library
+allocates from it).
+.IP \(bu 2
+The layout is code, then data, then COMMON: LINK-80's with /D: at the end of
+the code, except that LINK-80 puts COMMON at the start of the data area. Without
+/D LINK-80 loads each module's data before its code, and it starts a module's
+code above absolute code a previous module loaded at or above the start of the
+program area; ul80 does neither, so a module's code can be loaded over such
+absolute code. See docs/EXTENSIONS.md.
+.IP \(bu 2
 Link-time expressions (REL extension link items, written by MACRO-80 3.44 and
 um80 for HIGH/LOW of relocatable or external values and the like) are
 evaluated after all modules are placed. In .PRL/.SPR output a byte that is HIGH
