@@ -106,6 +106,9 @@ evaluates them. The format was established by running the genuine M80 and L80
   Division stays unsigned and a leading minus still applies after `SHR`
   (`-4 SHR 1` is FFFEH): that is what DRI's MAC computes, and um80
   assembles MAC sources too (M80 3.44 divides signed and gives 7FFEH).
+- um80 assembler: in `.Z80` mode a labelled `SET` instruction —
+  `X1: SET 7,(IX+1)` — was taken for the `SET` directive ("SET requires
+  one operand"). With two operands it is the instruction.
 - relformat: special link item 4 was returned as `UNKNOWN_SPECIAL` without
   consuming its B-field, so everything after it in the module was misread:
   ulib80 indexed four garbage "public symbols" from an M80 module that uses

@@ -3238,8 +3238,15 @@ class Assembler:
             self._save_listing_entry(line)
             return
 
+        # A labelled Z80 `SET bit,reg' is the instruction: the SET directive
+        # takes one operand.  (`X1: SET 7,(IX+1)' was "SET requires one
+        # operand"; M80 assembles DD CB 01 FE.)
+        z80_set = (self.z80_mode and upper_op == 'SET' and label
+                   and len(self.split_operands(operands or '')) == 2)
+
         # Define label if present
-        if label and upper_op not in ('EQU', 'SET', 'DEFL', 'ASET', 'MACRO'):
+        if label and (z80_set or upper_op not in
+                      ('EQU', 'SET', 'DEFL', 'ASET', 'MACRO')):
             self.define_symbol(label, self.loc, self.seg_type)
 
         if not operator:
@@ -3249,7 +3256,8 @@ class Assembler:
         # In Z80 mode, SET with a label is the directive, not the instruction
         # (Z80 SET instruction is "SET bit,reg" which doesn't have a label)
         # ASET is always a directive (no Z80 instruction conflict)
-        if self.z80_mode and upper_op in ('SET', 'ASET') and label:
+        if self.z80_mode and upper_op in ('SET', 'ASET') and label \
+                and not z80_set:
             if self.assemble_pseudo_op(operator, operands, label):
                 self._save_listing_entry(line)
                 return
