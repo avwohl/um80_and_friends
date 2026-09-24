@@ -232,7 +232,20 @@ class Library:
             # Read header
             magic = f.read(4)
             if magic != cls.MAGIC:
-                raise LibraryError(f"Invalid library file (bad magic: {magic})")
+                # A LIB-80 library is .REL modules one after another
+                # (FORTRAN-80's FORLIB.LIB): index it as such.
+                f.seek(0)
+                data = f.read()
+                parts = cls.split_modules(data)
+                if not parts:
+                    raise LibraryError(f"Invalid library file (bad magic: {magic})")
+                for i, (name, part) in enumerate(parts):
+                    mod = Module(name or f"MODULE{i}", bytearray(part))
+                    mod.publics = lib._extract_publics(part)
+                    lib.modules.append(mod)
+                    for sym in mod.publics:
+                        lib.symbol_index.setdefault(sym, mod.name)
+                return lib
 
             version = struct.unpack('<H', f.read(2))[0]
             if version != cls.VERSION:

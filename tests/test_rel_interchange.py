@@ -279,3 +279,27 @@ def test_aseg_code_before_any_org_is_absolute():
     assert linker.output_base == 0
     assert _word(linker.output, 0) == 0x100 + 0x123
     assert _word(linker.output, 2) == 0
+
+
+def test_lib80_library_is_searched():
+    """A LIB-80 library - .REL modules one after another, like FORTRAN-80's
+    FORLIB - was refused ("bad magic"); it is searched like ulib80's."""
+    import subprocess
+    import sys
+    import um80
+    root = os.path.dirname(os.path.dirname(os.path.abspath(um80.__file__)))
+    with tempfile.TemporaryDirectory() as d:
+        with open(os.path.join(d, "two.lib"), "wb") as f:
+            f.write(_two_module_rel())
+        with open(os.path.join(d, "MAIN.rel"), "wb") as f:
+            f.write(_asm(d, "MAIN", "\tEXTRN TWOP\n\tCSEG\n\tCALL TWOP\n"
+                                    "\tRET\n\tEND\n"))
+        r = subprocess.run([sys.executable, "-m", "um80.ul80", "-o", "m.com",
+                            "MAIN.rel", "two.lib"], cwd=d,
+                           env=dict(os.environ, PYTHONPATH=root),
+                           capture_output=True, text=True, check=False)
+        assert r.returncode == 0, r.stderr
+        with open(os.path.join(d, "m.com"), "rb") as f:
+            image = f.read()
+    # Only TWO is loaded, after MAIN's 4 bytes.
+    assert image[:5] == bytes([0xCD, 0x04, 0x01, 0xC9, 0x22])

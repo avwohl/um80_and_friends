@@ -40,8 +40,12 @@ evaluates them. The format was established by running the genuine M80 and L80
   `LAB*2`, `LAB+LAB2`, the distance between a DSEG and a CSEG label,
   `HIGH(EXT)`, `EXT+LAB` — assembled a value computed from segment offsets,
   which is wrong wherever the linker puts the segment. It goes to the linker
-  too. (M80 3.44 gets several of these wrong in word fields; um80 does not copy
-  that.)
+  too. (M80 3.44 gets several of these wrong — in word fields, `DW -LAB`,
+  `DW BUF*2`, `DW HIGH(BUF)`, and in byte fields, `MVI A,BUF*2`,
+  `MVI A,HIGH(BUF*2)`, `DB HIGH(BUF)*2` — and 0.3.48 matched M80 byte for
+  byte there. um80 does not copy that: its values are the arithmetically
+  correct ones, so a binary rebuilt with um80 can differ from an M80-built
+  reference in those fields.)
 - um80 assembler: `X EQU HIGH BUF` now stands for the expression, so `MVI A,X`
   is linked like `MVI A,HIGH BUF`. It was the constant high byte of BUF's
   offset. (M80 3.44 gets this one wrong too: it keeps BUF's segment, with the
@@ -135,7 +139,9 @@ evaluates them. The format was established by running the genuine M80 and L80
   come before anything refers to the block. um80 now writes all three the
   way M80 does, with the segment and COMMON sizes at the start of the
   module. Linking the same programs with M80+L80, um80+L80 and um80+ul80
-  gives the same bytes.
+  gives the same bytes. (LINK-80 still refuses a symbol of 8 or more
+  characters, and an external of 7 or more inside a link-time expression;
+  see `docs/EXTENSIONS.md`.)
 - relformat: the reader read item 14 without its A-field, so every object
   MACRO-80 or LINK-80 wrote fell out of step after its first module:
   `ulib80 -c` on FORTRAN-80's FORLIB.REL crashed (UnicodeEncodeError) and
@@ -197,6 +203,12 @@ evaluates them. The format was established by running the genuine M80 and L80
 - ul80 linker: `(BUF+255)/256` and `BUF MOD 256` of a relocatable BUF are
   `HIGH(BUF+255)` and `LOW(BUF)`, which a page bitmap can express; they were
   refused for `.PRL`/`.SPR` output.
+
+- ul80 linker, ulib80: a LIB-80 library (`.LIB` made by Microsoft's LIB-80:
+  `.REL` modules one after another, like FORTRAN-80's FORLIB) was refused
+  ("bad magic"). It is searched like a ulib80 library, and `ulib80 -l`/`-p`
+  list it. A program calling FORLIB's `$AA` links to the same code as
+  LINK-80's `/S` search.
 
 ### Changed
 - um80 assembler: `n-SYM` and an expression naming two externals, errors since
