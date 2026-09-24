@@ -87,7 +87,8 @@ class Module:
 class Linker:
     """LINK-80 compatible linker."""
 
-    # Addresses the linker computes from the layout.
+    # Addresses the linker computes from the layout (absolute values, but
+    # program addresses: they move when MP/M relocates the image).
     LINKER_SYMBOLS = ('__END__', '__BSS_START', '__BSS_END')
 
     def __init__(self):
@@ -102,6 +103,9 @@ class Linker:
         # mod_idx=0 is placeholder, value will be absolute address
         for name in self.LINKER_SYMBOLS:
             self.globals[name] = (0, 0, ADDR_ABSOLUTE, True)
+        # Symbols whose value is a program address although it is absolute:
+        # the linker's own, and PUBLIC aliases of them (X EQU __END__).
+        self.moving = set(self.LINKER_SYMBOLS)
 
         self.code_base = 0x0103  # Default CP/M load address + 3 for JMP
         self.data_base = None  # Will be after code if not specified
@@ -112,6 +116,8 @@ class Linker:
         self.entry_point = None  # (value, seg_type) or None
 
         self.errors = []
+        # An object that cannot be linked correctly (link() then fails).
+        self.load_failed = False
 
         # External relocations: output offsets (low byte position) that need
         # relocation due to external symbol resolution to CSEG symbols.
@@ -467,6 +473,7 @@ class Linker:
         if expr_items:
             self.error(f"Module {module.name}: link-time expression has no "
                        f"store operator")
+            self.load_failed = True
         for key, seg_offset, size, items in pending_exprs:
             module.expressions.append(
                 (buf_offset(key, seg_offset, len(code_bytes)), size,
@@ -573,12 +580,19 @@ class Linker:
                     self.globals[new_name] = (base_mod_idx, new_value, base_seg_type, True)
                     if base_ext in self.global_blocks:
                         self.global_blocks[new_name] = self.global_blocks[base_ext]
+                    if base_ext in self.moving:
+                        self.moving.add(new_name)
 
     def _moves(self, name, value, seg_type):
-        """Whether global `name' moves when MP/M relocates the image: a
-        relocatable symbol, or with page_zero_relative one in page zero."""
-        del name
-        return (seg_type != ADDR_ABSOLUTE
+        """Whether global `name' moves when MP/M relocates the image.
+
+        A relocatable symbol does, and so does an address the linker
+        computes (__END__, and an alias of it such as PL/M's .MEMORY).  With
+        page_zero_relative, so does an absolute symbol in page zero - judged
+        on the symbol, not on symbol plus offset, so TBUF+80H (0100H) moves
+        with TBUF and does not escape the bitmap.
+        """
+        return (seg_type != ADDR_ABSOLUTE or name in self.moving
                 or (self.page_zero_relative and value < 0x100))
 
     def _segment_ranges(self, module):
@@ -703,6 +717,9 @@ class Linker:
 
     def link(self):
         """Link all loaded modules."""
+        if self.load_failed:
+            return False
+
         # Resolve aliased public symbols first (EQU external+offset made PUBLIC)
         # These need to be in globals before resolve_externals() checks references
         self.resolve_aliased_publics()
@@ -790,10 +807,10 @@ class Linker:
                 if base_name not in self.globals:
                     continue
 
-                target_addr, _, _, target_seg_type = \
+                target_addr, _, target_value, target_seg_type = \
                     self._global_address(base_name)
                 target_addr += expr_offset
-                moves = self._moves(base_name, target_addr, target_seg_type)
+                moves = self._moves(base_name, target_value, target_seg_type)
 
                 for head, _ in refs:
                     # Follow the chain.  Each word holds the next reference:
@@ -995,8 +1012,18 @@ class Linker:
             if mb == 0:
                 return self._move(b * ma, exact)
             return None
-        # DIV, MOD: only of values that do not move at all.
-        return self._move(0) if ma == mb == 0 and exact else None
+        # DIV, MOD: of values that do not move at all; and an address that
+        # moves by whole pages divided by 256 or taken MOD 256 - the page
+        # rounding (BUF+255)/256 - which is HIGH or LOW of it: the quotient
+        # moves by the pages, the remainder not at all.
+        if ma == mb == 0 and exact:
+            return self._move(0)
+        if mb == 0 and eb and ea and b == 256 and ma % 256 == 0:
+            if op == EXT_OP_DIV:
+                page = (ma // 256) % 256
+                return self._move(page, page == 0, True)
+            return self._move(0)
+        return None
 
     def apply_expressions(self):
         """Store every link-time expression's value in the image.
@@ -1310,38 +1337,28 @@ def main():
             print(f"Error loading library {filename}: {e}", file=sys.stderr)
             sys.exit(1)
 
-    # Resolve undefined symbols from libraries
-    # Keep searching until no more symbols can be resolved
+    # Resolve undefined symbols from libraries, as LINK-80 searches one:
+    # each library in turn, its modules in library order, loading every
+    # module that defines a symbol still undefined (one it loads may need
+    # more).  Repeat until nothing more is loaded.  The search went through
+    # a Python set of the undefined names, so the modules - and the image -
+    # came out in an order that changed from run to run.
     modules_loaded = set()  # Track which library modules we've already loaded
-    while libraries:
-        undefined = set(linker.get_undefined_symbols())
-        if not undefined:
-            break
-
-        resolved_any = False
-        for symbol in list(undefined):
-            # Search libraries for this symbol
-            for lib_filename, lib in libraries:
-                module_name = lib.find_module_for_symbol(symbol)
-                if module_name:
-                    # Check if we already loaded this module
-                    lib_mod_key = (lib_filename, module_name)
-                    if lib_mod_key in modules_loaded:
-                        continue
-
-                    # Get the module and load its REL data
-                    lib_module = lib.get_module(module_name)
-                    if lib_module:
-                        linker.load_rel_data(module_name, lib_module.data)
-                        modules_loaded.add(lib_mod_key)
-                        resolved_any = True
-                        break
-            if resolved_any:
-                break  # Restart the search with updated undefined symbols
-
-        if not resolved_any:
-            # No more symbols can be resolved from libraries
-            break
+    loaded_any = True
+    while libraries and loaded_any:
+        loaded_any = False
+        for lib_filename, lib in libraries:
+            for lib_module in lib.modules:
+                undefined = set(linker.get_undefined_symbols())
+                if not undefined:
+                    break
+                lib_mod_key = (lib_filename, lib_module.name)
+                if lib_mod_key in modules_loaded:
+                    continue
+                if undefined.intersection(lib_module.publics):
+                    linker.load_rel_data(lib_module.name, lib_module.data)
+                    modules_loaded.add(lib_mod_key)
+                    loaded_any = True
 
     # Link.  Report anything the linker recorded, not only the errors that
     # made link() give up: L80 keeps going after a multiply-defined global

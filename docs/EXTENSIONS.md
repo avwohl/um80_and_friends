@@ -298,13 +298,23 @@ per byte of the image; MP/M adds the load page to every byte the bitmap marks.
 Page zero belongs to the process's memory segment under MP/M, so in either
 format a resolved reference to an absolute symbol below 100H (the BDOS entry at
 0005H, the default FCB at 005CH, the DMA buffer at 0080H) is marked for
-relocation. An absolute symbol at or above 100H stays absolute.
+relocation. It is the symbol that decides, not symbol plus offset: `TBUF+80H`
+(0100H) is marked with TBUF. An absolute symbol at or above 100H stays
+absolute. The linker cannot tell a page-zero address from a small constant:
+a `PUBLIC` constant below 100H used from another module (`NFILES EQU 10`) is
+relocated too, so give such a constant to each module that needs it.
+
+`__END__`, `__BSS_START` and `__BSS_END` are absolute values the linker
+computes, but they are addresses in the program and move with it, so a
+reference to one - or to a `PUBLIC` alias of one, such as PL/M's `.MEMORY`
+(`HT EQU __END__`) - is marked like any program address.
 
 A byte that is `HIGH` of an address, or a word that is an address, is marked
 in the bitmap; a byte that is `LOW` of an address is not, since adding a page
-never changes a low byte. A link-time expression whose value would not move by
-exactly 0 or 1 page (`HIGH(A)+HIGH(B)`, `200H-LAB`, `LAB*2`) cannot be
-expressed in the bitmap and is an error in either format.
+never changes a low byte. `(BUF+255)/256` is `HIGH(BUF+255)` and `BUF MOD 256`
+is `LOW(BUF)`. A link-time expression whose value would not move by exactly 0
+or 1 page (`HIGH(A)+HIGH(B)`, `200H-LAB`, `LAB*2`) cannot be expressed in the
+bitmap and is an error in either format.
 
 ### Link-time expressions (REL extension link items)
 

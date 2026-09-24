@@ -173,6 +173,31 @@ evaluates them. The format was established by running the genuine M80 and L80
   absolute from 0; an external referenced there was never filled in. The
   module now starts in ASEG.
 
+- ul80 linker: in a `.PRL`/`.SPR` bitmap, a reference to `__END__`,
+  `__BSS_START` or `__BSS_END`, or to a `PUBLIC` alias of one, was never
+  marked: the linker computes them as absolute values, but they are program
+  addresses. PL/M's `.MEMORY` compiles to exactly that, so in a `.PRL` it
+  pointed at the linked address, not the loaded one: MP/M II's SDIR
+  (UTIL7/DSE.PLM puts its hash table `AT(.MEMORY)`) wrote outside its memory
+  segment whenever MP/M loaded it anywhere but the link base. A full MP/M II
+  build now marks 17 more words in ED.PRL, 9 in PIP, 4 in SDIR and 3 in
+  STAT, every one a reference to the program's end.
+- ul80 linker: whether a reference was to page zero was judged on symbol
+  plus offset for a chained word and on the symbol for a link-time
+  expression, so `LXI H,TBUF+80H` (0100H) escaped the bitmap while
+  `MVI A,HIGH(TBUF+80H)` was marked, and `DW KHI-1200H` (0034H) of a
+  constant 1234H was marked. It is the symbol, in both.
+- ul80 linker: the modules a library search loaded, and so the image, came
+  out in an order that changed from run to run (the search went through a
+  Python set of undefined names). The search is LINK-80's: each library in
+  turn, its modules in library order.
+- ul80 linker: "link-time expression has no store operator" was printed as
+  an error, but the image was written with the field left 0 and ul80
+  exited 0. The link fails.
+- ul80 linker: `(BUF+255)/256` and `BUF MOD 256` of a relocatable BUF are
+  `HIGH(BUF+255)` and `LOW(BUF)`, which a page bitmap can express; they were
+  refused for `.PRL`/`.SPR` output.
+
 ### Changed
 - um80 assembler: `n-SYM` and an expression naming two externals, errors since
   0.3.48 because the `.REL` format "cannot carry them", are computed by the
