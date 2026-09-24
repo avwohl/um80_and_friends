@@ -61,6 +61,14 @@ M80_CB = bytes.fromhex(
     "8490d0a280401109312cca280401109312cc650000135040096800041884989665c040"
     "20c424c4b31e020106212625994bc0000012f020083109312cc65e0000009781004e00"
     "00009e")
+# \textrn ext / \taseg / \torg 4000h / \tdw ext / \tcseg / \tcall ext / \tend
+# (the chain runs from CSEG 0001H to ASEG 4000H: the link is absolute)
+M80_XA = bytes.fromhex(
+    "84934c2500001350300960020000012d0000668008119010068ab0a93800009e")
+# \textrn ext / \tcseg / \tcall ext / \taseg / \torg 4000h / \tdw ext / \tend
+# (from ASEG 4000H to CSEG 0001H: the link is program relative)
+M80_AX = bytes.fromhex(
+    "84934c25000013503009680003340000960020501008c002034558549c0000009e")
 
 
 def _link(d, *objects, origin=0x100):
@@ -124,6 +132,22 @@ def test_m80_common_blocks_are_placed_apart():
     # byte (LINK-80 gives the same 00 12).
     assert out[blk1 - 0x100:blk1 - 0x100 + 2] == b"\x00\x12"
     assert out[blk2 - 0x100:blk2 - 0x100 + 2] == b"\x00\x22"
+
+
+def _word_at(linker, addr):
+    return _word(linker.output, addr - linker.output_base)
+
+
+def test_m80_chain_from_relocatable_code_into_aseg():
+    """An absolute chain link is an address in ASEG.  ul80 read it as an
+    offset in the segment the word is in, found nothing at CSEG+4000H and
+    left the reference at 4000H zero (LINK-80 fills both)."""
+    ext = 0x100 + 3 + 0x123
+    for name, rel in (("XA", M80_XA), ("AX", M80_AX)):
+        with tempfile.TemporaryDirectory() as d:
+            linker = _link(d, (name, rel), ("E", M80_E))
+        assert _word_at(linker, 0x101) == ext, name
+        assert _word_at(linker, 0x4000) == ext, name
 
 
 def test_reader_reads_m80_and_old_um80_end_items():

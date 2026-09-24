@@ -167,6 +167,14 @@ evaluates them. The format was established by running the genuine M80 and L80
   added the segment base to the other links: in an M80 object `JMP EXT+3`
   linked to EXT, and of three `CALL X` the second called X+100H. It applies
   the constants and follows each chain link by its relocation type.
+- ul80 linker: a chain link typed absolute is an address in ASEG, as in
+  LINK-80. ul80 read it as an offset in the segment of the word holding it,
+  so where MACRO-80 chains a CSEG or DSEG reference to one in ASEG (`ASEG` /
+  `ORG 4000H` / `DW EXT` / `CSEG` / `CALL EXT`) the ASEG word was never
+  found and stayed 0000H. And a word in a chain was marked in a `.PRL`/`.SPR`
+  bitmap by the type of the link it held (program relative, for a link to
+  another reference) rather than by the value filled in: two `CALL X` of an
+  absolute X marked the second.
 - ul80 linker, ulib80: a `.REL` holding several modules — a LIB-80 library
   such as FORTRAN-80's FORLIB.REL, 106 modules — loaded only the first, and
   `ulib80 -c` stored it as one module. Every module is loaded, and ulib80

@@ -181,3 +181,50 @@ def test_expression_without_a_store_fails_the_link():
         assert r.returncode != 0
         assert "no store operator" in r.stderr
         assert not os.path.exists(os.path.join(d, "bad.com"))
+
+
+def test_chained_reference_to_an_absolute_symbol_is_not_marked():
+    """A MACRO-80 chain runs through the words: `CALL X' twice leaves the
+    second word holding P 0001H, the link to the first.  Its relocation
+    record said program relative, and the bitmap marked the word by it,
+    although the word ends up holding X - here the constant 1234H, which
+    does not move.  Only what the filled-in value is decides."""
+    from um80.relformat import (RELWriter, ADDR_ABSOLUTE, ADDR_PROGRAM_REL)
+    with tempfile.TemporaryDirectory() as d:
+        w = RELWriter()
+        w.write_program_name("A")
+        w.write_define_entry_point(ADDR_ABSOLUTE, 0x1234, "X")
+        w.write_define_entry_point(ADDR_PROGRAM_REL, 0, "Y")
+        w.write_define_program_size(1)
+        w.write_absolute_byte(0xC9)
+        w.write_end_program()
+        w.write_end_file()
+        a = os.path.join(d, "a.rel")
+        with open(a, "wb") as f:
+            f.write(w.get_bytes())
+        w = RELWriter()
+        w.write_program_name("M")
+        w.write_define_program_size(12)
+        for b in (0xCD, 0, 0, 0xCD):  # CALL X (end of chain), CALL X
+            w.write_absolute_byte(b)
+        w.write_program_relative(1)
+        for b in (0xCD, 0, 0, 0xCD):  # CALL Y (end of chain), CALL Y
+            w.write_absolute_byte(b)
+        w.write_program_relative(7)
+        w.write_chain_external(ADDR_PROGRAM_REL, 4, "X")
+        w.write_chain_external(ADDR_PROGRAM_REL, 10, "Y")
+        w.write_end_program()
+        w.write_end_file()
+        m = os.path.join(d, "m.rel")
+        with open(m, "wb") as f:
+            f.write(w.get_bytes())
+        linker = Linker()
+        linker.code_base = 0x100
+        linker.page_zero_relative = True
+        linker.load_rel(m)
+        linker.load_rel(a)
+        assert linker.link(), linker.errors
+        assert bytes(linker.output[:12]) == bytes.fromhex(
+            "cd3412cd3412cd0c01cd0c01")
+        # Y's two words move (high bytes at 8 and 11); X's do not.
+        assert _prl_marks(linker, d) == {8, 11}

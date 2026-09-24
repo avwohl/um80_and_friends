@@ -83,6 +83,10 @@ class Module:
         self.entry = None
         self.legacy_um80 = False
 
+        # buf_offset -> (relocation type, COMMON block) of each relocatable
+        # word, built when a chain is first followed (Linker._fill_chain()).
+        self.link_types = None
+
 
 class Linker:
     """LINK-80 compatible linker."""
@@ -137,6 +141,8 @@ class Linker:
         # description of each expression a bitmap cannot express.
         self.expr_relocations = []
         self.expr_unrelocatable = []
+        # (module index, buffer offset) of every chain word link() filled.
+        self.chained_locs = set()
 
         # When True, emit zeros for DS (reserve space) directives instead of
         # treating them as BSS. Required for PRL/SPR format where all segments
@@ -633,10 +639,6 @@ class Linker:
                 seg, seg_start = s, st
         return seg, seg_start
 
-    def _seg_key_at(self, module, buf_offset):
-        """The segment key of the buffer that holds `buf_offset'."""
-        return self._seg_at(module, buf_offset)[0]
-
     def _buf_offset_addr(self, module, buf_offset):
         """Absolute output address for a module.code buffer offset.
 
@@ -652,6 +654,47 @@ class Linker:
         if isinstance(seg, tuple):
             return self.common_bases.get(seg[1], self.common_base) + rel
         return module.code_base + rel
+
+    def _fill_chain(self, module, mod_idx, head, value, moves):
+        """Store `value' in every word of the chain that starts at `head'.
+
+        A chain is LINK-80's list of the places one value goes (the
+        references to an external, item 6; a forward reference, item 12):
+        each word holds the address of the next, typed like any other word
+        - program, data or COMMON relative, or absolute, which is an address
+        in ASEG - and absolute 0 ends it.  `head' is a buffer offset in
+        `module'.  Every word filled is recorded in chained_locs, so the
+        relocation pass (which would add a segment base to the value) and
+        the .PRL bitmap (which would mark it by the type of the link it
+        held) leave it alone; `moves' says whether the value moves with the
+        program, for the bitmap.  An absolute link was read as an offset in
+        the segment of the word holding it: MACRO-80 chains a CSEG
+        reference to one in ASEG that way, and that one was left 0000H.
+        """
+        link_types = module.link_types
+        if link_types is None:
+            link_types = module.link_types = {
+                r[0]: (r[1], r[3]) for r in module.relocations}
+        cur = head
+        visited = set()  # Prevent infinite loops
+        while (cur is not None and cur not in visited
+               and 0 <= cur < len(module.code) - 1):
+            visited.add(cur)
+            self.chained_locs.add((mod_idx, cur))
+            link = module.code[cur] | (module.code[cur + 1] << 8)
+            link_type, link_block = link_types.get(cur, (ADDR_ABSOLUTE, None))
+            out = self._buf_offset_addr(module, cur) - self.output_base
+            if 0 <= out and out + 1 < len(self.output):
+                self.output[out] = value & 0xFF
+                self.output[out + 1] = (value >> 8) & 0xFF
+                if moves:
+                    self.external_relocations.append(out)
+            if link_type == ADDR_ABSOLUTE and link == 0:
+                break
+            key = (ADDR_COMMON_REL, link_block) \
+                if link_type == ADDR_COMMON_REL else link_type
+            start = module.seg_buf_start.get(key)
+            cur = None if start is None else start + link
 
     def calculate_addresses(self):
         """Calculate base addresses for all modules."""
@@ -792,13 +835,9 @@ class Linker:
         # Fix up external references
         # Track which (module_index, buf_offset) pairs are resolved externally
         # so Phase 2 relocation doesn't double-apply segment bases
-        resolved_external_locs = set()
+        resolved_external_locs = self.chained_locs = set()
 
         for mod_idx, module in enumerate(self.modules):
-            # What each relocatable word in the module is relative to: a
-            # chain link MACRO-80 wrote as one (P:0001) points into that
-            # segment.
-            link_types = {r[0]: (r[1], r[3]) for r in module.relocations}
             for name, refs in module.externals.items():
                 # "SYMBOL+N": the offset in the name, as um80 up to 0.3.48
                 # wrote a reference to SYMBOL plus a constant.
@@ -810,45 +849,13 @@ class Linker:
                 target_addr, _, target_value, target_seg_type = \
                     self._global_address(base_name)
                 target_addr += expr_offset
+                # Under MP/M page zero belongs to the memory segment, so a
+                # reference to BDOS/FCB/TBUFF relocates like any program
+                # address.
                 moves = self._moves(base_name, target_value, target_seg_type)
 
                 for head, _ in refs:
-                    # Follow the chain.  Each word holds the next reference:
-                    # an offset in the segment its relocation type names
-                    # (MACRO-80 chains every reference to an external through
-                    # them), and absolute 0 ends it.  Every link is filled
-                    # in, and marked so the relocation pass below leaves it
-                    # alone - it added the segment base to a filled-in word.
-                    cur = head
-                    visited = set()  # Prevent infinite loops
-                    while (cur is not None and cur not in visited
-                           and 0 <= cur < len(module.code) - 1):
-                        visited.add(cur)
-                        resolved_external_locs.add((mod_idx, cur))
-                        link = module.code[cur] | (module.code[cur + 1] << 8)
-                        link_type, link_block = link_types.get(
-                            cur, (ADDR_ABSOLUTE, None))
-                        out = self._buf_offset_addr(module, cur) - self.output_base
-                        if 0 <= out and out + 1 < len(self.output):
-                            self.output[out] = target_addr & 0xFF
-                            self.output[out + 1] = (target_addr >> 8) & 0xFF
-                            if moves:
-                                # Under MP/M page zero belongs to the memory
-                                # segment, so a reference to BDOS/FCB/TBUFF
-                                # relocates like any program address.
-                                self.external_relocations.append(out)
-                        if link_type == ADDR_ABSOLUTE and link == 0:
-                            break
-                        if link_type == ADDR_COMMON_REL:
-                            key = (ADDR_COMMON_REL, link_block)
-                        elif link_type == ADDR_ABSOLUTE:
-                            # An untyped link: in the segment it is in, as
-                            # ul80 has always read one.
-                            key = self._seg_key_at(module, cur)
-                        else:
-                            key = link_type
-                        start = module.seg_buf_start.get(key)
-                        cur = None if start is None else start + link
+                    self._fill_chain(module, mod_idx, head, target_addr, moves)
 
         # Apply relocations for program-relative, data-relative, and common-relative addresses
         for mod_idx, module in enumerate(self.modules):
@@ -1180,9 +1187,13 @@ class Linker:
         bitmap = bytearray(bitmap_size)
 
         # Collect all relocation high-byte offsets from all modules: the
-        # words that are addresses, where link() put them.
-        for module in self.modules:
+        # words that are addresses, where link() put them.  A word in a
+        # chain holds what link() filled in, not the link its relocation
+        # record describes: external_relocations has it if that moves.
+        for mod_idx, module in enumerate(self.modules):
             for buf_offset, _, _, _ in module.relocations:
+                if (mod_idx, buf_offset) in self.chained_locs:
+                    continue
                 abs_offset = self._buf_offset_addr(module, buf_offset) \
                     - self.output_base
                 high_byte_offset = abs_offset + 1

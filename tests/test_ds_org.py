@@ -520,10 +520,12 @@ class TestExternalReferencesWithDSORG:
             writer2.write_absolute_byte(0x00)
             # DS 7 (skip to offset 10)
             writer2.write_set_location(ADDR_PROGRAM_REL, 10)
-            # Second CALL at offset 10
+            # Second CALL at offset 10.  The link to the first CALL is
+            # typed program relative, as MACRO-80 writes it: an absolute
+            # link is an address in ASEG (LINK-80 3.44 follows this one to
+            # absolute 0001H and leaves the first CALL 0000H).
             writer2.write_absolute_byte(0xCD)
-            writer2.write_absolute_byte(0x01)  # chain link -> 1 (first CALL)
-            writer2.write_absolute_byte(0x00)
+            writer2.write_program_relative(0x0001)  # chain link -> 1
             # Chain external: head at offset 11, chains to 1
             writer2.write_chain_external(ADDR_PROGRAM_REL, 11, "FUNC")
             writer2.write_define_program_size(13)
