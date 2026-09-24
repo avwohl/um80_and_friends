@@ -205,7 +205,10 @@ evaluates them. The format was established by running the genuine M80 and L80
   found and stayed 0000H. And a word in a chain was marked in a `.PRL`/`.SPR`
   bitmap by the type of the link it held (program relative, for a link to
   another reference) rather than by the value filled in: two `CALL X` of an
-  absolute X marked the second.
+  absolute X marked the second. An object from um80 0.3.34 or earlier,
+  recognised by its item 14, is still read the old way: those chained an
+  external's references through untyped words, each the offset of the
+  previous reference in the same segment.
 - ul80 linker: special item 12 (chain address) was read and never applied.
   FORTRAN-80 writes every forward reference — a jump to a label further
   down, a FORMAT string, a constant after the code — as a chain through the

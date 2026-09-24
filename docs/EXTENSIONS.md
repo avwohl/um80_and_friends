@@ -420,7 +420,9 @@ M80+ul80, um80+L80, um80+ul80):
   ASEG 0000H for code loaded there, so `ASEG` / `ORG 100H` made it write a
   `.COM` starting at 0000H;
 - a chain link typed absolute is an address in ASEG (M80 and DRI's RMAC chain
-  a CSEG reference to one in ASEG that way);
+  a CSEG reference to one in ASEG that way) — except in an object from um80
+  0.3.34 or earlier (item 14 without an A-field), whose untyped links are
+  offsets in the segment of the word holding them, as that um80 wrote them;
 - special item 12 (chain address) fills every word of the chain it heads with
   the address of the location where it appears: FORTRAN-80 writes every
   forward reference (a jump to a label further down, a FORMAT string, a

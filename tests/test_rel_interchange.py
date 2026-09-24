@@ -70,6 +70,16 @@ M80_XA = bytes.fromhex(
 M80_AX = bytes.fromhex(
     "84934c25000013503009680003340000960020501008c002034558549c0000009e")
 
+# um80 0.3.34 on \textrn ext / \tcseg / \tnop / \tcall ext / \tnop /
+# \tcall ext / \tlxi h,ext / \tend: one chain through untyped words, each
+# the offset of the previous reference in CSEG, and item 14 without an
+# A-field.
+V0334_M2 = bytes.fromhex(
+    "84934c800cd0000000cd010004206004642401a2ac2a4d02c027009e")
+# um80 0.3.34 on \tcseg / \tpublic ext / \tds 10h / ext:\tret / \tend
+V0334_D = bytes.fromhex(
+    "84512034558549688003263a2000d1561526822013809e")
+
 
 def _link(d, *objects, origin=0x100):
     """Link (name, REL bytes) pairs; return the Linker."""
@@ -234,6 +244,18 @@ def test_old_um80_objects_still_link():
     ext = 0x100 + 0x123
     assert _word(linker.output, 0) == ext
     assert _word(linker.output, 3) == ext + 3
+
+
+def test_um80_0334_chain_through_untyped_words():
+    """um80 0.2.1 to 0.3.34 chained an external's references through
+    untyped words holding the previous reference's offset in the same
+    segment.  Reading an absolute link as an ASEG address (as M80's is)
+    filled only the head: 00 CD 00 00 00 CD 02 00 21 1B 01."""
+    with tempfile.TemporaryDirectory() as d:
+        linker = _link(d, ("M2", V0334_M2), ("D", V0334_D))
+    assert linker.modules[0].legacy_um80
+    assert bytes(linker.output[:11]) == bytes.fromhex(
+        "00cd1b0100cd1b01211b01")
 
 
 def _two_module_rel():

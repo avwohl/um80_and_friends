@@ -553,6 +553,51 @@ class TestExternalReferencesWithDSORG:
             assert linker.output[12] == 0x00  # low byte of 0x100
             assert linker.output[13] == 0x01  # high byte of 0x100
 
+    def test_chained_externals_with_ds_old_um80(self):
+        """The same chain as um80 up to 0.3.34 wrote it: the link to the
+        first CALL untyped, an offset in CSEG, and item 14 without an
+        A-field.  Such an object's untyped links stay in their segment."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            writer1 = RELWriter()
+            writer1.write_program_name("LIB")
+            writer1.write_absolute_byte(0xC9)
+            writer1.write_define_entry_point(ADDR_PROGRAM_REL, 0, "FUNC")
+            writer1.write_define_program_size(1)
+            writer1.write_end_program()
+            writer1.write_end_file()
+            lib_path = os.path.join(tmpdir, "lib.rel")
+            with open(lib_path, "wb") as f:
+                f.write(writer1.get_bytes())
+
+            writer2 = RELWriter()
+            writer2.write_program_name("MAIN")
+            writer2.write_absolute_byte(0xCD)
+            writer2.write_absolute_byte(0x00)  # chain link -> 0 (end)
+            writer2.write_absolute_byte(0x00)
+            writer2.write_set_location(ADDR_PROGRAM_REL, 10)
+            writer2.write_absolute_byte(0xCD)
+            writer2.write_absolute_byte(0x01)  # chain link -> CSEG 1
+            writer2.write_absolute_byte(0x00)
+            writer2.write_chain_external(ADDR_PROGRAM_REL, 11, "FUNC")
+            writer2.write_define_program_size(13)
+            writer2.bits.write_bits(0b100, 3)  # item 14 with no A-field
+            writer2.bits.write_bits(14, 4)
+            writer2.bits.force_byte_boundary()
+            writer2.write_end_file()
+            main_path = os.path.join(tmpdir, "main.rel")
+            with open(main_path, "wb") as f:
+                f.write(writer2.get_bytes())
+
+            linker = Linker()
+            linker.code_base = 0x100
+            linker.load_rel(lib_path)
+            linker.load_rel(main_path)
+            linker.link()
+
+            assert linker.modules[1].legacy_um80
+            assert bytes(linker.output[1:4]) == b"\xcd\x00\x01"
+            assert bytes(linker.output[11:14]) == b"\xcd\x00\x01"
+
 
 class TestRelocatableAddressesWithORG:
     """Test relocatable addresses with ORG (v0.3.6 fix)."""

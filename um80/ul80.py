@@ -674,6 +674,14 @@ class Linker:
         program, for the bitmap.  An absolute link was read as an offset in
         the segment of the word holding it: MACRO-80 chains a CSEG
         reference to one in ASEG that way, and that one was left 0000H.
+
+        Except in an object from um80 up to 0.3.48 (legacy_um80: item 14
+        has no A-field).  From 0.2.1 to 0.3.34 um80 chained the references
+        to an external through untyped words, each the offset of the
+        previous reference in its own segment, and ul80 has always read
+        those that way; read as ASEG addresses, only the head was filled.
+        (0.3.35 to 0.3.48 wrote a chain of one per reference, whose link
+        is absolute 0 either way.)
         """
         link_types = module.link_types
         if link_types is None:
@@ -695,8 +703,12 @@ class Linker:
                     self.external_relocations.append(out)
             if link_type == ADDR_ABSOLUTE and link == 0:
                 break
-            key = (ADDR_COMMON_REL, link_block) \
-                if link_type == ADDR_COMMON_REL else link_type
+            if link_type == ADDR_COMMON_REL:
+                key = (ADDR_COMMON_REL, link_block)
+            elif link_type == ADDR_ABSOLUTE and module.legacy_um80:
+                key = self._seg_at(module, cur)[0]
+            else:
+                key = link_type
             start = module.seg_buf_start.get(key)
             cur = None if start is None else start + link
 
