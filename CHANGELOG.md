@@ -329,9 +329,11 @@ evaluates them. The format was established by running the genuine M80 and L80
   loaded for the start of the module's ASEG). The 4 is at 0180H now, as in
   LINK-80. And a `.COM` whose only code is absolute and above the origin
   (`-p`, 0100H by default) started at its lowest byte, which CP/M then
-  loads at 0100H; it starts at the origin, as LINK-80 writes it (the same
-  384 bytes as L80's for the example). Give `-p` for a raw image that
-  starts elsewhere, e.g. a ROM at E000H.
+  loads at 0100H; it starts at the origin. At the default origin that is
+  what LINK-80 writes (the same 384 bytes as L80's for the example); L80
+  starts a `.COM` at 0100H whatever `/P` says, and ul80 at `-p`, so that
+  `-p` gives a raw image that starts elsewhere, e.g. a ROM at E000H (see
+  "What still differs" in `docs/EXTENSIONS.md`).
 - ul80 linker: the gap an `ORG` or `DS` leaves in a module's absolute code
   was written into the image as zeros, over whatever another module had
   loaded there: a CSEG module at 0100H, then a module loading absolute

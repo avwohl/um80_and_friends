@@ -1465,8 +1465,10 @@ class Linker:
         default), or from below it if absolute code lies there.
 
         A program with only absolute code above the origin (`ASEG / ORG
-        200H') started at its lowest byte, which CP/M then loaded at 0100H;
-        LINK-80 writes the .COM from the origin, as here.
+        200H') started at its lowest byte, which CP/M then loaded at 0100H.
+        LINK-80 writes a .COM from 0100H whatever /P says, the same at the
+        default origin; ul80 writes it from -p, so that -p gives a raw
+        image for another address (a ROM at E000H).
         """
         data = bytes(self.output)
         if self.output_base > self.code_base:

@@ -511,7 +511,13 @@ cases, each checked with the genuine M80 and L80 3.44:
   - L80 writes a `.COM` from 0100H whatever `/P` says (with `/P:200` the
     program starts 100H bytes into the file); ul80 writes it from `-p`, so
     that `-p` gives a raw image for another address, such as a ROM at
-    E000H.
+    E000H;
+  - L80 takes a set-location item to ASEG 0000H for code loaded there, and
+    ul80 does not: `ASEG` / `ORG 0` / `DS 103H` and a CSEG module after it
+    put the module at 0103H in both, but L80 writes the `.COM` from 0000H
+    (384 bytes, the module 103H bytes in) and ul80 from 0100H. (um80 writes
+    that item, as M80 does, only when something is loaded or reserved in
+    ASEG before an `ORG` replaces it.)
 
 ul80 has no counterpart of `/D`; to compare with L80, give L80 `/D:` the
 address where ul80 puts the data (the end of the code).

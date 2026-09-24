@@ -203,11 +203,12 @@ address after the data and COMMON, as LINK-80 sets it (FORTRAN-80's library
 allocates from it).
 .IP \(bu 2
 The layout is code, then data, then COMMON: LINK-80's with /D: at the end of
-the code, except that LINK-80 puts COMMON at the start of the data area. Without
-/D LINK-80 loads each module's data before its code, and it starts a module's
-code above absolute code a previous module loaded at or above the start of the
-program area; ul80 does neither, so a module's code can be loaded over such
-absolute code. See docs/EXTENSIONS.md.
+the code, except that LINK-80 puts COMMON at the start of the data area.
+Without /D LINK-80 loads each module's data before its code; ul80 does not.
+Like LINK-80 without /D, ul80 starts a module's code above absolute code the
+modules before it loaded (LINK-80 with /D does not). LINK-80 writes a .COM
+from 0100H whatever /P says, and from 0000H after a set-location to ASEG
+0000H; ul80 writes it from the origin. See docs/EXTENSIONS.md.
 .IP \(bu 2
 Link-time expressions (REL extension link items, written by MACRO-80 3.44 and
 um80 for HIGH/LOW of relocatable or external values and the like) are
