@@ -315,7 +315,14 @@ evaluates them. The format was established by running the genuine M80 and L80
   written; L80 warns "%Overlaying Program area" and writes a mixture of
   the two. `ASEG` / `ORG 100H` / `JMP START` and a CSEG in one module is
   such a case at ul80's default origin, 0100H; L80's, 0103H, leaves room
-  for the jump, and so does `-p 103`.
+  for the jump, and so does `-p 103`. A full MP/M II source build (2.0 and
+  2.1) gives the same bytes in 42 of its 44 targets; `DDT.COM` and
+  `RDT.PRL`, which it links from DRI's absolute `DDT0MOV`, `DDT1ASM` and
+  `DDT2MON`, now fail with "Module DDT1AS: absolute code at 0100H,
+  0103H-019AH overlaps absolute code of module DDT0MO". `DDT1ASM` is
+  assembled at 0000H, and its code went over `DDT0MOV`'s relocator: the
+  `.COM` started at 0000H with a `JMP 0683H` of `DDT1ASM`'s. DRI put the
+  three together with `GENHEX` and `GENMOD` (`DDT.SUB`), not a linker.
 - ul80 linker: in a `.PRL`/`.SPR` bitmap, a reference to `__END__`,
   `__BSS_START` or `__BSS_END`, or to a `PUBLIC` alias of one, was never
   marked: the linker computes them as absolute values, but they are program
