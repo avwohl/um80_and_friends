@@ -31,6 +31,36 @@ class AssemblerError(Exception):
         return f"Error: {self.message}"
 
 
+# Characters that continue a symbol name (see the name pattern in
+# eval_operand()): a word operator next to one of these is part of a name.
+IDENT_CHARS = frozenset('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
+                        '0123456789_@?$.')
+
+
+def is_string_literal(text):
+    """True if `text' is one quoted string, like 'it''s' - not 'A'+'B'.
+
+    Inside, the quote character stands for itself only when doubled.
+    """
+    if len(text) < 2 or text[0] not in "'\"" or text[-1] != text[0]:
+        return False
+    q = text[0]
+    return q not in text[1:-1].replace(q * 2, '')
+
+
+def prefix_operand(expr, word):
+    """The operand of a prefix word operator (NOT, HIGH, ...), or None.
+
+    `word' must start `expr' and be followed by something that does not
+    continue a name: a blank, a tab or a parenthesis (M80 takes `NOT(X)'
+    and `HIGH<TAB>X').
+    """
+    n = len(word)
+    if expr[:n].upper() != word or len(expr) == n or expr[n] in IDENT_CHARS:
+        return None
+    return expr[n:]
+
+
 class Symbol:
     """Symbol table entry."""
     def __init__(self, name, value=0, seg_type=ADDR_ABSOLUTE,
@@ -451,9 +481,12 @@ class Assembler:
         return (0, False)
 
     def parse_char_const(self, s):
-        """Parse character constant like 'A' or 'AB'."""
-        if len(s) >= 2 and s[0] in "'\"" and s[-1] == s[0]:
-            chars = s[1:-1]
+        """Parse character constant like 'A' or 'AB'.
+
+        A doubled quote inside stands for one: '''' is 27H, as in M80.
+        """
+        if is_string_literal(s):
+            chars = s[1:-1].replace(s[0] * 2, s[0])
             if len(chars) == 1:
                 return (ord(chars), True)
             elif len(chars) == 2:
@@ -507,9 +540,12 @@ class Assembler:
                         if expr[start:i+1].upper() == op.upper():
                             # Make sure it's not part of a larger token
                             if op[0].isalpha():
-                                # Word operator - needs boundaries
-                                before_ok = (start == 0 or not expr[start-1].isalnum())
-                                after_ok = (i+1 >= len(expr) or not expr[i+1].isalnum())
+                                # Word operator - needs boundaries: not part
+                                # of a longer name (MY_OR, XOR, ORG.1), but
+                                # a tab or a parenthesis will do (M80 takes
+                                # `X<TAB>AND<TAB>0FH' and `(X)SHR(4)').
+                                before_ok = (start == 0 or expr[start-1] not in IDENT_CHARS)
+                                after_ok = (i+1 >= len(expr) or expr[i+1] not in IDENT_CHARS)
                                 if before_ok and after_ok:
                                     return (start, len(op))
                             else:
@@ -617,32 +653,35 @@ class Assembler:
                             # Parens close before end, not fully wrapped
                             break
 
-        # Lowest precedence: OR, then XOR, then AND.  LINK-80 has no operator
-        # for any of the three, so on a relocatable or external operand the
-        # result cannot reach the linker (M80 flags these 'R').
-        for word, fn in ((' OR ', lambda a, b: a | b),
-                         (' XOR ', lambda a, b: a ^ b),
-                         (' AND ', lambda a, b: a & b)):
-            idx, oplen = self.find_op_at_level0(expr, [word])
+        # Lowest precedence: OR and XOR, one level, left to right (M80 and
+        # DRI's MAC both: `1 OR 1 XOR 1' is 0), then AND.  LINK-80 has no
+        # operator for any of the three, so on a relocatable or external
+        # operand the result cannot reach the linker (M80 flags these 'R').
+        for words in (('OR', 'XOR'), ('AND',)):
+            idx, oplen = self.find_op_at_level0(expr, list(words))
             if idx >= 0:
+                word = expr[idx:idx+oplen].upper()
                 left = self.eval_operand(expr[:idx], allow_undefined)
                 right = self.eval_operand(expr[idx+oplen:], allow_undefined)
-                return self._link_binary(word.strip(), left, right,
-                                         fn(left.value, right.value) & 0xFFFF)
+                a, b = left.value & 0xFFFF, right.value & 0xFFFF
+                value = a | b if word == 'OR' else a ^ b if word == 'XOR' \
+                    else a & b
+                return self._link_binary(word, left, right, value)
 
         # NOT (unary): binds tighter than AND/OR/XOR, looser than relational.
-        if upper.startswith('NOT '):
-            operand = self.eval_operand(expr[4:], allow_undefined)
+        rest = prefix_operand(expr, 'NOT')
+        if rest is not None:
+            operand = self.eval_operand(rest, allow_undefined)
             return self._link_unary(EXT_OP_NOT, operand,
                                     (~operand.value) & 0xFFFF)
 
         # Comparison operators: EQ, NE, LT, LE, GT, GE
-        idx, oplen = self.find_op_at_level0(expr, [' EQ ', ' NE ', ' LT ', ' LE ', ' GT ', ' GE '])
+        idx, oplen = self.find_op_at_level0(expr, ['EQ', 'NE', 'LT', 'LE', 'GT', 'GE'])
         if idx >= 0:
             op = expr[idx:idx+oplen].strip().upper()
             left = self.eval_operand(expr[:idx], allow_undefined)
             right = self.eval_operand(expr[idx+oplen:], allow_undefined)
-            left_val, right_val = left.value, right.value
+            left_val, right_val = left.value & 0xFFFF, right.value & 0xFFFF
             if op == 'EQ':
                 result = 0xFFFF if left_val == right_val else 0
             elif op == 'NE':
@@ -658,9 +697,12 @@ class Assembler:
             else:
                 result = 0
             # Two addresses in the same segment compare the same wherever the
-            # linker puts it.
-            if (left.kind == 'rel' and right.kind == 'rel'
-                    and left.seg == right.seg):
+            # linker puts it; so do two offsets from the same external
+            # (`EXT EQ EXT', which M80 also accepts).
+            if ((left.kind == 'rel' and right.kind == 'rel'
+                 and left.seg == right.seg)
+                    or (left.kind == 'ext' and right.kind == 'ext'
+                        and left.name == right.name)):
                 return ExprValue(result)
             return self._link_binary(op, left, right, result)
 
@@ -687,7 +729,7 @@ class Assembler:
             return self.eval_operand(expr[1:], allow_undefined)
 
         # Multiplication, division, MOD, SHL, SHR
-        idx, oplen = self.find_op_at_level0(expr, ['*', '/', ' MOD ', ' SHL ', ' SHR '])
+        idx, oplen = self.find_op_at_level0(expr, ['*', '/', 'MOD', 'SHL', 'SHR'])
         if idx >= 0:
             op = expr[idx:idx+oplen].strip().upper()
             left = self.eval_operand(expr[:idx], allow_undefined)
@@ -730,39 +772,21 @@ class Assembler:
         # `mvi a,low(bitmap+128)' came out as the low byte of the offset).
         # So a relocatable or external operand makes this an expression for
         # the linker to finish; see _link_unary().
-        inner = None
-        if upper.startswith('HIGH(') or upper.startswith('LOW('):
-            opn = 5 if upper.startswith('HIGH(') else 4  # index of '(' + 1
-            depth = 0
-            match_end = -1
-            for i in range(opn - 1, len(expr)):
-                if expr[i] == '(':
-                    depth += 1
-                elif expr[i] == ')':
-                    depth -= 1
-                    if depth == 0:
-                        match_end = i
-                        break
-            if match_end == len(expr) - 1:
-                inner = expr[opn:match_end]
-        # Original M80 syntax: HIGH expr and LOW expr (with space)
-        if inner is None and upper.startswith('HIGH '):
-            inner = expr[5:]
-        if inner is None and upper.startswith('LOW '):
-            inner = expr[4:]
-        if inner is not None:
-            operand = self.eval_operand(inner, allow_undefined)
-            if upper.startswith('HIGH'):
-                return self._link_unary(EXT_OP_HIGH, operand,
-                                        (operand.value >> 8) & 0xFF,
+        for word, code in (('HIGH', EXT_OP_HIGH), ('LOW', EXT_OP_LOW)):
+            inner = prefix_operand(expr, word)
+            if inner is not None:
+                # HIGH X, HIGH(X), HIGH<TAB>X.  A binary operator after the
+                # operand - HIGH(1234H)+1 - has already been split above.
+                operand = self.eval_operand(inner, allow_undefined)
+                value = (operand.value >> 8) & 0xFF if code == EXT_OP_HIGH \
+                    else operand.value & 0xFF
+                return self._link_unary(code, operand, value,
                                         ext=operand.ext, name=operand.name)
-            return self._link_unary(EXT_OP_LOW, operand, operand.value & 0xFF,
-                                    ext=operand.ext, name=operand.name)
 
         # NUL operator - true (0FFFFh) if its argument is null/empty. The empty
         # case (a macro arg omitted, leaving a bare 'NUL') is its primary use.
-        if upper == 'NUL' or upper.startswith('NUL '):
-            arg = expr[3:].strip() if len(expr) > 3 else ''
+        if upper == 'NUL' or prefix_operand(expr, 'NUL') is not None:
+            arg = expr[3:].strip()
             if not arg or arg == '<>' or arg == "''":
                 return ExprValue(0xFFFF)
             return ExprValue(0)
@@ -770,8 +794,8 @@ class Assembler:
         # TYPE operator - returns byte describing expression characteristics
         # Lower 2 bits: mode (0=abs, 1=prog rel, 2=data rel, 3=common rel)
         # Bit 5 (20H): defined; Bit 7 (80H): external
-        if upper.startswith('TYPE '):
-            arg = expr[5:].strip()
+        if prefix_operand(expr, 'TYPE') is not None:
+            arg = expr[4:].strip()
             if re.match(r'^[A-Za-z_@?][A-Za-z0-9_@?$.]*$', arg):
                 sym = self.symbols.get(arg.upper())
                 if sym:
@@ -794,7 +818,9 @@ class Assembler:
                 # ## implies external if not defined locally
                 sym.external = True
                 return ExprValue(0, ext=True, name=sym.name)
-            return ExprValue(sym.value, sym.seg_type)
+            # A local definition: an alias of an external or a link-time
+            # expression stands for what it stands for without the ## too.
+            return self.symbol_value(sym)
 
         # Try as simple symbol
         if re.match(r'^[$A-Za-z_@?][A-Za-z0-9_@?$.]*$', expr):
@@ -2600,12 +2626,12 @@ class Assembler:
         if operator in ('DB', 'DEFB', 'DEFM'):
             for op in ops:
                 op = op.strip()
-                # Check for string
-                if (op.startswith("'") and op.endswith("'")) or \
-                   (op.startswith('"') and op.endswith('"')):
+                # A string, not an expression that begins and ends with a
+                # quote: DB 'A'+'B' is the byte 83H.
+                if is_string_literal(op):
                     s = op[1:-1]
-                    # Handle '' escape sequence (doubled apostrophe = single apostrophe)
-                    s = s.replace("''", "'")
+                    # A doubled quote stands for one.
+                    s = s.replace(op[0] * 2, op[0])
                     for ch in s:
                         self.emit_byte(ord(ch))
                 else:
@@ -2619,11 +2645,10 @@ class Assembler:
                 self.error("DC requires one string operand")
                 return True
             op = ops[0].strip()
-            if (op.startswith("'") and op.endswith("'")) or \
-               (op.startswith('"') and op.endswith('"')):
+            if is_string_literal(op):
                 s = op[1:-1]
-                # Handle '' escape sequence (doubled apostrophe = single apostrophe)
-                s = s.replace("''", "'")
+                # A doubled quote stands for one.
+                s = s.replace(op[0] * 2, op[0])
                 if not s:
                     self.error("DC requires non-empty string")
                     return True

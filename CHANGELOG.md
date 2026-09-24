@@ -94,6 +94,18 @@ evaluates them. The format was established by running the genuine M80 and L80
   `.REL`, and far enough from the segment start it was promoted to
   `JP 0000H`. LINK-80 has no PC-relative operator; these are errors now, as
   in M80 (`E`/`R`).
+- um80 assembler: expressions MACRO-80 accepts that um80 rejected or
+  evaluated differently (each checked against M80 3.44): a word operator
+  next to a tab or a parenthesis — `HIGH<TAB>X`, `X<TAB>AND<TAB>0FH`,
+  `NOT(X)`, `X AND(0FH)`, `(X)SHR(4)`, `LOW(X)OR 1` — was "Cannot parse
+  expression"; `OR` and `XOR` are one precedence level, left to right, so
+  `1 OR 1 XOR 1` is 0 (as in DRI's MAC too), not 1; `''''` is 27H, not
+  2727H; `DB 'A'+'B'` is the byte 83H, not the five bytes of the text;
+  `X##` of a local alias of an external or of a link-time `E'U` stands for
+  what `X` does; `EXT E' EXT` (offsets from one external) is a constant.
+  Division stays unsigned and a leading minus still applies after `SHR`
+  (`-4 SHR 1` is FFFEH): that is what DRI's MAC computes, and um80
+  assembles MAC sources too (M80 3.44 divides signed and gives 7FFEH).
 - relformat: special link item 4 was returned as `UNKNOWN_SPECIAL` without
   consuming its B-field, so everything after it in the module was misread:
   ulib80 indexed four garbage "public symbols" from an M80 module that uses
@@ -111,7 +123,10 @@ evaluates them. The format was established by running the genuine M80 and L80
   errors when the result would not move by exactly 0 or 1 page (see below).
 - um80 assembler: `AND`, `OR`, `XOR`, `SHL`, `SHR` or a comparison applied to a
   relocatable or external value is an error when the result is assembled into
-  an instruction or `DB`/`DW` (M80 flags these `R`, and DRI's RMAC `E`). LINK-80
+  an instruction or `DB`/`DW` (M80 flags these `R`, except a comparison of
+  two externals, which it evaluates with both as 0; DRI's RMAC flags `E`).
+  Two addresses in one segment, or two offsets from one external, compare
+  as constants. LINK-80
   has no such operators, and the offset-based value was silently wrong.
   Absolute code (`ASEG`, `--aseg`) is unaffected: HIGH/LOW of an absolute
   value is a constant and no extension item is written.
