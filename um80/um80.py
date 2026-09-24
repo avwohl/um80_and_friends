@@ -48,6 +48,51 @@ class Symbol:
         # For symbols defined as EQU external+offset
         self.ext_alias_base = ext_alias_base  # Name of external symbol, or None
         self.ext_alias_offset = ext_alias_offset  # Offset to add
+        # For an EQU/SET whose value only the linker can compute (e.g.
+        # `X EQU HIGH BUF' with BUF relocatable): the ExprValue it stands for.
+        self.link_expr = None
+
+
+class ExprValue:
+    """An evaluated operand.
+
+    value, seg, ext and name are the assembly-time view parse_expression()
+    returns: for a relocatable value, its offset in segment `seg'; for an
+    external, `name' plus the constant `value'.
+
+    kind says what the value is once the program is linked:
+      'abs'   known now; value is the answer.
+      'rel'   the address `value' in segment `seg': a relocatable word.
+      'ext'   external `name' plus the constant `value'.
+      'expr'  anything else computed from relocatable or external values
+              with operators LINK-80 can evaluate - HIGH(BUF+128), LOW EXT,
+              LAB-EXT - for which `rpn' holds the postfix extension link
+              items (see relformat.py).
+      'bad'   uses an operator LINK-80 cannot evaluate (AND, OR, XOR, SHL,
+              SHR or a comparison) on a relocatable or external value;
+              `why' names it.
+    """
+
+    __slots__ = ('value', 'seg', 'ext', 'name', 'kind', 'rpn', 'why')
+
+    def __init__(self, value, seg=ADDR_ABSOLUTE, ext=False, name=None,
+                 kind=None, rpn=None, why=None):
+        self.value = value
+        self.seg = seg
+        self.ext = ext
+        self.name = name
+        if kind is None:
+            if ext:
+                kind = 'ext'
+            else:
+                kind = 'abs' if seg == ADDR_ABSOLUTE else 'rel'
+        self.kind = kind
+        self.rpn = rpn
+        self.why = why
+
+    def as_tuple(self):
+        """(value, seg_type, is_external, ext_name), as parse_expression()."""
+        return (self.value, self.seg, self.ext, self.name)
 
 
 class Segment:
@@ -442,14 +487,28 @@ class Assembler:
         """
         Parse an expression, return (value, seg_type, is_external, ext_name).
         Uses recursive descent with proper precedence and parenthesis handling.
+
+        This is the assembly-time view of the value, and what every directive
+        that needs a number now (ORG, DS, IF, EQU ...) uses.  An instruction
+        or DB/DW operand is evaluated with eval_operand() instead, which also
+        knows when the value only exists at link time.
+        """
+        return self.eval_operand(expr, allow_undefined).as_tuple()
+
+    def eval_operand(self, expr, allow_undefined=False):
+        """Evaluate an expression to an ExprValue.
+
+        The value/seg/ext/name fields are exactly what parse_expression() has
+        always returned; `kind' and the postfix form say what the linker has
+        to be told when the value depends on segment placement or externals.
         """
         expr = expr.strip()
         if not expr:
-            return (0, ADDR_ABSOLUTE, False, None)
+            return ExprValue(0)
 
         # Handle special symbols
         if expr == '$':
-            return (self.loc, self.seg_type, False, None)
+            return ExprValue(self.loc, self.seg_type)
 
         # Operators are split lowest-precedence-first (recursive descent) in
         # M80 precedence order. Unary operators (NOT; unary +/-; HIGH/LOW/NUL/
@@ -468,43 +527,37 @@ class Assembler:
                     if level == 0:
                         if i == len(expr) - 1:
                             # Entire expr is wrapped in parens
-                            return self.parse_expression(expr[1:-1], allow_undefined)
+                            return self.eval_operand(expr[1:-1], allow_undefined)
                         else:
                             # Parens close before end, not fully wrapped
                             break
 
-        # Lowest precedence: OR
-        idx, oplen = self.find_op_at_level0(expr, [' OR '])
-        if idx >= 0:
-            left_val, _, _, _ = self.parse_expression(expr[:idx], allow_undefined)
-            right_val, _, _, _ = self.parse_expression(expr[idx+oplen:], allow_undefined)
-            return ((left_val | right_val) & 0xFFFF, ADDR_ABSOLUTE, False, None)
-
-        # XOR
-        idx, oplen = self.find_op_at_level0(expr, [' XOR '])
-        if idx >= 0:
-            left_val, _, _, _ = self.parse_expression(expr[:idx], allow_undefined)
-            right_val, _, _, _ = self.parse_expression(expr[idx+oplen:], allow_undefined)
-            return ((left_val ^ right_val) & 0xFFFF, ADDR_ABSOLUTE, False, None)
-
-        # AND
-        idx, oplen = self.find_op_at_level0(expr, [' AND '])
-        if idx >= 0:
-            left_val, _, _, _ = self.parse_expression(expr[:idx], allow_undefined)
-            right_val, _, _, _ = self.parse_expression(expr[idx+oplen:], allow_undefined)
-            return ((left_val & right_val) & 0xFFFF, ADDR_ABSOLUTE, False, None)
+        # Lowest precedence: OR, then XOR, then AND.  LINK-80 has no operator
+        # for any of the three, so on a relocatable or external operand the
+        # result cannot reach the linker (M80 flags these 'R').
+        for word, fn in ((' OR ', lambda a, b: a | b),
+                         (' XOR ', lambda a, b: a ^ b),
+                         (' AND ', lambda a, b: a & b)):
+            idx, oplen = self.find_op_at_level0(expr, [word])
+            if idx >= 0:
+                left = self.eval_operand(expr[:idx], allow_undefined)
+                right = self.eval_operand(expr[idx+oplen:], allow_undefined)
+                return self._link_binary(word.strip(), left, right,
+                                         fn(left.value, right.value) & 0xFFFF)
 
         # NOT (unary): binds tighter than AND/OR/XOR, looser than relational.
         if upper.startswith('NOT '):
-            val, _, _, _ = self.parse_expression(expr[4:], allow_undefined)
-            return ((~val) & 0xFFFF, ADDR_ABSOLUTE, False, None)
+            operand = self.eval_operand(expr[4:], allow_undefined)
+            return self._link_unary(EXT_OP_NOT, operand,
+                                    (~operand.value) & 0xFFFF)
 
         # Comparison operators: EQ, NE, LT, LE, GT, GE
         idx, oplen = self.find_op_at_level0(expr, [' EQ ', ' NE ', ' LT ', ' LE ', ' GT ', ' GE '])
         if idx >= 0:
             op = expr[idx:idx+oplen].strip().upper()
-            left_val, _, _, _ = self.parse_expression(expr[:idx], allow_undefined)
-            right_val, _, _, _ = self.parse_expression(expr[idx+oplen:], allow_undefined)
+            left = self.eval_operand(expr[:idx], allow_undefined)
+            right = self.eval_operand(expr[idx+oplen:], allow_undefined)
+            left_val, right_val = left.value, right.value
             if op == 'EQ':
                 result = 0xFFFF if left_val == right_val else 0
             elif op == 'NE':
@@ -519,95 +572,71 @@ class Assembler:
                 result = 0xFFFF if left_val >= right_val else 0
             else:
                 result = 0
-            return (result, ADDR_ABSOLUTE, False, None)
+            # Two addresses in the same segment compare the same wherever the
+            # linker puts it.
+            if (left.kind == 'rel' and right.kind == 'rel'
+                    and left.seg == right.seg):
+                return ExprValue(result)
+            return self._link_binary(op, left, right, result)
 
         # Binary addition and subtraction (left-associative). Only split at a
         # '+'/'-' in binary context; a unary sign (e.g. in 3*-2 or 5--3) is
         # left for the unary handler / higher-precedence operand parsing.
         idx, op = self.find_binary_addsub(expr)
         if idx >= 0:
-            left = expr[:idx].strip()
-            right = expr[idx+1:].strip()
+            left_text = expr[:idx].strip()
+            right_text = expr[idx+1:].strip()
 
-            if left:
-                left_val, left_seg, left_ext, left_name = self.parse_expression(left, allow_undefined)
-                right_val, right_seg, right_ext, right_name = self.parse_expression(right, allow_undefined)
-
-                if left_ext or right_ext:
-                    # External reference with offset.  The .REL format can only
-                    # carry `symbol + constant', so the constant is whichever
-                    # side is not the external and the external keeps its sign.
-                    if left_ext and right_ext:
-                        self.error("cannot combine two external symbols: "
-                                   + expr)
-                        return (0, ADDR_ABSOLUTE, True, left_name)
-                    if left_ext:
-                        # SYM+n or SYM-n.
-                        ext_name = left_name
-                        offset = -right_val if op == '-' else right_val
-                    elif op == '-':
-                        # n-SYM negates the symbol, which LINK-80 cannot encode.
-                        self.error("cannot subtract an external symbol: " + expr)
-                        return (0, ADDR_ABSOLUTE, True, right_name)
-                    else:
-                        # n+SYM.
-                        ext_name = right_name
-                        offset = left_val
-                    return (offset, ADDR_ABSOLUTE, True, ext_name)
-
-                if op == '+':
-                    result = left_val + right_val
-                else:
-                    result = left_val - right_val
-
-                # Determine result segment type
-                if left_seg == right_seg and op == '-':
-                    result_seg = ADDR_ABSOLUTE
-                elif right_seg == ADDR_ABSOLUTE:
-                    result_seg = left_seg
-                elif left_seg == ADDR_ABSOLUTE:
-                    result_seg = right_seg
-                else:
-                    result_seg = left_seg
-
-                return (result & 0xFFFF, result_seg, False, None)
+            if left_text:
+                left = self.eval_operand(left_text, allow_undefined)
+                right = self.eval_operand(right_text, allow_undefined)
+                return self._add_sub(op, left, right)
 
         # Unary minus / plus: binds tighter than binary +/- but looser than
         # the multiplicative operators (so 3*-2 = 3*(-2), -2*3 = -(2*3)).
         if expr.startswith('-') and len(expr) > 1:
-            val, seg, ext, name = self.parse_expression(expr[1:], allow_undefined)
-            return ((-val) & 0xFFFF, seg, ext, name)
+            operand = self.eval_operand(expr[1:], allow_undefined)
+            return self._link_unary(EXT_OP_NEG, operand, (-operand.value) & 0xFFFF,
+                                    operand.seg, operand.ext, operand.name)
         if expr.startswith('+') and len(expr) > 1:
-            return self.parse_expression(expr[1:], allow_undefined)
+            return self.eval_operand(expr[1:], allow_undefined)
 
         # Multiplication, division, MOD, SHL, SHR
         idx, oplen = self.find_op_at_level0(expr, ['*', '/', ' MOD ', ' SHL ', ' SHR '])
         if idx >= 0:
             op = expr[idx:idx+oplen].strip().upper()
-            left_val, _, _, _ = self.parse_expression(expr[:idx], allow_undefined)
-            right_val, _, _, _ = self.parse_expression(expr[idx+oplen:], allow_undefined)
+            left = self.eval_operand(expr[:idx], allow_undefined)
+            right = self.eval_operand(expr[idx+oplen:], allow_undefined)
+            left_val, right_val = left.value, right.value
             if op == '*':
-                return ((left_val * right_val) & 0xFFFF, ADDR_ABSOLUTE, False, None)
-            elif op == '/':
+                result = (left_val * right_val) & 0xFFFF
+            elif op in ('/', 'MOD'):
                 if right_val == 0:
                     self.error("Division by zero")
-                    return (0, ADDR_ABSOLUTE, False, None)
-                return ((left_val // right_val) & 0xFFFF, ADDR_ABSOLUTE, False, None)
-            elif op == 'MOD':
-                if right_val == 0:
-                    self.error("Division by zero")
-                    return (0, ADDR_ABSOLUTE, False, None)
-                return ((left_val % right_val) & 0xFFFF, ADDR_ABSOLUTE, False, None)
+                    return ExprValue(0)
+                if op == '/':
+                    result = (left_val // right_val) & 0xFFFF
+                else:
+                    result = (left_val % right_val) & 0xFFFF
             elif op == 'SHL':
-                return ((left_val << right_val) & 0xFFFF, ADDR_ABSOLUTE, False, None)
-            elif op == 'SHR':
-                return ((left_val >> right_val) & 0xFFFF, ADDR_ABSOLUTE, False, None)
+                result = (left_val << right_val) & 0xFFFF
+            else:
+                result = (left_val >> right_val) & 0xFFFF
+            return self._link_binary(op, left, right, result)
 
         # Highest-precedence operators (bind tightest, just below parentheses):
         # HIGH/LOW, the DRI HIGH(...)/LOW(...) function form, NUL and TYPE.
         # DRI HIGH(expr)/LOW(expr): only the function form when the matching
         # close paren is at end-of-expression (otherwise a binary operator
         # above would already have split, e.g. HIGH(1234H)+1).
+        #
+        # The value is the byte of the assembly-time value, which for a
+        # relocatable operand is its offset in the segment - not the byte of
+        # the address the linker gives it (in MP/M II's LDRLWR.ASM,
+        # `mvi a,low(bitmap+128)' came out as the low byte of the offset).
+        # So a relocatable or external operand makes this an expression for
+        # the linker to finish; see _link_unary().
+        inner = None
         if upper.startswith('HIGH(') or upper.startswith('LOW('):
             opn = 5 if upper.startswith('HIGH(') else 4  # index of '(' + 1
             depth = 0
@@ -622,25 +651,27 @@ class Assembler:
                         break
             if match_end == len(expr) - 1:
                 inner = expr[opn:match_end]
-                val, seg, ext, name = self.parse_expression(inner, allow_undefined)
-                if upper.startswith('HIGH('):
-                    return ((val >> 8) & 0xFF, ADDR_ABSOLUTE, ext, name)
-                return (val & 0xFF, ADDR_ABSOLUTE, ext, name)
         # Original M80 syntax: HIGH expr and LOW expr (with space)
-        if upper.startswith('HIGH '):
-            val, seg, ext, name = self.parse_expression(expr[5:], allow_undefined)
-            return ((val >> 8) & 0xFF, ADDR_ABSOLUTE, ext, name)
-        if upper.startswith('LOW '):
-            val, seg, ext, name = self.parse_expression(expr[4:], allow_undefined)
-            return (val & 0xFF, ADDR_ABSOLUTE, ext, name)
+        if inner is None and upper.startswith('HIGH '):
+            inner = expr[5:]
+        if inner is None and upper.startswith('LOW '):
+            inner = expr[4:]
+        if inner is not None:
+            operand = self.eval_operand(inner, allow_undefined)
+            if upper.startswith('HIGH'):
+                return self._link_unary(EXT_OP_HIGH, operand,
+                                        (operand.value >> 8) & 0xFF,
+                                        ext=operand.ext, name=operand.name)
+            return self._link_unary(EXT_OP_LOW, operand, operand.value & 0xFF,
+                                    ext=operand.ext, name=operand.name)
 
         # NUL operator - true (0FFFFh) if its argument is null/empty. The empty
         # case (a macro arg omitted, leaving a bare 'NUL') is its primary use.
         if upper == 'NUL' or upper.startswith('NUL '):
             arg = expr[3:].strip() if len(expr) > 3 else ''
             if not arg or arg == '<>' or arg == "''":
-                return (0xFFFF, ADDR_ABSOLUTE, False, None)
-            return (0, ADDR_ABSOLUTE, False, None)
+                return ExprValue(0xFFFF)
+            return ExprValue(0)
 
         # TYPE operator - returns byte describing expression characteristics
         # Lower 2 bits: mode (0=abs, 1=prog rel, 2=data rel, 3=common rel)
@@ -655,8 +686,8 @@ class Assembler:
                         result |= 0x20
                     if sym.external:
                         result |= 0x80
-                    return (result, ADDR_ABSOLUTE, False, None)
-            return (0, ADDR_ABSOLUTE, False, None)
+                    return ExprValue(result)
+            return ExprValue(0)
 
         # Handle ## suffix (6-character truncation operator, implies external)
         if expr.endswith('##'):
@@ -664,12 +695,12 @@ class Assembler:
             sym_name = expr[:-2][:6]
             sym = self.lookup_symbol(sym_name)
             if sym.external:
-                return (0, ADDR_ABSOLUTE, True, sym.name)
+                return ExprValue(0, ext=True, name=sym.name)
             if not sym.defined:
                 # ## implies external if not defined locally
                 sym.external = True
-                return (0, ADDR_ABSOLUTE, True, sym.name)
-            return (sym.value, sym.seg_type, False, None)
+                return ExprValue(0, ext=True, name=sym.name)
+            return ExprValue(sym.value, sym.seg_type)
 
         # Try as simple symbol
         if re.match(r'^[$A-Za-z_@?][A-Za-z0-9_@?$.]*$', expr):
@@ -678,7 +709,7 @@ class Assembler:
             # Check if it's a register (not a symbol)
             if upper in REGS or upper in REGPAIRS or upper in REGPAIRS_PUSHPOP:
                 self.error(f"Register '{expr}' used as value")
-                return (0, ADDR_ABSOLUTE, False, None)
+                return ExprValue(0)
 
             # An opcode name stands for its own byte (M80 manual p.2-4, so
             # `DB MOV' works), but only where the name is not a symbol: a
@@ -696,32 +727,149 @@ class Assembler:
             if upper in OPCODE_VALUES and not (
                     defined_sym is not None
                     and (defined_sym.defined or defined_sym.external)):
-                return (OPCODE_VALUES[upper], ADDR_ABSOLUTE, False, None)
+                return ExprValue(OPCODE_VALUES[upper])
 
             sym = self.lookup_symbol(expr)
             if sym.external:
-                return (0, ADDR_ABSOLUTE, True, sym.name)
+                return ExprValue(0, ext=True, name=sym.name)
             # Check if symbol is an alias to external+offset
             if sym.ext_alias_base:
-                return (sym.ext_alias_offset, ADDR_ABSOLUTE, True, sym.ext_alias_base)
+                return ExprValue(sym.ext_alias_offset, ext=True,
+                                 name=sym.ext_alias_base)
             if not sym.defined and not allow_undefined:
                 if self.pass_num == 2:
                     self.error(f"Undefined symbol '{expr}'")
-                return (0, ADDR_ABSOLUTE, False, None)
-            return (sym.value, sym.seg_type, False, None)
+                return ExprValue(0)
+            # An EQU/SET whose value only the linker can compute.
+            if sym.defined and sym.link_expr is not None:
+                return sym.link_expr
+            return ExprValue(sym.value, sym.seg_type)
 
         # Try as number
         val, ok = self.parse_number(expr)
         if ok:
-            return (val & 0xFFFF, ADDR_ABSOLUTE, False, None)
+            return ExprValue(val & 0xFFFF)
 
         # Try as character constant
         val, ok = self.parse_char_const(expr)
         if ok:
-            return (val & 0xFFFF, ADDR_ABSOLUTE, False, None)
+            return ExprValue(val & 0xFFFF)
 
         self.error(f"Cannot parse expression: '{expr}'")
-        return (0, ADDR_ABSOLUTE, False, None)
+        return ExprValue(0)
+
+    def _add_sub(self, op, left, right):
+        """left + right or left - right, as parse_expression() evaluates it."""
+        if left.ext or right.ext:
+            # External reference with offset.  A plain `symbol + constant'
+            # travels as um80's external chain; the constant is whichever
+            # side is not the external and the external keeps its sign.
+            if left.kind == 'ext' and right.kind == 'abs':
+                # SYM+n or SYM-n.
+                offset = -right.value if op == '-' else right.value
+                return ExprValue(offset, ext=True, name=left.name)
+            if op == '+' and left.kind == 'abs' and right.kind == 'ext':
+                # n+SYM.
+                return ExprValue(left.value, ext=True, name=right.name)
+            # Anything else - n-SYM, SYM+SYM, SYM+label, HIGH(SYM)+1 - is an
+            # expression for the linker (MACRO-80 writes the same ones as
+            # extension link items).  The assembly-time tuple is what um80
+            # has always produced: the external and the offset it could see.
+            if left.ext and right.ext:
+                name, offset = left.name, 0
+            elif left.ext:
+                name = left.name
+                offset = -right.value if op == '-' else right.value
+            elif op == '-':
+                name, offset = right.name, 0
+            else:
+                name, offset = right.name, left.value
+            return self._link_binary(op, left, right, offset,
+                                     ext=True, name=name)
+
+        if op == '+':
+            result = left.value + right.value
+        else:
+            result = left.value - right.value
+        result &= 0xFFFF
+
+        # Determine result segment type
+        left_seg, right_seg = left.seg, right.seg
+        if left_seg == right_seg and op == '-':
+            result_seg = ADDR_ABSOLUTE
+        elif right_seg == ADDR_ABSOLUTE:
+            result_seg = left_seg
+        elif left_seg == ADDR_ABSOLUTE:
+            result_seg = right_seg
+        else:
+            result_seg = left_seg
+
+        # The combinations a relocatable word can carry: address +/- constant,
+        # constant + address, and the (absolute) distance between two
+        # addresses in one segment.  Everything else - constant - address,
+        # the sum of two addresses, the distance between two segments, or a
+        # term that is already an expression - goes to the linker.
+        simple = (left.kind == 'abs' and right.kind == 'abs') \
+            or (left.kind == 'rel' and right.kind == 'abs') \
+            or (op == '+' and left.kind == 'abs' and right.kind == 'rel') \
+            or (op == '-' and left.kind == 'rel' and right.kind == 'rel'
+                and left_seg == right_seg)
+        if simple:
+            return ExprValue(result, result_seg)
+        return self._link_binary(op, left, right, result, result_seg)
+
+    def _link_items(self, ev):
+        """The postfix extension link items that compute `ev' at link time."""
+        if ev.kind == 'abs':
+            return [(EXT_ITEM_VALUE, ADDR_ABSOLUTE, ev.value & 0xFFFF)]
+        if ev.kind == 'rel':
+            return [(EXT_ITEM_VALUE, ev.seg,
+                     self._reloc_value(ev.value, ev.seg) & 0xFFFF)]
+        if ev.kind == 'ext':
+            items = [(EXT_ITEM_SYMBOL, ev.name)]
+            if ev.value & 0xFFFF:
+                items += [(EXT_ITEM_VALUE, ADDR_ABSOLUTE, ev.value & 0xFFFF),
+                          (EXT_ITEM_OPERATOR, EXT_OP_PLUS)]
+            return items
+        return list(ev.rpn)
+
+    # Binary operators LINK-80 can evaluate, by the source spelling.
+    _LINK_BINARY_OPS = {'+': EXT_OP_PLUS, '-': EXT_OP_MINUS, '*': EXT_OP_MUL,
+                        '/': EXT_OP_DIV, 'MOD': EXT_OP_MOD}
+
+    def _link_binary(self, op, left, right, value, seg=ADDR_ABSOLUTE,
+                     ext=False, name=None):
+        """ExprValue of `left op right' whose assembly-time value is given."""
+        if left.kind == 'abs' and right.kind == 'abs':
+            return ExprValue(value, seg, ext, name, kind='abs')
+        for side in (left, right):
+            if side.kind == 'bad':
+                return ExprValue(value, seg, ext, name, kind='bad', why=side.why)
+        code = self._LINK_BINARY_OPS.get(op)
+        if code is None:
+            return ExprValue(value, seg, ext, name, kind='bad', why=op)
+        return ExprValue(value, seg, ext, name, kind='expr',
+                         rpn=self._link_items(left) + self._link_items(right)
+                         + [(EXT_ITEM_OPERATOR, code)])
+
+    def _link_unary(self, code, operand, value, seg=ADDR_ABSOLUTE,
+                    ext=False, name=None):
+        """ExprValue of a unary operator (HIGH, LOW, NOT, unary minus)."""
+        if operand.kind == 'abs':
+            return ExprValue(value, seg, ext, name, kind='abs')
+        if operand.kind == 'bad':
+            return ExprValue(value, seg, ext, name, kind='bad', why=operand.why)
+        return ExprValue(value, seg, ext, name, kind='expr',
+                         rpn=self._link_items(operand)
+                         + [(EXT_ITEM_OPERATOR, code)])
+
+    def _reloc_value(self, value, seg_type):
+        """A relocatable value as the .REL file carries it (see emit_word)."""
+        if seg_type == ADDR_PROGRAM_REL and self.segments['CSEG'].org_set:
+            return value - self.segments['CSEG'].org
+        if seg_type == ADDR_DATA_REL and self.segments['DSEG'].org_set:
+            return value - self.segments['DSEG'].org
+        return value
 
     def parse_line(self, line):
         """Parse a source line, return (label, operator, operands, comment)."""
@@ -948,6 +1096,79 @@ class Assembler:
                 self.current_line_bytes.append((value >> 8) & 0xFF)
         self.loc += 2
 
+    def emit_link_expr(self, ev, size):
+        """Emit a 1- or 2-byte field whose value the linker computes.
+
+        The expression goes out as extension link items ending in a store
+        operator, followed by the field itself as zero placeholder bytes -
+        the order MACRO-80 3.44 uses and LINK-80 3.44 expects: the store
+        writes at the location counter it finds, which is where the
+        placeholder then loads.  See relformat.py.
+        """
+        if self.pass_num == 2:
+            out = self.output
+            for item in self._link_items(ev):
+                if item[0] == EXT_ITEM_VALUE:
+                    out.write_ext_value(item[1], item[2])
+                elif item[0] == EXT_ITEM_SYMBOL:
+                    out.write_ext_symbol(item[1])
+                else:
+                    out.write_ext_operator(item[1])
+            out.write_ext_operator(EXT_OP_STORE_BYTE if size == 1
+                                   else EXT_OP_STORE_WORD)
+            for _ in range(size):
+                out.write_absolute_byte(0)
+            if self.generate_listing:
+                self.current_line_bytes.append(ev.value & 0xFF)
+                if size == 2:
+                    self.current_line_bytes.append((ev.value >> 8) & 0xFF)
+        self.loc += size
+
+    def report_unlinkable(self, ev):
+        """Error for an operand that uses an operator LINK-80 does not have.
+
+        M80 flags the same operands 'R' (relocation error).  Assembling the
+        operator's assembly-time result instead would bake the value's
+        offset within its segment into the program, which is right only if
+        the linker happens to put the segment at 0.
+        """
+        if self.pass_num == 2 and ev.why:
+            self.error(f"{ev.why} cannot be applied to a relocatable or "
+                       f"external value: LINK-80 has no {ev.why} operator, "
+                       f"so the linker could not compute the result")
+
+    def emit_word_operand(self, ev):
+        """Emit a 16-bit operand (address of JMP/CALL/LXI, DW, ...)."""
+        if ev.kind in ('abs', 'rel'):
+            self.emit_word(ev.value, ev.seg)
+        elif ev.kind == 'ext':
+            self.emit_external_ref(ev.name, ev.value)
+        elif ev.kind == 'expr':
+            self.emit_link_expr(ev, 2)
+        else:
+            self.report_unlinkable(ev)
+            self.emit_word(ev.value)
+
+    def emit_code(self, code, fields=None):
+        """Emit instruction bytes.
+
+        `fields' maps the index of a byte in `code' to the ExprValue that
+        byte holds (an immediate or an index displacement).  An absolute
+        value is emitted as the encoder produced it; any other value is a
+        one-byte field for the linker to fill, as MACRO-80 does - the
+        encoder's byte would be the low byte of an offset, not of the
+        address.
+        """
+        for i, b in enumerate(code):
+            ev = fields.get(i) if fields else None
+            if ev is None or ev.kind == 'abs':
+                self.emit_byte(b)
+            elif ev.kind == 'bad':
+                self.report_unlinkable(ev)
+                self.emit_byte(b)
+            else:
+                self.emit_link_expr(ev, 1)
+
     def emit_external_ref(self, name, offset=0):
         """Emit reference to external symbol.
 
@@ -1084,13 +1305,8 @@ class Assembler:
             if reg is None:
                 self.error(f"Invalid register for MVI: {ops[0]}")
                 return True
-            val, seg, ext, name = self.parse_expression(ops[1])
-            if ext:
-                self.error("Cannot use external in immediate byte")
-                return True
-            code = encode_mvi(reg, val)
-            for b in code:
-                self.emit_byte(b)
+            ev = self.eval_operand(ops[1])
+            self.emit_code(encode_mvi(reg, ev.value), {1: ev})
             return True
 
         # LXI rp, imm16
@@ -1103,12 +1319,9 @@ class Assembler:
                 self.error(f"Invalid register pair for LXI: {ops[0]}")
                 return True
             # Parse expression BEFORE emit so $ evaluates to instruction start
-            val, seg, ext, name = self.parse_expression(ops[1])
+            ev = self.eval_operand(ops[1])
             self.emit_byte(LXI_BASE | (REGPAIRS[rp] << 4))
-            if ext:
-                self.emit_external_ref(name, val)
-            else:
-                self.emit_word(val, seg)
+            self.emit_word_operand(ev)
             return True
 
         # INR/DCR reg
@@ -1205,13 +1418,8 @@ class Assembler:
             if len(ops) != 1:
                 self.error(f"{operator} requires one operand")
                 return True
-            val, seg, ext, name = self.parse_expression(ops[0])
-            if ext:
-                self.error("Cannot use external in immediate byte")
-                return True
-            code = encode_alu_imm(operator, val)
-            for b in code:
-                self.emit_byte(b)
+            ev = self.eval_operand(ops[0])
+            self.emit_code(encode_alu_imm(operator, ev.value), {1: ev})
             return True
 
         # JMP addr
@@ -1220,12 +1428,9 @@ class Assembler:
                 self.error("JMP requires one operand")
                 return True
             # Parse expression BEFORE emit so $ evaluates to instruction start
-            val, seg, ext, name = self.parse_expression(ops[0])
+            ev = self.eval_operand(ops[0])
             self.emit_byte(JMP)
-            if ext:
-                self.emit_external_ref(name, val)
-            else:
-                self.emit_word(val, seg)
+            self.emit_word_operand(ev)
             return True
 
         # Conditional jumps
@@ -1235,12 +1440,9 @@ class Assembler:
                 return True
             cond = get_cond_from_mnemonic(operator)
             # Parse expression BEFORE emit so $ evaluates to instruction start
-            val, seg, ext, name = self.parse_expression(ops[0])
+            ev = self.eval_operand(ops[0])
             self.emit_byte(COND_JMP_BASE | (CONDITIONS[cond] << 3))
-            if ext:
-                self.emit_external_ref(name, val)
-            else:
-                self.emit_word(val, seg)
+            self.emit_word_operand(ev)
             return True
 
         # CALL addr
@@ -1249,12 +1451,9 @@ class Assembler:
                 self.error("CALL requires one operand")
                 return True
             # Parse expression BEFORE emit so $ evaluates to instruction start
-            val, seg, ext, name = self.parse_expression(ops[0])
+            ev = self.eval_operand(ops[0])
             self.emit_byte(CALL)
-            if ext:
-                self.emit_external_ref(name, val)
-            else:
-                self.emit_word(val, seg)
+            self.emit_word_operand(ev)
             return True
 
         # Conditional calls
@@ -1264,12 +1463,9 @@ class Assembler:
                 return True
             cond = get_cond_from_mnemonic(operator)
             # Parse expression BEFORE emit so $ evaluates to instruction start
-            val, seg, ext, name = self.parse_expression(ops[0])
+            ev = self.eval_operand(ops[0])
             self.emit_byte(COND_CALL_BASE | (CONDITIONS[cond] << 3))
-            if ext:
-                self.emit_external_ref(name, val)
-            else:
-                self.emit_word(val, seg)
+            self.emit_word_operand(ev)
             return True
 
         # RST n
@@ -1292,7 +1488,7 @@ class Assembler:
                 self.error(f"{operator} requires one operand")
                 return True
             # Parse expression BEFORE emit so $ evaluates to instruction start
-            val, seg, ext, name = self.parse_expression(ops[0])
+            ev = self.eval_operand(ops[0])
             if operator == 'LDA':
                 self.emit_byte(LDA)
             elif operator == 'STA':
@@ -1301,10 +1497,7 @@ class Assembler:
                 self.emit_byte(LHLD)
             else:
                 self.emit_byte(SHLD)
-            if ext:
-                self.emit_external_ref(name, val)
-            else:
-                self.emit_word(val, seg)
+            self.emit_word_operand(ev)
             return True
 
         # IN/OUT port
@@ -1312,46 +1505,38 @@ class Assembler:
             if len(ops) != 1:
                 self.error(f"{operator} requires one operand")
                 return True
-            val, seg, ext, name = self.parse_expression(ops[0])
-            if ext:
-                self.error("Cannot use external for port number")
-                return True
+            ev = self.eval_operand(ops[0])
             if operator == 'IN':
-                code = encode_in(val)
+                code = encode_in(ev.value)
             else:
-                code = encode_out(val)
-            for b in code:
-                self.emit_byte(b)
+                code = encode_out(ev.value)
+            self.emit_code(code, {1: ev})
             return True
 
         return False  # Not a CPU instruction
 
     def parse_z80_indexed(self, operand):
-        """Parse (IX+d) or (IY+d) operand, return (reg, displacement) or None."""
+        """Parse (IX+d) or (IY+d) operand.
+
+        Returns (reg, displacement, ev) or None, where ev is the ExprValue
+        of the displacement (None when there is none) for emit_code().
+        """
         operand = operand.strip()
         if not operand.startswith('(') or not operand.endswith(')'):
             return None
         inner = operand[1:-1].strip().upper()
-        if inner.startswith('IX'):
-            rest = inner[2:].strip()
-            if not rest:
-                return ('IX', 0)
-            if rest.startswith('+'):
-                val, _, _, _ = self.parse_expression(rest[1:])
-                return ('IX', val & 0xFF)
-            elif rest.startswith('-'):
-                val, _, _, _ = self.parse_expression(rest)
-                return ('IX', val & 0xFF)
-        elif inner.startswith('IY'):
-            rest = inner[2:].strip()
-            if not rest:
-                return ('IY', 0)
-            if rest.startswith('+'):
-                val, _, _, _ = self.parse_expression(rest[1:])
-                return ('IY', val & 0xFF)
-            elif rest.startswith('-'):
-                val, _, _, _ = self.parse_expression(rest)
-                return ('IY', val & 0xFF)
+        for reg in ('IX', 'IY'):
+            if inner.startswith(reg):
+                rest = inner[2:].strip()
+                if not rest:
+                    return (reg, 0, None)
+                if rest.startswith('+'):
+                    ev = self.eval_operand(rest[1:])
+                    return (reg, ev.value & 0xFF, ev)
+                if rest.startswith('-'):
+                    ev = self.eval_operand(rest)
+                    return (reg, ev.value & 0xFF, ev)
+                return None
         return None
 
     def assemble_z80_instruction(self, operator, operands):
@@ -1435,13 +1620,12 @@ class Assembler:
                 indexed = self.parse_z80_indexed(src)
                 if indexed:
                     # LD r,(IX+d) or LD r,(IY+d)
-                    reg, disp = indexed
+                    reg, disp, dev = indexed
                     if reg == 'IX':
-                        for b in encode_z80_ld_r_ixd(dst, disp):
-                            self.emit_byte(b)
+                        code = encode_z80_ld_r_ixd(dst, disp)
                     else:
-                        for b in encode_z80_ld_r_iyd(dst, disp):
-                            self.emit_byte(b)
+                        code = encode_z80_ld_r_iyd(dst, disp)
+                    self.emit_code(code, {2: dev})
                     return True
                 # If src is (expr), this might be LD A,(nn) - handle below
                 if src.startswith('(') and src.endswith(')'):
@@ -1449,30 +1633,27 @@ class Assembler:
                     pass
                 else:
                     # LD r,n (immediate byte)
-                    val, seg, ext, name = self.parse_expression(src)
-                    for b in encode_z80_ld_r_n(dst, val):
-                        self.emit_byte(b)
+                    ev = self.eval_operand(src)
+                    self.emit_code(encode_z80_ld_r_n(dst, ev.value), {1: ev})
                     return True
 
             # LD (IX+d),r or LD (IY+d),r or LD (IX+d),n or LD (IY+d),n
             indexed = self.parse_z80_indexed(dst)
             if indexed:
-                reg, disp = indexed
+                reg, disp, dev = indexed
                 if src_upper in Z80_REGS and src_upper != '(HL)':
                     if reg == 'IX':
-                        for b in encode_z80_ld_ixd_r(disp, src):
-                            self.emit_byte(b)
+                        code = encode_z80_ld_ixd_r(disp, src)
                     else:
-                        for b in encode_z80_ld_iyd_r(disp, src):
-                            self.emit_byte(b)
+                        code = encode_z80_ld_iyd_r(disp, src)
+                    self.emit_code(code, {2: dev})
                 else:
-                    val, seg, ext, name = self.parse_expression(src)
+                    ev = self.eval_operand(src)
                     if reg == 'IX':
-                        for b in encode_z80_ld_ixd_n(disp, val):
-                            self.emit_byte(b)
+                        code = encode_z80_ld_ixd_n(disp, ev.value)
                     else:
-                        for b in encode_z80_ld_iyd_n(disp, val):
-                            self.emit_byte(b)
+                        code = encode_z80_ld_iyd_n(disp, ev.value)
+                    self.emit_code(code, {2: dev, 3: ev})
                 return True
 
             # LD A,(BC) / LD A,(DE) / LD A,(nn)
@@ -1492,12 +1673,9 @@ class Assembler:
                     self.emit_byte(0x5F)
                     return True
                 if src.startswith('(') and src.endswith(')'):
-                    val, seg, ext, name = self.parse_expression(src[1:-1])
+                    ev = self.eval_operand(src[1:-1])
                     self.emit_byte(0x3A)  # LD A,(nn) opcode
-                    if ext:
-                        self.emit_external_ref(name, val)
-                    else:
-                        self.emit_word(val, seg)
+                    self.emit_word_operand(ev)
                     return True
 
             # LD (BC),A / LD (DE),A / LD (nn),A
@@ -1509,12 +1687,9 @@ class Assembler:
                     self.emit_byte(0x12)
                     return True
                 if dst.startswith('(') and dst.endswith(')'):
-                    val, seg, ext, name = self.parse_expression(dst[1:-1])
+                    ev = self.eval_operand(dst[1:-1])
                     self.emit_byte(0x32)  # LD (nn),A opcode
-                    if ext:
-                        self.emit_external_ref(name, val)
-                    else:
-                        self.emit_word(val, seg)
+                    self.emit_word_operand(ev)
                     return True
 
             # LD I,A / LD R,A
@@ -1545,7 +1720,7 @@ class Assembler:
             if dst_upper in Z80_PAIRS_BC_DE_HL_SP:
                 if src.startswith('(') and src.endswith(')'):
                     # LD dd,(nn)
-                    val, seg, ext, name = self.parse_expression(src[1:-1])
+                    ev = self.eval_operand(src[1:-1])
                     if dst_upper == 'HL':
                         self.emit_byte(0x2A)  # LD HL,(nn) opcode
                     else:
@@ -1553,67 +1728,46 @@ class Assembler:
                         dd_opcodes = {'BC': 0x4B, 'DE': 0x5B, 'SP': 0x7B}
                         self.emit_byte(PREFIX_ED)
                         self.emit_byte(dd_opcodes[dst_upper])
-                    if ext:
-                        self.emit_external_ref(name, val)
-                    else:
-                        self.emit_word(val, seg)
+                    self.emit_word_operand(ev)
                 else:
-                    val, seg, ext, name = self.parse_expression(src)
+                    ev = self.eval_operand(src)
                     self.emit_byte(0x01 | (Z80_PAIRS_BC_DE_HL_SP[dst_upper] << 4))
-                    if ext:
-                        self.emit_external_ref(name, val)
-                    else:
-                        self.emit_word(val, seg)
+                    self.emit_word_operand(ev)
                 return True
 
             # LD IX,nn / LD IY,nn
             if dst_upper == 'IX':
                 if src.startswith('(') and src.endswith(')'):
-                    val, seg, ext, name = self.parse_expression(src[1:-1])
+                    ev = self.eval_operand(src[1:-1])
                     self.emit_byte(PREFIX_DD)
                     self.emit_byte(0x2A)  # LD IX,(nn)
-                    if ext:
-                        self.emit_external_ref(name, val)
-                    else:
-                        self.emit_word(val, seg)
+                    self.emit_word_operand(ev)
                 else:
-                    val, seg, ext, name = self.parse_expression(src)
+                    ev = self.eval_operand(src)
                     self.emit_byte(PREFIX_DD)
                     self.emit_byte(0x21)
-                    if ext:
-                        self.emit_external_ref(name, val)
-                    else:
-                        self.emit_word(val, seg)
+                    self.emit_word_operand(ev)
                 return True
             if dst_upper == 'IY':
                 if src.startswith('(') and src.endswith(')'):
-                    val, seg, ext, name = self.parse_expression(src[1:-1])
+                    ev = self.eval_operand(src[1:-1])
                     self.emit_byte(PREFIX_FD)
                     self.emit_byte(0x2A)  # LD IY,(nn)
-                    if ext:
-                        self.emit_external_ref(name, val)
-                    else:
-                        self.emit_word(val, seg)
+                    self.emit_word_operand(ev)
                 else:
-                    val, seg, ext, name = self.parse_expression(src)
+                    ev = self.eval_operand(src)
                     self.emit_byte(PREFIX_FD)
                     self.emit_byte(0x21)
-                    if ext:
-                        self.emit_external_ref(name, val)
-                    else:
-                        self.emit_word(val, seg)
+                    self.emit_word_operand(ev)
                 return True
 
             # LD (nn),dd / LD (nn),IX / LD (nn),IY
             if dst.startswith('(') and dst.endswith(')'):
                 addr_expr = dst[1:-1]
-                val, seg, ext, name = self.parse_expression(addr_expr)
+                ev = self.eval_operand(addr_expr)
                 if src_upper == 'HL':
                     self.emit_byte(0x22)  # LD (nn),HL opcode
-                    if ext:
-                        self.emit_external_ref(name, val)
-                    else:
-                        self.emit_word(val, seg)
+                    self.emit_word_operand(ev)
                     return True
                 if src_upper in Z80_PAIRS_BC_DE_HL_SP:
                     # BC=0x43, DE=0x53, HL handled above, SP=0x73
@@ -1621,26 +1775,17 @@ class Assembler:
                     if src_upper in dd_opcodes:
                         self.emit_byte(PREFIX_ED)
                         self.emit_byte(dd_opcodes[src_upper])
-                        if ext:
-                            self.emit_external_ref(name, val)
-                        else:
-                            self.emit_word(val, seg)
+                        self.emit_word_operand(ev)
                     return True
                 if src_upper == 'IX':
                     self.emit_byte(PREFIX_DD)
                     self.emit_byte(0x22)  # LD (nn),IX
-                    if ext:
-                        self.emit_external_ref(name, val)
-                    else:
-                        self.emit_word(val, seg)
+                    self.emit_word_operand(ev)
                     return True
                 if src_upper == 'IY':
                     self.emit_byte(PREFIX_FD)
                     self.emit_byte(0x22)  # LD (nn),IY
-                    if ext:
-                        self.emit_external_ref(name, val)
-                    else:
-                        self.emit_word(val, seg)
+                    self.emit_word_operand(ev)
                     return True
 
             self.error(f"Invalid operands for LD: {dst},{src}")
@@ -1745,22 +1890,20 @@ class Assembler:
             op_upper = op.upper()
             indexed = self.parse_z80_indexed(op)
             if indexed:
-                reg, disp = indexed
+                reg, disp, dev = indexed
                 if reg == 'IX':
-                    for b in encode_z80_alu_ixd(operator, disp):
-                        self.emit_byte(b)
+                    code = encode_z80_alu_ixd(operator, disp)
                 else:
-                    for b in encode_z80_alu_iyd(operator, disp):
-                        self.emit_byte(b)
+                    code = encode_z80_alu_iyd(operator, disp)
+                self.emit_code(code, {2: dev})
                 return True
             if op_upper in Z80_REGS_M:
                 for b in encode_z80_alu_r(operator, op):
                     self.emit_byte(b)
                 return True
             # Immediate
-            val, seg, ext, name = self.parse_expression(op)
-            for b in encode_z80_alu_n(operator, val):
-                self.emit_byte(b)
+            ev = self.eval_operand(op)
+            self.emit_code(encode_z80_alu_n(operator, ev.value), {1: ev})
             return True
 
         # INC/DEC
@@ -1796,21 +1939,18 @@ class Assembler:
             # Indexed
             indexed = self.parse_z80_indexed(ops[0])
             if indexed:
-                reg, disp = indexed
+                reg, disp, dev = indexed
                 if operator == 'INC':
                     if reg == 'IX':
-                        for b in encode_z80_inc_ixd(disp):
-                            self.emit_byte(b)
+                        code = encode_z80_inc_ixd(disp)
                     else:
-                        for b in encode_z80_inc_iyd(disp):
-                            self.emit_byte(b)
+                        code = encode_z80_inc_iyd(disp)
                 else:
                     if reg == 'IX':
-                        for b in encode_z80_dec_ixd(disp):
-                            self.emit_byte(b)
+                        code = encode_z80_dec_ixd(disp)
                     else:
-                        for b in encode_z80_dec_iyd(disp):
-                            self.emit_byte(b)
+                        code = encode_z80_dec_iyd(disp)
+                self.emit_code(code, {2: dev})
                 return True
             self.error(f"Invalid operand for {operator}: {op}")
             return True
@@ -1827,13 +1967,12 @@ class Assembler:
                 return True
             indexed = self.parse_z80_indexed(ops[0])
             if indexed:
-                reg, disp = indexed
+                reg, disp, dev = indexed
                 if reg == 'IX':
-                    for b in encode_z80_rot_ixd(operator, disp):
-                        self.emit_byte(b)
+                    code = encode_z80_rot_ixd(operator, disp)
                 else:
-                    for b in encode_z80_rot_iyd(operator, disp):
-                        self.emit_byte(b)
+                    code = encode_z80_rot_iyd(operator, disp)
+                self.emit_code(code, {2: dev})
                 return True
             self.error(f"Invalid operand for {operator}: {op}")
             return True
@@ -1861,28 +2000,23 @@ class Assembler:
                 return True
             indexed = self.parse_z80_indexed(ops[1])
             if indexed:
-                reg, disp = indexed
+                reg, disp, dev = indexed
                 if operator == 'BIT':
                     if reg == 'IX':
-                        for b in encode_z80_bit_b_ixd(bit_val, disp):
-                            self.emit_byte(b)
+                        code = encode_z80_bit_b_ixd(bit_val, disp)
                     else:
-                        for b in encode_z80_bit_b_iyd(bit_val, disp):
-                            self.emit_byte(b)
+                        code = encode_z80_bit_b_iyd(bit_val, disp)
                 elif operator == 'RES':
                     if reg == 'IX':
-                        for b in encode_z80_res_b_ixd(bit_val, disp):
-                            self.emit_byte(b)
+                        code = encode_z80_res_b_ixd(bit_val, disp)
                     else:
-                        for b in encode_z80_res_b_iyd(bit_val, disp):
-                            self.emit_byte(b)
+                        code = encode_z80_res_b_iyd(bit_val, disp)
                 else:
                     if reg == 'IX':
-                        for b in encode_z80_set_b_ixd(bit_val, disp):
-                            self.emit_byte(b)
+                        code = encode_z80_set_b_ixd(bit_val, disp)
                     else:
-                        for b in encode_z80_set_b_iyd(bit_val, disp):
-                            self.emit_byte(b)
+                        code = encode_z80_set_b_iyd(bit_val, disp)
+                self.emit_code(code, {2: dev})
                 return True
             self.error(f"Invalid operand for {operator}: {ops[1]}")
             return True
@@ -1907,25 +2041,19 @@ class Assembler:
                     self.error("JP with condition requires address")
                     return True
                 # Unconditional JP nn
-                val, seg, ext, name = self.parse_expression(ops[0])
+                ev = self.eval_operand(ops[0])
                 self.emit_byte(0xC3)
-                if ext:
-                    self.emit_external_ref(name, val)
-                else:
-                    self.emit_word(val, seg)
+                self.emit_word_operand(ev)
                 return True
             if len(ops) == 2:
                 cond = ops[0].upper().strip()
                 if cond not in Z80_CONDITIONS:
                     self.error(f"Invalid condition for JP: {cond}")
                     return True
-                val, seg, ext, name = self.parse_expression(ops[1])
+                ev = self.eval_operand(ops[1])
                 c = Z80_CONDITIONS[cond]
                 self.emit_byte(0xC2 | (c << 3))
-                if ext:
-                    self.emit_external_ref(name, val)
-                else:
-                    self.emit_word(val, seg)
+                self.emit_word_operand(ev)
                 return True
             self.error("JP requires one or two operands")
             return True
@@ -2056,25 +2184,19 @@ class Assembler:
         # CALL
         if operator == 'CALL':
             if len(ops) == 1:
-                val, seg, ext, name = self.parse_expression(ops[0])
+                ev = self.eval_operand(ops[0])
                 self.emit_byte(0xCD)
-                if ext:
-                    self.emit_external_ref(name, val)
-                else:
-                    self.emit_word(val, seg)
+                self.emit_word_operand(ev)
                 return True
             if len(ops) == 2:
                 cond = ops[0].upper().strip()
                 if cond not in Z80_CONDITIONS:
                     self.error(f"Invalid condition for CALL: {cond}")
                     return True
-                val, seg, ext, name = self.parse_expression(ops[1])
+                ev = self.eval_operand(ops[1])
                 c = Z80_CONDITIONS[cond]
                 self.emit_byte(0xC4 | (c << 3))
-                if ext:
-                    self.emit_external_ref(name, val)
-                else:
-                    self.emit_word(val, seg)
+                self.emit_word_operand(ev)
                 return True
             self.error("CALL requires one or two operands")
             return True
@@ -2122,9 +2244,8 @@ class Assembler:
                         self.emit_byte(0x78)
                         return True
                     # IN A,(n)
-                    val, seg, ext, name = self.parse_expression(src[1:-1])
-                    self.emit_byte(0xDB)
-                    self.emit_byte(val & 0xFF)
+                    ev = self.eval_operand(src[1:-1])
+                    self.emit_code([0xDB, ev.value & 0xFF], {1: ev})
                     return True
                 if dst in Z80_REGS and src == '(C)':
                     # IN r,(C)
@@ -2151,9 +2272,8 @@ class Assembler:
                         self.emit_byte(0x79)
                         return True
                     # OUT (n),A
-                    val, seg, ext, name = self.parse_expression(dst[1:-1])
-                    self.emit_byte(0xD3)
-                    self.emit_byte(val & 0xFF)
+                    ev = self.eval_operand(dst[1:-1])
+                    self.emit_code([0xD3, ev.value & 0xFF], {1: ev})
                     return True
             self.error("Invalid OUT operands")
             return True
@@ -2224,7 +2344,19 @@ class Assembler:
             if op_upper in REGPAIRS_PUSHPOP:
                 self.define_symbol(label, REGPAIRS_PUSHPOP[op_upper], ADDR_ABSOLUTE)
                 return True
-            val, seg, ext, ext_name = self.parse_expression(ops[0], allow_undefined=(self.pass_num == 1))
+            ev = self.eval_operand(ops[0], allow_undefined=(self.pass_num == 1))
+            val, seg, ext, ext_name = ev.as_tuple()
+            if ev.kind in ('expr', 'bad'):
+                # A value only the linker can compute, e.g. HIGH BUF with BUF
+                # relocatable: the symbol stands for the expression, so each
+                # use of it is passed to the linker the way the expression
+                # itself would be.  (M80 keeps the mode and loses the HIGH:
+                # `X EQU HIGH BUF' then `MVI A,X' loads the LOW byte of BUF.)
+                self.define_symbol(label, val, seg)
+                sym = self.symbols[label.upper()]
+                sym.link_expr = ev
+                sym.ext_alias_base = None
+                return True
             if ext:
                 # External alias: SYMBOL EQU EXTERNAL+offset
                 # Track as an alias symbol that will be resolved at link time
@@ -2238,8 +2370,10 @@ class Assembler:
                     sym.defined = True
                     sym.ext_alias_base = ext_name
                     sym.ext_alias_offset = val
+                sym.link_expr = None
                 return True
             self.define_symbol(label, val, seg)
+            self.symbols[label.upper()].link_expr = None
             return True
 
         # SET/DEFL/ASET - like EQU but redefinable
@@ -2252,6 +2386,7 @@ class Assembler:
                 return True
             # DRI extension: allow register names as values
             op_upper = ops[0].strip().upper()
+            link_expr = None
             if op_upper in REGS:
                 val, seg = REGS[op_upper], ADDR_ABSOLUTE
             elif op_upper in REGPAIRS:
@@ -2259,8 +2394,11 @@ class Assembler:
             elif op_upper in REGPAIRS_PUSHPOP:
                 val, seg = REGPAIRS_PUSHPOP[op_upper], ADDR_ABSOLUTE
             else:
-                val, seg, ext, name = self.parse_expression(ops[0], allow_undefined=(self.pass_num == 1))
-                if ext:
+                ev = self.eval_operand(ops[0], allow_undefined=(self.pass_num == 1))
+                val, seg, ext, _ = ev.as_tuple()
+                if ev.kind in ('expr', 'bad'):
+                    link_expr = ev  # see EQU
+                elif ext:
                     self.error(f"Cannot use external in {operator}")
                     return True
             # SET/DEFL/ASET defines a redefinable symbol. It may only redefine
@@ -2275,6 +2413,7 @@ class Assembler:
             sym.defined = True
             sym.defined_pass = self.pass_num
             sym.redefinable = True
+            sym.link_expr = link_expr
             return True
 
         # DB - define bytes
@@ -2290,11 +2429,8 @@ class Assembler:
                     for ch in s:
                         self.emit_byte(ord(ch))
                 else:
-                    val, seg, ext, name = self.parse_expression(op)
-                    if ext:
-                        self.error("Cannot use external in DB")
-                    else:
-                        self.emit_byte(val)
+                    ev = self.eval_operand(op)
+                    self.emit_code([ev.value & 0xFF], {0: ev})
             return True
 
         # DC - define character string with high bit set on last character (M80 compatible)
@@ -2323,11 +2459,8 @@ class Assembler:
         # DW - define words
         if operator in ('DW', 'DEFW'):
             for op in ops:
-                val, seg, ext, name = self.parse_expression(op.strip())
-                if ext:
-                    self.emit_external_ref(name, val)
-                else:
-                    self.emit_word(val, seg)
+                ev = self.eval_operand(op.strip())
+                self.emit_word_operand(ev)
             return True
 
         # DS - define space
@@ -2343,12 +2476,9 @@ class Assembler:
                 self.error("Cannot use external in DS")
                 return True
             if len(ops) >= 2:
-                fill_val, _, fill_ext, _ = self.parse_expression(ops[1])
-                if fill_ext:
-                    self.error("Cannot use external in DS fill value")
-                    return True
+                fill = self.eval_operand(ops[1])
                 for _ in range(val):
-                    self.emit_byte(fill_val)
+                    self.emit_code([fill.value & 0xFF], {0: fill})
             else:
                 # Just advance location counter (don't emit anything for DS)
                 if self.pass_num == 2:
@@ -3544,7 +3674,8 @@ class Assembler:
 
         # Write entry symbols (PUBLIC symbols for library search)
         for sym in self.symbols.values():
-            if (sym.public or self.export_all_symbols) and sym.defined:
+            if (sym.public or self.export_all_symbols) and sym.defined \
+                    and not (sym.link_expr is not None and not sym.public):
                 self.output.write_entry_symbol(sym.name)
 
         self.assemble_pass(lines, 2)
@@ -3557,6 +3688,17 @@ class Assembler:
         # For relocatable symbols, subtract segment ORG so linker can add its base
         for sym in self.symbols.values():
             if (sym.public or self.export_all_symbols) and sym.defined:
+                if sym.link_expr is not None:
+                    # A public symbol is an address or a constant; this one
+                    # is neither until the program is linked.  -g (export
+                    # everything) just leaves it out.
+                    if sym.public:
+                        self.error(f"PUBLIC {sym.name} cannot be exported: its"
+                                   f" value depends on where the linker puts a"
+                                   f" segment or on an external symbol, and a"
+                                   f" .REL public symbol can only carry an"
+                                   f" address or a constant")
+                    continue
                 # Check if this is an external alias (EQU external+offset)
                 if sym.ext_alias_base:
                     # Emit aliased entry point with special name format:
@@ -3615,7 +3757,7 @@ class Assembler:
 
         self.output.write_end_file()
 
-        return True
+        return not self.errors
 
 
 class PreAction(argparse.Action):
