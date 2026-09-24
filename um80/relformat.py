@@ -16,11 +16,11 @@ Control  A-field  B-field  Meaning
 1        -        B        Select COMMON block
 2        -        B        Program name
 3        -        B        Request library search
-4        -        -        (reserved)
+4        -        B        Extension link item (see below)
 5        A        B        Define COMMON size
 6        A        B        Chain external (A=head, B=name)
 7        A        B        Define entry point (A=addr, B=name)
-8        A        B        External-offset (for JMP/CALL to external)
+8        A        -        External - offset (for JMP/CALL to external)
 9        A        -        External + offset (add A to current loc)
 10       A        -        Define Data area size
 11       A        -        Set location counter
@@ -36,6 +36,60 @@ A-field: 2-bit address type + 16-bit value
   11 = common relative
 
 B-field: 3-bit length (0-7, but 0 means 8 chars) + 8 bits per character
+
+Extension link items (special item 4)
+-------------------------------------
+The Microsoft Utility Software Manual defines item 4 as a B-field-only item
+whose first byte names the kind of extension and whose remaining 1-7 bytes
+are its data (the manual itself lists only X'35', the COBOL overlay segment
+sentinel).  MACRO-80 3.44 and LINK-80 3.44 use three more kinds to pass an
+expression the assembler cannot evaluate - one whose value depends on where
+the linker puts a segment or on an external symbol - to the linker as a
+postfix program:
+
+  'A' (41H) op          arithmetic operator:
+                          1 store as byte     2 store as word
+                          3 HIGH              4 LOW
+                          5 NOT               6 unary minus
+                          7 minus             8 plus
+                          9 multiply         10 divide        11 MOD
+  'B' (42H) name        push the value of the external symbol `name'
+  'C' (43H) t lo hi     push the 16-bit value lo+256*hi of address type t
+                        (0 absolute, 1 program, 2 data, 3 common relative),
+                        relocated like a 1 01/1 10/1 11 item
+
+Operands are pushed in source order and a binary operator pops its right
+operand first, so `buf+128' is  C(data,buf) C(abs,128) A(plus), and
+`high(ext-5)' is  B(ext) C(abs,5) A(minus) A(HIGH).  Every expression ends in
+a store operator.  The store writes the result at the location counter it
+finds - the items come immediately BEFORE the field they fill - and the
+assembler then emits the field itself as absolute placeholder bytes (0, or
+0 0 for a word), which load at that location and advance the counter as
+usual.  The linker evaluates the expression once every segment is placed and
+every external defined, and overwrites the placeholder.
+
+Nothing above is in the published manual beyond the item 4 format; it was
+established by assembling test sources with the real MACRO-80 3.44 and
+linking them with LINK-80 3.44 (09-Dec-81) under a CP/M emulator, and agrees
+with the description in the Nestor80 project's RelocatableFileFormat.md.
+For example M80 turns `MVI A,LOW(BUF+128)' (BUF data-relative 0003H) into
+
+  0 3E                      absolute byte: the MVI opcode
+  100 0100 100 43 02 03 00  C: data-relative 0003H
+  100 0100 100 43 00 80 00  C: absolute 0080H
+  100 0100 010 41 08        A: plus
+  100 0100 010 41 04        A: LOW
+  100 0100 010 41 01        A: store as byte
+  0 00                      the placeholder byte
+
+and M80 uses the same form for any relocatable or external value in a
+one-byte field (`MVI A,BUF' is C(data,3) A(store byte)).  Digital Research's
+LINK-80 lists item 4 as unused and RMAC rejects HIGH/LOW of a relocatable
+value with an 'E' error, so DRI's tools neither write nor read it.
+
+The one field wider than 8 bytes this module can need - an external name of
+more than 7 characters after the 'B' - uses um80's extended B-field (length
+0, then FFH, then the real length), as other long symbols do.
 """
 
 
@@ -144,7 +198,8 @@ LINK_ENTRY_SYMBOL = 0
 LINK_SELECT_COMMON = 1
 LINK_PROGRAM_NAME = 2
 LINK_REQUEST_LIB = 3
-LINK_RESERVED = 4
+LINK_EXTENSION = 4
+LINK_RESERVED = LINK_EXTENSION  # former name, kept for callers
 LINK_DEFINE_COMMON_SIZE = 5
 LINK_CHAIN_EXTERNAL = 6
 LINK_DEFINE_ENTRY = 7
@@ -156,6 +211,31 @@ LINK_CHAIN_ADDRESS = 12
 LINK_DEFINE_PROG_SIZE = 13
 LINK_END_PROGRAM = 14
 LINK_END_FILE = 15
+
+# Extension link item kinds (first byte of an item 4's B-field)
+EXT_ITEM_OPERATOR = 0x41  # 'A': arithmetic operator
+EXT_ITEM_SYMBOL = 0x42    # 'B': value of an external symbol
+EXT_ITEM_VALUE = 0x43     # 'C': (relocatable) value
+
+# Arithmetic operator codes of an 'A' extension item
+EXT_OP_STORE_BYTE = 1
+EXT_OP_STORE_WORD = 2
+EXT_OP_HIGH = 3
+EXT_OP_LOW = 4
+EXT_OP_NOT = 5
+EXT_OP_NEG = 6
+EXT_OP_MINUS = 7
+EXT_OP_PLUS = 8
+EXT_OP_MUL = 9
+EXT_OP_DIV = 10
+EXT_OP_MOD = 11
+
+EXT_OP_NAMES = {
+    EXT_OP_STORE_BYTE: 'store byte', EXT_OP_STORE_WORD: 'store word',
+    EXT_OP_HIGH: 'HIGH', EXT_OP_LOW: 'LOW', EXT_OP_NOT: 'NOT',
+    EXT_OP_NEG: 'unary -', EXT_OP_MINUS: '-', EXT_OP_PLUS: '+',
+    EXT_OP_MUL: '*', EXT_OP_DIV: '/', EXT_OP_MOD: 'MOD',
+}
 
 
 class RELWriter:
@@ -189,6 +269,22 @@ class RELWriter:
         """Write A-field: 2-bit type + 16-bit value."""
         self.bits.write_bits(addr_type, 2)
         self.bits.write_word(value)
+
+    def _write_raw_b_field(self, data):
+        """Write a B-field holding raw bytes (no case folding).
+
+        Up to 8 bytes use the standard 3-bit count (0 meaning 8); more use
+        um80's extended form: count 0, FFH, the real length, the bytes.
+        """
+        length = len(data)
+        if length <= 8:
+            self.bits.write_bits(length & 7, 3)  # 8 is written as 0
+        else:
+            self.bits.write_bits(0, 3)
+            self.bits.write_byte(0xFF)
+            self.bits.write_byte(length)
+        for b in data:
+            self.bits.write_byte(b)
 
     def _write_b_field(self, name):
         """Write B-field: 3-bit length + characters.
@@ -263,10 +359,15 @@ class RELWriter:
         self._write_special(LINK_DEFINE_ENTRY,
                           a_field=(addr_type, addr), b_field=name)
 
-    def write_external_offset(self, addr_type, offset, name):
-        """External with offset (for JMP/CALL to external)."""
+    def write_external_offset(self, addr_type, offset, name=None):
+        """External minus offset (for JMP/CALL to external).
+
+        An A-field-only item in the Microsoft manual; `name' is ignored and
+        kept only so existing callers still work.
+        """
+        del name
         self._write_special(LINK_EXTERNAL_OFFSET,
-                          a_field=(addr_type, offset), b_field=name)
+                          a_field=(addr_type, offset))
 
     def write_external_plus_offset(self, addr_type, offset):
         """Add offset to external at current location."""
@@ -292,6 +393,29 @@ class RELWriter:
         """Define program (code) segment size."""
         self._write_special(LINK_DEFINE_PROG_SIZE,
                           a_field=(ADDR_ABSOLUTE, size))
+
+    def write_extension(self, data):
+        """Extension link item (special item 4) with the given B-field bytes."""
+        self.bits.write_bits(0b100, 3)
+        self.bits.write_bits(LINK_EXTENSION, 4)
+        self._write_raw_b_field(bytes(data))
+
+    def write_ext_operator(self, code):
+        """Extension item 'A': arithmetic or store operator `code'."""
+        self.write_extension([EXT_ITEM_OPERATOR, code])
+
+    def write_ext_symbol(self, name):
+        """Extension item 'B': push the value of external symbol `name'."""
+        name = name.upper()
+        if self.truncate_symbols:
+            name = name[:8]
+        self.write_extension(bytes([EXT_ITEM_SYMBOL]) + name.encode('ascii'))
+
+    def write_ext_value(self, addr_type, value):
+        """Extension item 'C': push `value' of address type `addr_type'."""
+        value &= 0xFFFF
+        self.write_extension([EXT_ITEM_VALUE, addr_type,
+                              value & 0xFF, value >> 8])
 
     def write_end_program(self, entry_addr=None, entry_type=ADDR_ABSOLUTE):
         """End of program, optional entry address."""
@@ -324,8 +448,8 @@ class RELReader:
         value = self.bits.read_word()
         return (addr_type, value)
 
-    def _read_b_field(self):
-        """Read B-field, return symbol name (uppercased for L80 compatibility).
+    def _read_raw_b_field(self):
+        """Read a B-field and return its bytes, unaltered.
 
         Extended format detection:
         - If 3-bit length = 0 and first byte = 0xFF, use extended format
@@ -339,22 +463,35 @@ class RELReader:
             if first_byte == 0xFF:
                 # Extended format: next byte is actual length
                 length = self.bits.read_byte()
-                name = ''
-                for _ in range(length):
-                    name += chr(self.bits.read_byte())
-                return name.upper()
-            else:
-                # Standard 8-char format, first_byte is first char
-                name = chr(first_byte)
-                for _ in range(7):
-                    name += chr(self.bits.read_byte())
-                return name.upper()
-        else:
-            # Standard format with explicit length 1-7
-            name = ''
-            for _ in range(length):
-                name += chr(self.bits.read_byte())
-            return name.upper()
+                return bytes(self.bits.read_byte() for _ in range(length))
+            # Standard 8-char format, first_byte is first char
+            return bytes([first_byte]) + bytes(self.bits.read_byte()
+                                               for _ in range(7))
+        # Standard format with explicit length 1-7
+        return bytes(self.bits.read_byte() for _ in range(length))
+
+    def _read_b_field(self):
+        """Read B-field, return symbol name (uppercased for L80 compatibility)."""
+        return ''.join(chr(b) for b in self._read_raw_b_field()).upper()
+
+    def _read_extension(self):
+        """Read an extension link item's B-field and decode it.
+
+        Returns ('EXT_OPERATOR', code), ('EXT_SYMBOL', name),
+        ('EXT_VALUE', (addr_type, value)), or, for a kind this module does
+        not interpret (such as the COBOL overlay sentinel),
+        ('EXTENSION', kind_byte, payload_bytes).  The whole B-field is always
+        consumed, so the bit stream stays in step whatever the kind.
+        """
+        data = self._read_raw_b_field()
+        kind, payload = (data[0], data[1:]) if data else (None, b'')
+        if kind == EXT_ITEM_OPERATOR and len(payload) == 1:
+            return ('EXT_OPERATOR', payload[0])
+        if kind == EXT_ITEM_SYMBOL and payload:
+            return ('EXT_SYMBOL', ''.join(chr(b) for b in payload).upper())
+        if kind == EXT_ITEM_VALUE and len(payload) == 3:
+            return ('EXT_VALUE', (payload[0], payload[1] | (payload[2] << 8)))
+        return ('EXTENSION', kind, payload)
 
     def read_item(self):
         """
@@ -385,6 +522,8 @@ class RELReader:
                 return ('PROGRAM_NAME', self._read_b_field())
             elif control == LINK_REQUEST_LIB:
                 return ('REQUEST_LIB', self._read_b_field())
+            elif control == LINK_EXTENSION:
+                return self._read_extension()
             elif control == LINK_DEFINE_COMMON_SIZE:
                 a = self._read_a_field()
                 b = self._read_b_field()
@@ -398,9 +537,8 @@ class RELReader:
                 b = self._read_b_field()
                 return ('DEFINE_ENTRY', a, b)
             elif control == LINK_EXTERNAL_OFFSET:
-                a = self._read_a_field()
-                b = self._read_b_field()
-                return ('EXTERNAL_OFFSET', a, b)
+                # A-field only (Microsoft manual: "External - offset").
+                return ('EXTERNAL_OFFSET', self._read_a_field())
             elif control == LINK_EXTERNAL_PLUS_OFFSET:
                 a = self._read_a_field()
                 return ('EXTERNAL_PLUS_OFFSET', a)
@@ -419,11 +557,10 @@ class RELReader:
             elif control == LINK_END_PROGRAM:
                 self.bits.force_byte_boundary()
                 return ('END_PROGRAM',)
-            elif control == LINK_END_FILE:
+            else:
+                # LINK_END_FILE: the sixteenth and last control value.
                 self.bits.force_byte_boundary()
                 return ('END_FILE',)
-            else:
-                return ('UNKNOWN_SPECIAL', control)
 
         elif reloc_type == 1:
             # Program relative

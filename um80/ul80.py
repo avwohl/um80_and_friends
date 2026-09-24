@@ -57,6 +57,12 @@ class Module:
         # Used to convert segment-relative addresses to buffer offsets during chain following
         self.seg_buf_start = {}  # seg_type -> buffer start offset
 
+        # Fields the linker computes from extension link items (HIGH/LOW of
+        # a relocatable or external value, and the like): a list of
+        # (buf_offset, size, items) - `size' bytes at `buf_offset' get the
+        # value of the postfix expression `items' (RELReader EXT_* tuples).
+        self.expressions = []
+
 
 class Linker:
     """LINK-80 compatible linker."""
@@ -94,6 +100,12 @@ class Linker:
         # argument: `genmod pip.hex pip.prl $1000'.
         self.prl_extra = 0
 
+        # Link-time expressions (extension link items), filled in by link():
+        # output offsets of bytes a page relocation bitmap must mark, and a
+        # description of each expression a bitmap cannot express.
+        self.expr_relocations = []
+        self.expr_unrelocatable = []
+
         # When True, emit zeros for DS (reserve space) directives instead of
         # treating them as BSS. Required for PRL/SPR format where all segments
         # must be contiguous in the output. Default is True for compatibility.
@@ -110,244 +122,7 @@ class Linker:
         """Load a REL file and add to modules list."""
         with open(filename, 'rb') as f:
             data = f.read()
-
-        reader = RELReader(data)
-        module = Module(Path(filename).stem.upper())
-
-        current_loc = 0  # Position within current segment
-        current_seg = ADDR_PROGRAM_REL  # Default to code segment
-        first_abs_data = False  # Track if actual data bytes written to ASEG
-
-        # Use separate buffers for each segment to avoid overwrites when
-        # switching between segments (e.g., CSEG -> DSEG -> CSEG)
-        seg_buffers = {}  # seg_type -> bytearray
-
-        def get_seg_buffer():
-            """Get or create buffer for current segment."""
-            if current_seg not in seg_buffers:
-                seg_buffers[current_seg] = bytearray()
-            return seg_buffers[current_seg]
-
-        def write_byte_to_seg(value):
-            """Write a byte at current_loc in current segment's buffer."""
-            buf = get_seg_buffer()
-            while len(buf) <= current_loc:
-                buf.append(0)
-            buf[current_loc] = value
-
-        # Track relocations with segment-relative offsets before combining
-        pending_relocations = []  # (seg_type, seg_offset, reloc_type)
-        pending_externals = []  # (name, seg_type, head_offset)
-        pending_chains = []  # (chain_seg, head_offset, cur_seg, cur_offset)
-
-        while True:
-            try:
-                item = reader.read_item()
-            except EOFError:
-                break
-
-            if item is None:
-                break
-
-            item_type = item[0]
-
-            if item_type == 'ABSOLUTE_BYTE':
-                if not first_abs_data and current_seg == ADDR_ABSOLUTE:
-                    first_abs_data = True
-                write_byte_to_seg(item[1])
-                current_loc += 1
-
-            elif item_type == 'PROGRAM_REL':
-                # 16-bit program-relative value - needs relocation
-                if not first_abs_data and current_seg == ADDR_ABSOLUTE:
-                    first_abs_data = True
-                value = item[1]
-                write_byte_to_seg(value & 0xFF)
-                # Record relocation at low byte position
-                pending_relocations.append((current_seg, current_loc, ADDR_PROGRAM_REL))
-                current_loc += 1
-                write_byte_to_seg((value >> 8) & 0xFF)
-                current_loc += 1
-
-            elif item_type == 'DATA_REL':
-                # 16-bit data-relative value - needs relocation
-                if not first_abs_data and current_seg == ADDR_ABSOLUTE:
-                    first_abs_data = True
-                value = item[1]
-                write_byte_to_seg(value & 0xFF)
-                pending_relocations.append((current_seg, current_loc, ADDR_DATA_REL))
-                current_loc += 1
-                write_byte_to_seg((value >> 8) & 0xFF)
-                current_loc += 1
-
-            elif item_type == 'COMMON_REL':
-                # 16-bit common-relative value - needs relocation
-                if not first_abs_data and current_seg == ADDR_ABSOLUTE:
-                    first_abs_data = True
-                value = item[1]
-                write_byte_to_seg(value & 0xFF)
-                pending_relocations.append((current_seg, current_loc, ADDR_COMMON_REL))
-                current_loc += 1
-                write_byte_to_seg((value >> 8) & 0xFF)
-                current_loc += 1
-
-            elif item_type == 'PROGRAM_NAME':
-                module.name = item[1]
-
-            elif item_type == 'ENTRY_SYMBOL':
-                # Symbol this module exports (for library search)
-                pass
-
-            elif item_type == 'DEFINE_ENTRY':
-                # PUBLIC symbol definition
-                a_field, name = item[1], item[2]
-                addr_type, value = a_field
-                # Check for aliased entry (format: "NEWNAME=EXTERNAL" or "NEWNAME=EXTERNAL+N")
-                if '=' in name:
-                    new_name, alias_spec = name.split('=', 1)
-                    # Parse the alias spec: "EXTERNAL" or "EXTERNAL+N"
-                    if '+' in alias_spec:
-                        base_ext, offset_str = alias_spec.rsplit('+', 1)
-                        try:
-                            offset = int(offset_str)
-                        except ValueError:
-                            offset = 0
-                            base_ext = alias_spec
-                    else:
-                        base_ext = alias_spec
-                        offset = 0
-                    module.aliased_publics[new_name] = (base_ext, offset)
-                else:
-                    module.publics[name] = (value, addr_type)
-
-            elif item_type == 'CHAIN_EXTERNAL':
-                # External reference chain - store segment-relative for now
-                a_field, name = item[1], item[2]
-                addr_type, head = a_field
-                pending_externals.append((name, addr_type, head))
-
-            elif item_type == 'SET_LOC':
-                a_field = item[1]
-                addr_type, value = a_field
-                # If emit_ds_zeros is enabled, fill gaps with zeros
-                # This handles DS directives which advance without emitting bytes
-                if self.emit_ds_zeros and value > 0:
-                    # Switch to target segment first to write to correct buffer
-                    current_seg = addr_type
-                    # Get current buffer size for this segment
-                    buf = get_seg_buffer()
-                    fill_from = len(buf)
-                    if value > fill_from:
-                        # Fill zeros from current buffer end to new position
-                        current_loc = fill_from
-                        while current_loc < value:
-                            write_byte_to_seg(0)
-                            current_loc += 1
-                current_loc = value
-                current_seg = addr_type
-                # Track the lowest non-zero ASEG SET_LOC as code_start, until
-                # actual data is written.  SET_LOC(ABS, 0) is skipped because it
-                # is typically just a segment switch (ASEG directive) and the
-                # default code_start of 0 already covers code-at-address-0.
-                if not first_abs_data and addr_type == ADDR_ABSOLUTE:
-                    if value > 0 and (module.code_start == 0 or value < module.code_start):
-                        module.code_start = value
-
-            elif item_type == 'CHAIN_ADDRESS':
-                # Internal forward reference chain - store segment-relative
-                a_field = item[1]
-                addr_type, head = a_field
-                pending_chains.append((addr_type, head, current_seg, current_loc))
-
-            elif item_type == 'DEFINE_PROG_SIZE':
-                a_field = item[1]
-                _, size = a_field
-                module.code_size = size
-
-            elif item_type == 'DEFINE_DATA_SIZE':
-                a_field = item[1]
-                _, size = a_field
-                module.data_size = size
-
-            elif item_type == 'DEFINE_COMMON_SIZE':
-                a_field, name = item[1], item[2]
-                _, size = a_field
-                module.commons[name] = size
-
-            elif item_type == 'SELECT_COMMON':
-                # Switch to common block
-                pass
-
-            elif item_type == 'REQUEST_LIB':
-                # Library search request
-                pass
-
-            elif item_type == 'END_PROGRAM':
-                # End of module
-                break
-
-            elif item_type == 'END_FILE':
-                break
-
-        # Combine segment buffers into single code buffer
-        # Order: ASEG (absolute), CSEG (program), DSEG (data), COMMON
-        code_bytes = bytearray()
-        seg_buf_start = {}
-
-        for seg_type in [ADDR_ABSOLUTE, ADDR_PROGRAM_REL, ADDR_DATA_REL, ADDR_COMMON_REL]:
-            if seg_type in seg_buffers:
-                seg_buf_start[seg_type] = len(code_bytes)
-                code_bytes.extend(seg_buffers[seg_type])
-
-        # Convert segment-relative relocations to buffer offsets
-        # Store (buf_offset, reloc_type, ref_seg_type) where ref_seg_type is which segment the reference is in
-        for seg_type, seg_offset, reloc_type in pending_relocations:
-            if seg_type in seg_buf_start:
-                buf_offset = seg_buf_start[seg_type] + seg_offset
-                module.relocations.append((buf_offset, reloc_type, seg_type))
-
-        # Convert pending externals to buffer offsets
-        for name, addr_type, head in pending_externals:
-            if name not in module.externals:
-                module.externals[name] = []
-            if addr_type in seg_buf_start:
-                buf_head = seg_buf_start[addr_type] + head
-            else:
-                buf_head = seg_buf_start.get(ADDR_ABSOLUTE, len(code_bytes)) + head
-            module.externals[name].append((buf_head, addr_type))
-
-        # Convert pending chains to buffer offsets
-        for chain_seg, head, cur_seg, cur_offset in pending_chains:
-            if chain_seg in seg_buf_start:
-                buf_head = seg_buf_start[chain_seg] + head
-            else:
-                buf_head = len(code_bytes) + head
-            if cur_seg in seg_buf_start:
-                buf_cur = seg_buf_start[cur_seg] + cur_offset
-            else:
-                buf_cur = len(code_bytes) + cur_offset
-            if buf_head not in module.chains:
-                module.chains[buf_head] = []
-            module.chains[buf_head].append((buf_cur, chain_seg))
-
-        module.code = code_bytes
-        module.seg_buf_start = seg_buf_start  # Save for chain following during link
-        self.modules.append(module)
-
-        # Register public symbols
-        mod_idx = len(self.modules) - 1
-        for name, (value, seg_type) in module.publics.items():
-            if name in self.globals and self.globals[name][3]:
-                self.error(f"Multiply defined global '{name}'")
-            else:
-                self.globals[name] = (mod_idx, value, seg_type, True)
-
-        # Track common block sizes
-        for name, size in module.commons.items():
-            if name not in self.commons or size > self.commons[name]:
-                self.commons[name] = size
-
-        return True
+        return self.load_rel_data(Path(filename).stem, data)
 
     def load_rel_data(self, name, data):
         """Load REL data from bytes (e.g., from a library module)."""
@@ -379,6 +154,8 @@ class Linker:
         pending_relocations = []  # (seg_type, seg_offset, reloc_type)
         pending_externals = []  # (name, seg_type, head_offset)
         pending_chains = []  # (chain_seg, head_offset, cur_seg, cur_offset)
+        pending_exprs = []  # (seg_type, seg_offset, size, items)
+        expr_items = []  # extension items read since the last store
 
         while True:
             try:
@@ -522,6 +299,35 @@ class Linker:
                 # Library search request
                 pass
 
+            elif item_type in ('EXT_VALUE', 'EXT_SYMBOL'):
+                # An operand of a link-time expression (see relformat.py).
+                expr_items.append(item)
+                if item_type == 'EXT_SYMBOL':
+                    # Make the name an external of this module, so a library
+                    # module defining it is loaded and an undefined one is
+                    # reported like any other.
+                    module.externals.setdefault(item[1], [])
+
+            elif item_type == 'EXT_OPERATOR':
+                if item[1] in (EXT_OP_STORE_BYTE, EXT_OP_STORE_WORD):
+                    # The store writes where the location counter is now:
+                    # the assembler follows it with the field itself as
+                    # placeholder bytes, which load here and are replaced
+                    # once every segment is placed (link()).
+                    size = 1 if item[1] == EXT_OP_STORE_BYTE else 2
+                    pending_exprs.append((current_seg, current_loc, size,
+                                          expr_items))
+                    expr_items = []
+                else:
+                    expr_items.append(item)
+
+            elif item_type == 'EXTENSION':
+                # An extension item this linker does not implement (e.g. the
+                # COBOL overlay segment sentinel).  The reader has consumed
+                # it, so the rest of the module still loads.
+                self.warning(f"Module {module.name}: extension link item "
+                             f"{item[1]:02X}H ignored")
+
             elif item_type == 'END_PROGRAM':
                 # End of module
                 break
@@ -550,6 +356,14 @@ class Linker:
         for sym_name, addr_type, head in pending_externals:
             if sym_name not in module.externals:
                 module.externals[sym_name] = []
+            if (addr_type == ADDR_ABSOLUTE and head == 0
+                    and ADDR_ABSOLUTE not in seg_buf_start):
+                # LINK-80 chains end at absolute 0, so this is an empty
+                # chain: MACRO-80 writes one to declare an external used
+                # only inside a link-time expression.  (um80 writes a
+                # record per reference, and one at absolute 0 would need
+                # the module to have absolute code there.)
+                continue
             if addr_type in seg_buf_start:
                 buf_head = seg_buf_start[addr_type] + head
             else:
@@ -569,6 +383,13 @@ class Linker:
             if buf_head not in module.chains:
                 module.chains[buf_head] = []
             module.chains[buf_head].append((buf_cur, chain_seg))
+
+        if expr_items:
+            self.error(f"Module {module.name}: link-time expression has no "
+                       f"store operator")
+        for seg_type, seg_offset, size, items in pending_exprs:
+            buf_offset = seg_buf_start.get(seg_type, len(code_bytes)) + seg_offset
+            module.expressions.append((buf_offset, size, items))
 
         module.code = code_bytes
         module.seg_buf_start = seg_buf_start  # Save for chain following during link
@@ -910,7 +731,211 @@ class Linker:
                     self.output[abs_offset] = value & 0xFF
                     self.output[abs_offset + 1] = (value >> 8) & 0xFF
 
-        return True
+        # Fields computed from extension link items, last: every segment is
+        # placed and every symbol known, and each field's placeholder bytes
+        # are already in the image to be overwritten.
+        return self.apply_expressions()
+
+    # How a value moves when MP/M loads a page-relocatable image P pages
+    # higher, for the bitmap in save_prl().  A value's `move' m says it
+    # becomes value + m*P: 256 for an address in the program (its high byte
+    # gains P), 0 for a constant, 1 for HIGH of an address (the byte itself
+    # gains P).  `exact' is False when that only holds modulo 256 - after
+    # HIGH or LOW, whose result wraps, or after arithmetic on such a byte -
+    # and `byte' marks the direct result of HIGH or LOW, a byte whose upper
+    # half is 0 however it moves.  None: the move is not a whole number of
+    # pages at all (the product of two addresses, an address divided).
+    @staticmethod
+    def _move(m, exact=True, byte=False):
+        if m == 0 and exact:
+            byte = False
+        return (m, exact, byte)
+
+    def _eval_expression(self, module, items):
+        """Evaluate one link-time expression.
+
+        `items' is the postfix list from load_rel_data() without its store
+        operator.  Returns (value, move) - see _move() - or None after
+        recording an error.
+        """
+        stack = []
+        for item in items:
+            if item[0] == 'EXT_VALUE':
+                addr_type, value = item[1]
+                value = self.relocate_value(module, value, addr_type) & 0xFFFF
+                stack.append((value, self._move(
+                    0 if addr_type == ADDR_ABSOLUTE else 256)))
+                continue
+            if item[0] == 'EXT_SYMBOL':
+                name = item[1]
+                if name not in self.globals or not self.globals[name][3]:
+                    self.error(f"Undefined symbol: {name}")
+                    return None
+                t_idx, t_value, t_seg, _ = self.globals[name]
+                value = self.relocate_value(self.modules[t_idx], t_value,
+                                            t_seg) & 0xFFFF
+                # The same rule resolve-by-chain uses: a program address, or
+                # page zero when MP/M relocates page zero with the program.
+                moves = t_seg != ADDR_ABSOLUTE or (self.page_zero_relative
+                                                   and value < 0x100)
+                stack.append((value, self._move(256 if moves else 0)))
+                continue
+            op = item[1]
+            unary = op in (EXT_OP_HIGH, EXT_OP_LOW, EXT_OP_NOT, EXT_OP_NEG)
+            if len(stack) < (1 if unary else 2) or op not in EXT_OP_NAMES \
+                    or op in (EXT_OP_STORE_BYTE, EXT_OP_STORE_WORD):
+                self.error(f"Module {module.name}: malformed link-time "
+                           f"expression (operator {op})")
+                return None
+            if unary:
+                a, move_a = stack.pop()
+                stack.append((self._apply_unary(op, a),
+                              self._unary_move(op, move_a)))
+                continue
+            b, move_b = stack.pop()
+            a, move_a = stack.pop()
+            if op in (EXT_OP_DIV, EXT_OP_MOD) and b == 0:
+                self.error(f"Module {module.name}: division by zero in a "
+                           f"link-time expression")
+                return None
+            stack.append((self._apply_binary(op, a, b),
+                          self._binary_move(op, a, move_a, b, move_b)))
+        if len(stack) != 1:
+            self.error(f"Module {module.name}: malformed link-time expression")
+            return None
+        return stack[0]
+
+    @staticmethod
+    def _apply_unary(op, a):
+        if op == EXT_OP_HIGH:
+            return (a >> 8) & 0xFF
+        if op == EXT_OP_LOW:
+            return a & 0xFF
+        if op == EXT_OP_NOT:
+            return ~a & 0xFFFF
+        return -a & 0xFFFF
+
+    @staticmethod
+    def _apply_binary(op, a, b):
+        if op == EXT_OP_PLUS:
+            value = a + b
+        elif op == EXT_OP_MINUS:
+            value = a - b
+        elif op == EXT_OP_MUL:
+            value = a * b
+        elif op == EXT_OP_DIV:
+            value = a // b
+        else:
+            value = a % b
+        return value & 0xFFFF
+
+    def _unary_move(self, op, move_a):
+        if move_a is None:
+            return None
+        m, exact, _ = move_a
+        if op == EXT_OP_HIGH:
+            # HIGH(x + m*P) is HIGH(x) + (m/256)*P, wrapping - but only when
+            # x is exact and moves by whole pages; otherwise the carry out of
+            # the low byte depends on P.
+            if not exact or m % 256:
+                return None
+            page = (m // 256) % 256
+            return self._move(page, page == 0, True)
+        if op == EXT_OP_LOW:
+            page = m % 256
+            return self._move(page, page == 0, True)
+        return self._move(-m, exact)  # NOT x is -x-1, so both negate m
+
+    def _binary_move(self, op, a, move_a, b, move_b):
+        if move_a is None or move_b is None:
+            return None
+        ma, ea, _ = move_a
+        mb, eb, _ = move_b
+        exact = ea and eb
+        if op == EXT_OP_PLUS:
+            return self._move(ma + mb, exact)
+        if op == EXT_OP_MINUS:
+            return self._move(ma - mb, exact)
+        if op == EXT_OP_MUL:
+            if ma == 0:
+                return self._move(a * mb, exact)
+            if mb == 0:
+                return self._move(b * ma, exact)
+            return None
+        # DIV, MOD: only of values that do not move at all.
+        return self._move(0) if ma == mb == 0 and exact else None
+
+    def apply_expressions(self):
+        """Store every link-time expression's value in the image.
+
+        Also works out what a page relocation bitmap has to mark for each:
+        a stored byte moves by m*P modulo 256, so it is marked when m is 1
+        (HIGH of an address) and left alone when m is 0 (LOW of an address,
+        which a page move never changes); a stored word is marked on its
+        high byte when it moves exactly like an address.  Anything else
+        cannot be expressed and is reported by save_prl().
+        """
+        ok = True
+        for module in self.modules:
+            for buf_offset, size, items in module.expressions:
+                result = self._eval_expression(module, items)
+                if result is None:
+                    ok = False
+                    continue
+                value, m = result
+                out = self._buf_offset_addr(module, buf_offset) - self.output_base
+                if not 0 <= out <= len(self.output) - size:
+                    continue  # not in the image (as for other fix-ups)
+                self.output[out] = value & 0xFF
+                if size == 2:
+                    self.output[out + 1] = (value >> 8) & 0xFF
+                mark = self._bitmap_mark(size, m)
+                if mark is None:
+                    self.expr_unrelocatable.append(
+                        f"{module.name}: the {'byte' if size == 1 else 'word'}"
+                        f" at {out + self.output_base:04X}H, "
+                        f"{self.describe_expression(items)}, does not move by "
+                        f"0 or 1 page when MP/M relocates the program, which a"
+                        f" page relocation bitmap cannot express")
+                elif mark >= 0:
+                    self.expr_relocations.append(out + mark)
+        return ok
+
+    @staticmethod
+    def _bitmap_mark(size, move):
+        """Byte of a stored field to mark (0 or 1), -1 for none, None if impossible."""
+        if move is None:
+            return None
+        m, exact, byte = move
+        if size == 1:
+            return {0: -1, 1: 0}.get(m % 256)
+        if exact:
+            return {0: -1, 256: 1}.get(m % 65536)
+        if byte and m % 256 == 1:
+            return 0  # HIGH/LOW stored as a word: the upper byte stays 0
+        return None
+
+    @staticmethod
+    def describe_expression(items):
+        """Infix text of a postfix link-time expression, for messages."""
+        stack = []
+        marks = {ADDR_ABSOLUTE: 'H', ADDR_PROGRAM_REL: "H'",
+                 ADDR_DATA_REL: 'H"', ADDR_COMMON_REL: 'H!'}
+        for item in items:
+            if item[0] == 'EXT_VALUE':
+                addr_type, value = item[1]
+                stack.append(f"{value:04X}{marks.get(addr_type, 'H')}")
+            elif item[0] == 'EXT_SYMBOL':
+                stack.append(item[1])
+            elif item[1] in (EXT_OP_HIGH, EXT_OP_LOW, EXT_OP_NOT) and stack:
+                stack.append(f"{EXT_OP_NAMES[item[1]]}({stack.pop()})")
+            elif item[1] == EXT_OP_NEG and stack:
+                stack.append(f"-({stack.pop()})")
+            elif len(stack) >= 2:
+                b, a = stack.pop(), stack.pop()
+                stack.append(f"({a}{EXT_OP_NAMES.get(item[1], '?')}{b})")
+        text = ' '.join(stack)
+        return text[1:-1] if text.startswith('(') and text.endswith(')') else text
 
     def save_com(self, filename):
         """Save as CP/M .COM file."""
@@ -962,6 +987,12 @@ class Linker:
         - Code/data (code_length bytes)
         - Relocation bitmap ((code_length + 7) / 8 bytes)
         """
+        if self.expr_unrelocatable:
+            # The image is right where it was linked but would be wrong
+            # anywhere else MP/M put it.
+            raise LinkerError('\n'.join(
+                f"Error: {msg}" for msg in self.expr_unrelocatable))
+
         code_length = len(self.output)
 
         # Calculate total BSS (uninitialized data) size from all modules
@@ -1018,6 +1049,12 @@ class Linker:
                 byte_idx = high_byte_offset // 8
                 bit_idx = 7 - (high_byte_offset % 8)
                 bitmap[byte_idx] |= (1 << bit_idx)
+
+        # And the bytes of link-time expressions that move with the program
+        # (these are the byte to mark itself, not the low byte of a word).
+        for offset in self.expr_relocations:
+            if 0 <= offset < code_length:
+                bitmap[offset // 8] |= 0x80 >> (offset % 8)
 
         # Build header (256 bytes)
         # MP/M II PRL format (verified from PRLCM.PLM):
@@ -1213,7 +1250,11 @@ def main():
     if args.hex:
         linker.save_hex(str(output_path))
     elif prl_output:
-        linker.save_prl(str(output_path))
+        try:
+            linker.save_prl(str(output_path))
+        except LinkerError as e:
+            print(e, file=sys.stderr)
+            sys.exit(1)
     else:
         linker.save_com(str(output_path))
 
