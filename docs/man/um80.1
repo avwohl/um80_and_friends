@@ -68,6 +68,18 @@ with it; a label on the ENDM that ends a body is defined where the body ends;
 and an IRPC with an empty string goes round once.
 Without \fB\-\-dri\fR a \fB$\fR is part of the name, and a macro body is
 read, as in MACRO-80.
+The first word of a statement that is not an instruction, directive or
+macro is a label, colon or not, in any column (\fBOBP DS 1\fR); a line
+number in front of a statement, a line that starts with \fB*\fR and MAC's
+assembly controls (\fB$\-MACRO\fR) are ignored.  Without \fB\-\-dri\fR a
+label needs its colon, as in MACRO-80.
+\fBPUSH A\fR and \fBPOP A\fR are PUSH PSW and POP PSW, and an expression may
+have two register names in it; MACRO-80 flags both, and so does um80 without
+\fB\-\-dri\fR.
+MAC's relational operators \fB=\fR, \fB<\fR, \fB<=\fR, \fB>\fR, \fB>=\fR and
+\fB<>\fR are EQ, LT, LE, GT, GE and NE, and HIGH and LOW apply to all that
+follows them (\fBHIGH(X)+1\fR is HIGH(X+1)), as in MAC; MACRO-80 has no such
+operator, and applies HIGH and LOW to the term after them.
 \fB\-\-dri\fR does not imply \fB\-\-aseg\fR (MAC's absolute sources) or
 \fB\-t\fR (RMAC's six-character names).
 .TP
@@ -80,7 +92,12 @@ Add a directory to the include file search path. Can be specified multiple times
 .SH SOURCE FORMAT
 Assembly source files consist of lines containing:
 .IP \(bu 2
-Labels (optional) followed by a colon
+Labels (optional) followed by a colon.  The first word of a statement is
+its operation, in column 1 or not (\fBNOP\fR in column 1 is an instruction),
+except the name in front of an EQU, SET, DEFL, ASET or MACRO.  As in
+MACRO-80, a statement whose first word is no instruction, directive or macro
+is assembled as DB, with a warning (\fBLAB: 5,6\fR), so a label without a
+colon is an error (see \fB\-\-dri\fR)
 .IP \(bu 2
 Instructions or directives
 .IP \(bu 2

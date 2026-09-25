@@ -40,7 +40,7 @@ um80 -t program.mac                 # Cut symbol names to 6 chars, as M80 does
 um80 -e ".z80" program.mac          # Execute code before source (set Z80 mode)
 um80 --pre macros.mac program.mac   # Include file before source
 um80 --aseg program.asm             # Absolute, like DRI's MAC: ORG is an address
-um80 --dri program.asm              # DRI source: a $ inside a name is ignored
+um80 --dri program.asm              # DRI source: MAC's names and labels
 ```
 
 ### Link object files
@@ -276,6 +276,16 @@ written. um80 makes it an error because that is a silent miscompile; this is a
 deliberate divergence, recorded in CHANGELOG.md. Nothing is written and the
 exit status is 1, as for any other assembly error.
 
+### A label needs a colon
+
+As in M80, the first word of a statement is its operation, in column 1 or not
+(`NOP` in column 1 is a NOP), and a label is a name with a colon after it; the
+name in front of an `EQU`, `SET` or `MACRO` needs none. A statement whose
+first word is no instruction, directive or macro is a list of values M80
+assembles as `DB` (after `FOO EQU 5`, `FOO` alone is 05), so `LAB DS 1` is an
+error there, and in um80. DRI's MAC and RMAC take such a word for a label, in
+any column: `um80 --dri` reads it as they do.
+
 ## Extended Symbol Names
 
 The original Microsoft REL format limits symbol names to 8 characters (and LINK-80 3.44 reads at most 7). um80/ul80 extend this to support symbols up to 255 characters, which is essential for:
@@ -313,6 +323,9 @@ Extract the low or high byte of a 16-bit value using function-call syntax:
 ```
 
 Both `LOW(expr)` and `HIGH(expr)` syntax (with parentheses) and `LOW expr` / `HIGH expr` syntax (with space) are supported.
+M80 applies them to the term after them (`HIGH(X)+1` is `HIGH(X)` plus 1), and
+so does um80; MAC and RMAC to all that follows (`HIGH(X+1)`), and so does
+`um80 --dri`, which also takes MAC's `=`, `<`, `<=`, `>`, `>=` and `<>`.
 
 When the operand is relocatable or external (`LOW(BUFFER)` above, with BUFFER
 in CSEG or DSEG), the byte depends on where the linker puts the segment, so
@@ -339,16 +352,18 @@ The `$` characters are ignored during parsing and do not affect the numeric valu
 DRI's MAC and RMAC also ignore a `$` inside a name: `NMB$LST` and `NMBLST` are
 one symbol. MACRO-80 keeps it, so by default um80 does too. `um80 --dri` reads
 names as MAC and RMAC do; MP/M II's sources need it (`MPM.ASM` stores to
-`nmb$lst`, which `DATAPG.ASM` defines as `nmblst`). See
+`nmb$lst`, which `DATAPG.ASM` defines as `nmblst`). It also takes a word with no
+colon for a label, as MAC does, and ignores a line number, a `*` comment line
+and MAC's `$-MACRO` controls. See
 [docs/EXTENSIONS.md](docs/EXTENSIONS.md#dri-sources---dri) for exactly what it
 changes.
 
 ### Register Names as Values
 
-In 8080 code um80 gives each register name a number and reads a register
-operand as an expression, as MACRO-80 and DRI's MAC and RMAC do: B 0, C 1,
-D 2, E 3, H 4, L 5, M 6, A 7, SP and PSW 6. A symbol equated to a register
-name names that register:
+In 8080 code um80 gives each register name a number, in any expression, and
+reads a register operand as an expression, as MACRO-80 and DRI's MAC and RMAC
+do: B 0, C 1, D 2, E 3, H 4, L 5, M 6, A 7, SP and PSW 6 (`DB B` is 00, `X EQU
+D+1` is 3). A symbol equated to a register name names that register:
 
 ```asm
 UR      EQU     B                   ; 0: register B
@@ -368,11 +383,12 @@ bytes into the code, is `DAD D`), with a warning. See
 
 ### PUSH A / POP A
 
-DRI assemblers allowed `PUSH A` and `POP A` as synonyms for `PUSH PSW` and `POP PSW`:
+DRI's MAC and RMAC take `PUSH A` and `POP A` for `PUSH PSW` and `POP PSW`, and
+so does `um80 --dri`; M80 flags them, and without `--dri` they are an error:
 
 ```asm
-        PUSH A                      ; Same as PUSH PSW (push A and flags)
-        POP A                       ; Same as POP PSW (pop A and flags)
+        PUSH A                      ; PUSH PSW (push A and flags), with --dri
+        POP A                       ; POP PSW (pop A and flags), with --dri
 ```
 
 ### External Symbol Aliases (EQU external+offset)
@@ -418,7 +434,7 @@ For more details on these extensions and compatibility notes, see [docs/EXTENSIO
 
 ## Testing
 
-The test suite (620 tests) runs under `pytest`:
+The test suite (687 tests) runs under `pytest`:
 
 ```bash
 pip install -e ".[dev]"
@@ -459,6 +475,12 @@ Digital Research's MAC 2.0 and RMAC 1.1:
 | `test_equ_name_column.py` | (DRI) The name of an `EQU`, `SET`, `DEFL`, `ASET` or `MACRO` may be indented |
 | `test_register_values.py` | (DRI) A register operand is an expression and a register name its number: `RD EQU D` / `DAD RD` is `DAD D`; an odd register pair is an error; an address is its offset, as in M80 |
 | `test_dri_names.py` | (DRI) `--dri` ignores a `$` inside a name, as MAC and RMAC do, but not in a macro call's arguments or an `IRP`/`IRPC` list; without it `$` is part of the name, as in M80 |
+| `test_operator_names.py` | A name that ends in an operator's letters (`X1EQ+2`) is read whole; a symbol named like an operator (`EQ:`, `TYPE EQU 5`) is that symbol, as in M80; an operator with nothing on one side is an error; `TYPE` of an expression |
+| `test_condition_names.py` | In Z80 code a label named like a condition (`P:`, `NZ:`) is `JP`'s address, as in M80 |
+| `test_register_expressions.py` | (DRI) A register name is its number in any 8080 expression (`DB B`, `X EQU D+1`); M80 flags two in one expression and `PUSH A`, MAC takes them (`--dri`); a symbol named like a register is that symbol, as in M80 |
+| `test_dri_relations.py` | (DRI) `--dri` takes MAC's `=`, `<`, `<=`, `>`, `>=`, `<>`, and applies `HIGH`/`LOW` to all that follows, as MAC and RMAC do; without it, as M80 does |
+| `test_end_directive.py` | (DRI) Nothing after `END` is assembled - the rest of the file, a macro, a `REPT`, an `INCLUDE` file - as in M80, MAC and RMAC |
+| `test_column_one.py` | (DRI) An instruction, directive or macro in column 1 is one; a statement of values is a `DB` and a label needs a colon, as in M80; with `--dri` a word with no colon is a label and a line number or a `*` line is ignored, as in MAC |
 
 Further tests cover the toolchain more broadly: `test_ds_org.py` (DS/ORG and
 segment placement), `test_defs_fill.py` (DEFS fill value), `test_end_symbol.py`

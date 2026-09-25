@@ -50,6 +50,41 @@ DRI_NAME_START = frozenset('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz
                            '?@')
 DRI_NAME_CHARS = DRI_NAME_START | frozenset('0123456789')
 
+# The operations of a statement: every directive assemble_pseudo_op() takes,
+# and the instructions of each processor (assemble_instruction() and
+# assemble_z80_instruction()).  See Assembler.is_operation().
+DIRECTIVES = frozenset({
+    'ORG', 'EQU', 'SET', 'DEFL', 'ASET', 'DB', 'DEFB', 'DEFM', 'DC', 'DW', 'DEFW',
+    'DS', 'DEFS', 'CSEG', 'DSEG', 'ASEG', 'COMMON', 'PUBLIC', 'ENTRY', 'GLOBAL',
+    'EXTRN', 'EXT', 'EXTERNAL', 'NAME', 'TITLE', 'SUBTTL', '$TITLE', 'PAGE',
+    '$EJECT', '*EJECT', '.LIST', '.XLIST', '.RADIX', '.8080', '.Z80', '.SALL',
+    '.LALL', '.XALL', '.SFCOND', '.LFCOND', '.TFCOND', '.PRINTX', '.COMMENT',
+    '.REQUEST', '.PHASE', '.DEPHASE', 'END', 'IF', 'IFT', 'IFE', 'IFF', 'IFDEF',
+    'IFNDEF', 'IF1', 'IF2', 'IFB', 'IFNB', 'IFIDN', 'IFDIF', 'ELSE', 'ENDIF',
+    'ENDC', 'COND', 'INCLUDE', '$INCLUDE', 'MACLIB', 'MACRO', 'ENDM', 'EXITM',
+    'LOCAL', 'REPT', 'IRP', 'IRPC'})
+INSTRUCTIONS_8080 = frozenset(
+    set(NO_OPERAND) | COND_RETS | COND_JUMPS | COND_CALLS | set(ALU_REG)
+    | set(ALU_IMM) | {'MOV', 'MVI', 'LXI', 'INR', 'DCR', 'INX', 'DCX', 'DAD',
+                      'LDAX', 'STAX', 'PUSH', 'POP', 'JMP', 'CALL', 'RST', 'LDA',
+                      'STA', 'LHLD', 'SHLD', 'IN', 'OUT'})
+INSTRUCTIONS_Z80 = frozenset(
+    set(Z80_NO_OPERAND) | set(Z80_ED_NO_OPERAND) | Z80_ALU_MNEMONICS
+    | Z80_ROT_MNEMONICS | Z80_BIT_MNEMONICS
+    | {'EX', 'LD', 'PUSH', 'POP', 'INC', 'DEC', 'JP', 'JR', 'DJNZ', 'CALL',
+       'RET', 'RST', 'IN', 'OUT', 'IM'})
+
+# A name that begins a statement, and the name of an EQU, SET, DEFL, ASET or
+# MACRO in front of its directive (see Assembler.parse_line()).
+NAME_WORD = re.compile(r'([$A-Za-z_@?][A-Za-z0-9_@?$.]*)\s*')
+NAME_DEFINITION = re.compile(r'([$A-Za-z_@?][A-Za-z0-9_@?$.]*)\s+'
+                             r'(?:EQU|SET|DEFL|ASET|MACRO)(?![A-Za-z0-9_@?$.])',
+                             re.IGNORECASE)
+# MAC's line number in front of a statement, and its assembly controls
+# ($-MACRO, $+PRINT, ...): see Assembler.parse_line().
+LINE_NUMBER = re.compile(r'\d[0-9A-Za-z$]*(?:\s+|$)')
+DRI_CONTROL = re.compile(r'\$[-+*][A-Za-z]')
+
 # Every byte of a source file with its bit 7 cleared (see source_lines()).
 STRIP_PARITY = bytes(b & 0x7F for b in range(256))
 # An 8AH that does not follow a CR or an 8DH (see source_lines()).
@@ -330,6 +365,7 @@ class Assembler:
         self.block_open_line = 0  # Line of the MACRO/REPT/IRP/IRPC still open
 
         self.entry_point = None  # END address if specified
+        self.ended = False  # an END was assembled: the source ends there
         self.module_name = None   # from NAME('...')
         self.title_name = None    # from TITLE, which NAME overrides
 
@@ -399,6 +435,11 @@ class Assembler:
         # While an 8080 register operand is read (register_value()), a
         # register name in it is its number.
         self.register_operand = False
+        # Register names read as values in the expression being evaluated
+        # (eval_operand()), and how deep in it the evaluation is.
+        self.registers_read = 0
+        self.eval_depth = 0
+        self.register_number = None  # what register_value() last read
         self.phase = None  # (run address, location counter) after .PHASE
         self.rel_common = None  # COMMON block last selected in the .REL
         self.reported_unlinkable = set()  # symbols report_unlinkable() named
@@ -1022,7 +1063,8 @@ class Assembler:
                                 # `X<TAB>AND<TAB>0FH' and `(X)SHR(4)').
                                 before_ok = (start == 0 or expr[start-1] not in IDENT_CHARS)
                                 after_ok = (i+1 >= len(expr) or expr[i+1] not in IDENT_CHARS)
-                                if before_ok and after_ok:
+                                if (before_ok and after_ok
+                                        and not self.names_symbol(op)):
                                     return (start, len(op))
                             else:
                                 # Symbol operator
@@ -1036,6 +1078,28 @@ class Assembler:
         'MOD', 'SHL', 'SHR', 'AND', 'OR', 'XOR', 'NOT',
         'EQ', 'NE', 'LT', 'LE', 'GT', 'GE', 'HIGH', 'LOW', 'NUL', 'TYPE',
     })
+
+    def names_symbol(self, name):
+        """True if `name' is a symbol of the program: defined, EXTRN, or
+        defined further down (the time through pass 1 before defined it).
+
+        MACRO-80 3.44 reads such a name as the symbol wherever it could also
+        be an operator or a register: after `EQ: NOP', `DW EQ' is the label
+        and `DW 1 EQ 1' is an error (O); after `TYPE EQU 5', `DB TYPE+2' is
+        07; after `B EQU 9', `DB B' is 09.  MAC and RMAC do not let a
+        program define such a name (S).
+        """
+        name = name.upper()
+        sym = self.symbols.get(name)
+        if sym is not None and (sym.defined or sym.external):
+            return True
+        return self.pass_num == 1 and name in self.prev_defs
+
+    def prefix_word(self, expr, word):
+        """prefix_operand(), for an operator the program has not made a
+        symbol (names_symbol())."""
+        rest = prefix_operand(expr, word)
+        return None if rest is None or self.names_symbol(word) else rest
 
     def find_binary_addsub(self, expr):
         """Rightmost binary '+'/'-' at paren level 0, skipping unary signs.
@@ -1074,8 +1138,14 @@ class Assembler:
             elif level == 0 and ch in '+-':
                 left = expr[:i].rstrip()
                 if left and left[-1] not in '+-*/(<,':
-                    m = re.search(r'([A-Za-z]+)$', left)
-                    if not (m and m.group(1).upper() in self._PRECEDING_WORD_OPS):
+                    # The word before the sign, whole: X1EQ, @P$NUL and
+                    # ALOW end in letters that make an operator, but are
+                    # names (`X1EQ+2' is X1EQ plus 2, as in M80; um80 read
+                    # it as X1 EQ +2, which did not parse).
+                    m = re.search(r'[A-Za-z0-9_@?$.]+$', left)
+                    word = m.group(0) if m else ''
+                    if not (word.upper() in self._PRECEDING_WORD_OPS
+                            and not self.names_symbol(word)):
                         return (i, ch)
             i -= 1
         return (-1, '')
@@ -1098,7 +1168,29 @@ class Assembler:
         The value/seg/ext/name fields are exactly what parse_expression() has
         always returned; `kind' and the postfix form say what the linker has
         to be told when the value depends on segment placement or externals.
+
+        In 8080 code a register name is its number (REG_VALUES), as in M80
+        and MAC: `X EQU D+1' is 3, `DB B' 00, `MVI A,B' 3E 00.  M80 flags an
+        expression with two register names in it (`A*256+B', `C-B') O,
+        though it computes it; MAC does not, and neither does um80 with
+        --dri.
         """
+        top = self.eval_depth == 0
+        if top:
+            self.registers_read = 0
+        self.eval_depth += 1
+        try:
+            ev = self._evaluate(expr, allow_undefined)
+        finally:
+            self.eval_depth -= 1
+        if (top and self.registers_read > 1 and not self.dri
+                and self.pass_num == 2):
+            self.error(f"'{expr.strip()}' has {self.registers_read} register names"
+                       f" in it (M80: O; MAC takes it: --dri)")
+        return ev
+
+    def _evaluate(self, expr, allow_undefined=False):
+        """eval_operand() of `expr', which may be part of the expression."""
         expr = expr.strip()
         if not expr:
             return ExprValue(0)
@@ -1130,6 +1222,17 @@ class Assembler:
                             # Parens close before end, not fully wrapped
                             break
 
+        # --dri: HIGH and LOW bind loosest of all, as MAC's manual has them
+        # and MAC and RMAC read them: `HIGH 1234H OR 0F00H' is HIGH(1F34H),
+        # 1FH, `HIGH(100H)+1' is HIGH(101H), 1, and `LOW 1234H SHR 4' is
+        # 23H.  M80 applies them to the term that follows (12H OR 0F00H;
+        # 2; 03H), and so does um80 without --dri (further down).
+        if self.dri:
+            for word, code in (('HIGH', EXT_OP_HIGH), ('LOW', EXT_OP_LOW)):
+                inner = self.prefix_word(expr, word)
+                if inner is not None:
+                    return self._high_low(code, inner, allow_undefined)
+
         # Lowest precedence: OR and XOR, one level, left to right (M80 and
         # DRI's MAC both: `1 OR 1 XOR 1' is 0), then AND.  LINK-80 has no
         # operator for any of the three, so on a relocatable or external
@@ -1138,6 +1241,8 @@ class Assembler:
             idx, oplen = self.find_op_at_level0(expr, list(words))
             if idx >= 0:
                 word = expr[idx:idx+oplen].upper()
+                if self.missing_operand(expr, expr[:idx], expr[idx+oplen:], word):
+                    return ExprValue(0)
                 left = self.eval_operand(expr[:idx], allow_undefined)
                 right = self.eval_operand(expr[idx+oplen:], allow_undefined)
                 a, b = left.value & 0xFFFF, right.value & 0xFFFF
@@ -1146,16 +1251,23 @@ class Assembler:
                 return self._link_binary(word, left, right, value)
 
         # NOT (unary): binds tighter than AND/OR/XOR, looser than relational.
-        rest = prefix_operand(expr, 'NOT')
+        rest = self.prefix_word(expr, 'NOT')
         if rest is not None:
             operand = self.eval_operand(rest, allow_undefined)
             return self._link_unary(EXT_OP_NOT, operand,
                                     (~operand.value) & 0xFFFF)
 
-        # Comparison operators: EQ, NE, LT, LE, GT, GE
-        idx, oplen = self.find_op_at_level0(expr, ['EQ', 'NE', 'LT', 'LE', 'GT', 'GE'])
+        # Comparison operators: EQ, NE, LT, LE, GT, GE, and with --dri MAC's
+        # =, <>, <, <=, >, >= for them (M80 has no such operator: `IF @Y =
+        # 1', in DRI's CONTROL/DEBLOCK.ASM, is O there).
+        idx, oplen = self.find_op_at_level0(
+            expr, ['EQ', 'NE', 'LT', 'LE', 'GT', 'GE']
+            + (list(self._DRI_RELATIONS) if self.dri else []))
         if idx >= 0:
             op = expr[idx:idx+oplen].strip().upper()
+            op = self._DRI_RELATIONS.get(op, op)
+            if self.missing_operand(expr, expr[:idx], expr[idx+oplen:], op):
+                return ExprValue(0)
             left = self.eval_operand(expr[:idx], allow_undefined)
             right = self.eval_operand(expr[idx+oplen:], allow_undefined)
             left_val, right_val = left.value & 0xFFFF, right.value & 0xFFFF
@@ -1209,6 +1321,8 @@ class Assembler:
         idx, oplen = self.find_op_at_level0(expr, ['*', '/', 'MOD', 'SHL', 'SHR'])
         if idx >= 0:
             op = expr[idx:idx+oplen].strip().upper()
+            if self.missing_operand(expr, expr[:idx], expr[idx+oplen:], op):
+                return ExprValue(0)
             left = self.eval_operand(expr[:idx], allow_undefined)
             right = self.eval_operand(expr[idx+oplen:], allow_undefined)
             # The offset beside an external may be negative (EXT-1).
@@ -1250,19 +1364,16 @@ class Assembler:
         # So a relocatable or external operand makes this an expression for
         # the linker to finish; see _link_unary().
         for word, code in (('HIGH', EXT_OP_HIGH), ('LOW', EXT_OP_LOW)):
-            inner = prefix_operand(expr, word)
+            inner = self.prefix_word(expr, word)
             if inner is not None:
                 # HIGH X, HIGH(X), HIGH<TAB>X.  A binary operator after the
                 # operand - HIGH(1234H)+1 - has already been split above.
-                operand = self.eval_operand(inner, allow_undefined)
-                value = (operand.value >> 8) & 0xFF if code == EXT_OP_HIGH \
-                    else operand.value & 0xFF
-                return self._link_unary(code, operand, value,
-                                        ext=operand.ext, name=operand.name)
+                return self._high_low(code, inner, allow_undefined)
 
         # NUL operator - true (0FFFFh) if its argument is null/empty. The empty
         # case (a macro arg omitted, leaving a bare 'NUL') is its primary use.
-        if upper == 'NUL' or prefix_operand(expr, 'NUL') is not None:
+        if (upper == 'NUL' and not self.names_symbol('NUL')
+                or self.prefix_word(expr, 'NUL') is not None):
             arg = expr[3:].strip()
             if not arg or arg == '<>' or arg == "''":
                 return ExprValue(0xFFFF)
@@ -1271,10 +1382,13 @@ class Assembler:
         # TYPE operator - returns byte describing expression characteristics
         # Lower 2 bits: mode (0=abs, 1=prog rel, 2=data rel, 3=common rel)
         # Bit 5 (20H): defined; Bit 7 (80H): external
-        if prefix_operand(expr, 'TYPE') is not None:
+        if self.prefix_word(expr, 'TYPE') is not None:
             self.reading_pure = False
             arg = expr[4:].strip()
             if re.match(r'^[A-Za-z_@?][A-Za-z0-9_@?$.]*$', arg):
+                if (arg.upper() in REG_VALUES and not self.z80_mode
+                        and not self.names_symbol(arg)):
+                    return ExprValue(0x20)  # a number, as M80 has it
                 sym = self.symbols.get(arg.upper())
                 if sym:
                     result = sym.seg_type & 0x03
@@ -1283,7 +1397,8 @@ class Assembler:
                     if sym.external:
                         result |= 0x80
                     return ExprValue(result)
-            return ExprValue(0)
+                return ExprValue(0)
+            return ExprValue(self.type_of(arg))
 
         # Handle ## suffix (6-character truncation operator, implies external)
         if expr.endswith('##'):
@@ -1305,10 +1420,17 @@ class Assembler:
         if re.match(r'^[$A-Za-z_@?][A-Za-z0-9_@?$.]*$', expr):
             upper = expr.upper()
 
-            # Check if it's a register (not a symbol)
-            if self.register_operand and upper in REG_VALUES:
-                return ExprValue(REG_VALUES[upper])
-            if upper in REGS or upper in REGPAIRS or upper in REGPAIRS_PUSHPOP:
+            # A register name, but for a symbol of that name (M80 reads
+            # `B EQU 9' / `DB B' as 09): in 8080 code, its number, as in
+            # M80 and MAC.  um80 made it "Register 'B' used as value" but in
+            # a register operand, so `X EQU D+1', `DB B', `MVI A,B' and `IF
+            # B EQ 0' did not assemble.  In Z80 code M80 gives every
+            # register name 0; um80 keeps the error.
+            if ((upper in REGS or upper in REGPAIRS or upper in REGPAIRS_PUSHPOP)
+                    and not self.names_symbol(upper)):
+                if self.register_operand or not self.z80_mode:
+                    self.registers_read += 1
+                    return ExprValue(REG_VALUES[upper])
                 self.error(f"Register '{expr}' used as value")
                 return ExprValue(0)
 
@@ -1358,6 +1480,53 @@ class Assembler:
 
         self.error(f"Cannot parse expression: '{expr}'")
         return ExprValue(0)
+
+    # MAC's relational operators (--dri), longest first: at the end of `<=',
+    # `<=' is found before `='.
+    _DRI_RELATIONS = {'<=': 'LE', '>=': 'GE', '<>': 'NE', '=': 'EQ', '<': 'LT',
+                      '>': 'GT'}
+
+    def _high_low(self, code, inner, allow_undefined):
+        """HIGH or LOW (`code') of the expression `inner'."""
+        operand = self.eval_operand(inner, allow_undefined)
+        value = (operand.value >> 8) & 0xFF if code == EXT_OP_HIGH \
+            else operand.value & 0xFF
+        return self._link_unary(code, operand, value,
+                                ext=operand.ext, name=operand.name)
+
+    def type_of(self, text):
+        """TYPE of an expression that is not a name: 20H (defined) with its
+        mode in the low two bits, 80H for an external, 0 if it does not
+        evaluate.  M80: `TYPE 5', `TYPE 'A'' and `TYPE +2' are 20H, `TYPE
+        (LAB)' 21H with LAB in CSEG; um80 gave 0 for all of them.  (TYPE
+        binds tighter than + and -: `TYPE LAB+1' is (TYPE LAB)+1.)
+        """
+        errors = len(self.errors)
+        ev = self.eval_operand(text)
+        if len(self.errors) > errors:
+            del self.errors[errors:]
+            return 0
+        if ev.kind == 'abs':
+            return 0x20
+        if ev.kind == 'rel':
+            return 0x20 | (ev.seg & 0x03)
+        if ev.kind == 'ext':
+            return 0x80
+        return 0
+
+    def missing_operand(self, expr, left, right, word):
+        """True, and an error in pass 2, if a binary operator has nothing on
+        one side: `DW EQ' or `DW SHL', with no symbol EQ or SHL, and `* TEXT'
+        (M80: O).  um80 took the missing value for 0, so `DW EQ' was 0FFFFH
+        (0 EQ 0), without a word.  Pass 1 does not report it: a name defined
+        further down (`DW EQ / EQ: NOP') is only a symbol from the second
+        time through (names_symbol()).
+        """
+        if left.strip() and right.strip():
+            return False
+        if self.pass_num == 2:
+            self.error(f"'{expr}': {word} needs a value on each side")
+        return True
 
     @staticmethod
     def _ext_offset(value):
@@ -1514,6 +1683,14 @@ class Assembler:
             return value - self.segments['DSEG'].org
         return value
 
+    def is_operation(self, word):
+        """True if `word' is a macro, a directive or an instruction of the
+        processor being assembled for (so `HALT' is one after .Z80 only)."""
+        word = word.upper()
+        return (word in self.macros or word in DIRECTIVES
+                or word in (INSTRUCTIONS_Z80 if self.z80_mode
+                            else INSTRUCTIONS_8080))
+
     def parse_line(self, line, brackets=False):
         """Parse a source line, return (label, operator, operands, comment).
 
@@ -1552,20 +1729,40 @@ class Assembler:
         if not line:
             return (None, None, None, comment)
 
-        # Parse label (if any)
-        # Labels can be at column 1 or indented, but are identified by trailing colon
-        # Conditional directives (IF, ELSE, ENDIF, etc.) at column 1 without colon are NOT labels
-        CONDITIONAL_DIRECTIVES = {
-            'IF', 'IFT', 'IFE', 'IFF', 'IFDEF', 'IFNDEF',
-            'IF1', 'IF2', 'IFB', 'IFNB', 'IFIDN', 'IFDIF',
-            'COND', 'ELSE', 'ENDIF', 'ENDC'
-        }
+        # The label, if any.  A name with a colon after it is one, in any
+        # column.  So is the name of an EQU, SET, DEFL, ASET or MACRO in
+        # front of its directive: MACRO-80, MAC and RMAC all take
+        # `<TAB>FOO<TAB>EQU 5', even where FOO is also an instruction or a
+        # macro (MP/M II's MPMLDR/LDRBDOS.ASM has `<TAB>arech  equ b!
+        # arecl  equ c').
+        #
+        # A name with no colon is not a label in MACRO-80 3.44, in column 1
+        # or not: the first word of a statement is its operation, and a word
+        # that is no instruction, directive or macro starts a list of values
+        # M80 assembles as DB (`FOO NOP' is U, `FOO' after `FOO EQU 5' is the
+        # byte 05; see _process_single_statement()).  um80 took a word in
+        # column 1 for a label even when it was an instruction or a
+        # directive, so `NOP', `RET', `END' and `DB 7' there assembled
+        # nothing, without a word.  MAC and RMAC (--dri) take a word that
+        # is not an instruction, directive or macro for a label, colon or
+        # not, in any column; they ignore a line number in front of a
+        # statement, a line whose first character is `*', and MAC's
+        # assembly controls ($-MACRO, $+PRINT).
         label = None
         stripped = line.lstrip()
-        # Check for label: identifier followed by : or ::
+        if self.dri:
+            if stripped.startswith('*') or DRI_CONTROL.match(stripped):
+                return (None, None, None, comment)
+            number = LINE_NUMBER.match(stripped)
+            if number:
+                stripped = line = stripped[number.end():]
+                if not line:
+                    return (None, None, None, comment)
+        elif line[:6].upper() == '*EJECT':
+            # MACRO-80's page eject, in column 1 only.
+            return (None, '*EJECT', line[6:].strip(), comment)
         match = re.match(r'^([$A-Za-z_@?][A-Za-z0-9_@?$.]*)(::|:)\s*', stripped)
         if match:
-            # Has a colon, so it's definitely a label
             label = match.group(1)
             colons = match.group(2)
             stripped = stripped[match.end():]
@@ -1574,26 +1771,17 @@ class Assembler:
                 sym = self.lookup_symbol(label)
                 sym.public = True
                 sym.public_line = sym.public_line or self.line_num
-        elif not line[0].isspace() if line else False:
-            # At column 1, no colon - check if it's a conditional directive
-            match = re.match(r'^([$A-Za-z_@?][A-Za-z0-9_@?$.]*)\s*', stripped)
-            if match:
-                potential = match.group(1).upper()
-                if potential not in CONDITIONAL_DIRECTIVES:
-                    # Not a directive, treat as label (M80 allows labels without colons at col 1)
-                    label = match.group(1)
-                    line = stripped[match.end():]
         else:
-            # The name of an EQU, SET, DEFL, ASET or MACRO need not be in
-            # column 1: MACRO-80, MAC and RMAC all take `<TAB>FOO<TAB>EQU 5',
-            # even where FOO is also an instruction or a macro.  MP/M II's
-            # MPMLDR/LDRBDOS.ASM has `<TAB>arech  equ b! arecl  equ c'.
-            match = re.match(r'^([$A-Za-z_@?][A-Za-z0-9_@?$.]*)\s+'
-                             r'(?:EQU|SET|DEFL|ASET|MACRO)(?![A-Za-z0-9_@?$.])',
-                             stripped, re.IGNORECASE)
+            match = NAME_DEFINITION.match(stripped)
             if match:
                 label = match.group(1)
                 line = stripped[match.end(1):]
+            elif self.dri:
+                match = NAME_WORD.match(stripped)
+                if (match and match.group(1) != '$'
+                        and not self.is_operation(match.group(1))):
+                    label = match.group(1)
+                    line = stripped[match.end():]
 
         if not line.strip():
             return (label, None, None, comment)
@@ -1612,8 +1800,11 @@ class Assembler:
             return self.parse_line(whole, brackets=True)
         return (label, operator, operands, comment)
 
-    def split_operands(self, operands, escape_bang=False):
+    def split_operands(self, operands, escape_bang=False, angles=True):
         """Split operands by comma, respecting strings, parentheses, and angle brackets.
+
+        With `angles' false a < or > is not a bracket but an operator, as
+        MAC's relational ones are with --dri: `DW 1<2,3' is two values.
 
         When escape_bang is True (macro argument lists), '!' quotes the
         following character so an escaped comma/bracket is not treated as a
@@ -1658,10 +1849,10 @@ class Assembler:
             elif ch == ')':
                 paren_depth -= 1
                 current += ch
-            elif ch == '<':
+            elif ch == '<' and angles:
                 angle_depth += 1
                 current += ch
-            elif ch == '>':
+            elif ch == '>' and angles:
                 angle_depth -= 1
                 current += ch
             elif ch == ',' and paren_depth == 0 and angle_depth == 0:
@@ -2002,8 +2193,10 @@ class Assembler:
         an address (`HIGH LAB', `LAB-Y') is None, as it was in 0.3.50.
         """
         name = text.strip().upper()
-        if name in REG_VALUES:
-            return REG_VALUES[name]
+        self.register_number = None
+        if name in REG_VALUES and not self.names_symbol(name):
+            self.register_number = REG_VALUES[name]
+            return self.register_number
         errors = len(self.errors)
         self.register_operand = True
         try:
@@ -2019,6 +2212,7 @@ class Assembler:
             what = 'an external' if ev.kind == 'ext' else 'an address'
             self.warning(f"register operand '{text.strip()}' is {what}: its offset,"
                          f" {ev.value}, is taken for the register, as in M80 (RMAC: V)")
+        self.register_number = ev.value
         return ev.value
 
     def resolve_register_alias(self, name):
@@ -2027,7 +2221,7 @@ class Assembler:
         The operand is a register name or an expression whose value is the
         register's number, 0 to 7 (register_value()).
         """
-        if name.strip().upper() in REGS:
+        if name.strip().upper() in REGS and not self.names_symbol(name.strip()):
             return name.strip().upper()
         val = self.register_value(name)
         for reg, num in REGS.items():
@@ -2047,7 +2241,7 @@ class Assembler:
         MAC flags it R.
         """
         upper = name.strip().upper()
-        if upper in regpair_dict:
+        if upper in regpair_dict and not self.names_symbol(upper):
             return upper
         val = self.register_value(name)
         if val is None or val & 1 or not 0 <= val <= 6:
@@ -2060,7 +2254,7 @@ class Assembler:
     def assemble_instruction(self, operator, operands):
         """Assemble a CPU instruction."""
         operator = operator.upper()
-        ops = self.split_operands(operands) if operands else []
+        ops = self.split_operands(operands, angles=not self.dri) if operands else []
 
         # No-operand instructions
         if operator in NO_OPERAND:
@@ -2187,12 +2381,15 @@ class Assembler:
             if len(ops) != 1:
                 self.error(f"{operator} requires one operand")
                 return True
-            # DRI extension: PUSH A / POP A is alias for PUSH PSW / POP PSW
-            op_upper = ops[0].strip().upper()
-            if op_upper == 'A':
+            rp = self.resolve_regpair_alias(ops[0], REGPAIRS_PUSHPOP)
+            if rp is None and self.register_number == 7:
+                # PUSH A, POP A, PUSH 7: MAC and RMAC take it for PSW.  M80
+                # flags it A (and pushes PSW).
+                if not self.dri:
+                    self.error(f"{operator} {ops[0].strip()}: A (7) is not a register"
+                               f" pair (M80: A; MAC takes it for PSW: --dri)")
+                    return True
                 rp = 'PSW'
-            else:
-                rp = self.resolve_regpair_alias(ops[0], REGPAIRS_PUSHPOP)
             if rp is None:
                 self.error(f"Invalid register pair for {operator}: {ops[0]}")
                 return True
@@ -2380,7 +2577,7 @@ class Assembler:
     def assemble_z80_instruction(self, operator, operands):
         """Assemble a Z80 CPU instruction."""
         operator = operator.upper()
-        ops = self.split_operands(operands) if operands else []
+        ops = self.split_operands(operands, angles=not self.dri) if operands else []
 
         # No-operand instructions
         if operator in Z80_NO_OPERAND:
@@ -2874,9 +3071,16 @@ class Assembler:
                     self.emit_byte(PREFIX_FD)
                     self.emit_byte(0xE9)
                     return True
-                # Check if it's a condition
-                if op in Z80_CONDITIONS:
-                    self.error("JP with condition requires address")
+                # A condition with no address - but a symbol named like a
+                # condition is the address, as in M80: after `P: NOP',
+                # `JP P' is C3 and P (um80 stopped with this error, so
+                # uplm80 wrote `JP 0+P').  One defined further down is a
+                # symbol from the second time through pass 1.
+                if op in Z80_CONDITIONS and not self.names_symbol(op):
+                    if self.pass_num == 2:
+                        self.error("JP with condition requires address")
+                    self.emit_byte(0xC3)
+                    self.emit_word(0)
                     return True
                 # Unconditional JP nn
                 ev = self.eval_operand(ops[0])
@@ -3138,10 +3342,17 @@ class Assembler:
 
         return False  # Not a Z80 instruction
 
+    # Directives whose operands are values: with --dri a < or > in them is an
+    # operator, not a bracket (split_operands()).
+    _VALUE_DIRECTIVES = frozenset({
+        'DB', 'DEFB', 'DEFM', 'DC', 'DW', 'DEFW', 'DS', 'DEFS', 'ORG', 'EQU',
+        'SET', 'DEFL', 'ASET', 'IF', 'IFT', 'IFE', 'IFF', 'COND', 'END'})
+
     def assemble_pseudo_op(self, operator, operands, label):
         """Assemble a pseudo-operation (directive)."""
         operator = operator.upper()
-        ops = self.split_operands(operands) if operands else []
+        ops = self.split_operands(operands, angles=not (
+            self.dri and operator in self._VALUE_DIRECTIVES)) if operands else []
 
         # ORG - set location counter
         if operator == 'ORG':
@@ -3189,7 +3400,7 @@ class Assembler:
             # is 0, and MR then names register B (register_value()); `X EQU
             # SP' and `X EQU PSW' are 6.
             op_upper = ops[0].strip().upper()
-            if op_upper in REG_VALUES:
+            if op_upper in REG_VALUES and not self.names_symbol(op_upper):
                 self.define_symbol(label, REG_VALUES[op_upper], ADDR_ABSOLUTE)
                 return True
             reads = {} if self.pass_num == 1 else None
@@ -3228,7 +3439,7 @@ class Assembler:
             link_expr = None
             name = label.upper()
             k = self.set_count.get(name, 0) + 1  # this SET's node: (name, k)
-            if op_upper in REG_VALUES:
+            if op_upper in REG_VALUES and not self.names_symbol(op_upper):
                 val, seg = REG_VALUES[op_upper], ADDR_ABSOLUTE
             else:
                 # `X SET X+1' reads the X of the line before, not the one
@@ -3410,14 +3621,14 @@ class Assembler:
         # TITLE/SUBTTL - listing titles.  Without a NAME, MACRO-80 names the
         # module after the last TITLE: the first six characters of its text
         # up to a blank, whatever they are (TITLE 'BASIC' is the module
-        # 'BASIC).
-        if operator in ('TITLE', 'SUBTTL'):
+        # 'BASIC).  M80's $TITLE('text') is a subtitle, and names nothing.
+        if operator in ('TITLE', 'SUBTTL', '$TITLE'):
             if operator == 'TITLE' and operands and operands.strip():
                 self.title_name = operands.split()[0].upper()[:6]
             return True
 
-        # PAGE/*EJECT - new page in listing (ignore for now)
-        if operator == 'PAGE' or operator == '*EJECT':
+        # PAGE/*EJECT/$EJECT - new page in listing (ignore for now)
+        if operator in ('PAGE', '*EJECT', '$EJECT'):
             return True
 
         # .LIST/.XLIST - listing control
@@ -3505,6 +3716,10 @@ class Assembler:
             if ops:
                 ev = self.number_operand(ops[0], 'END')
                 self.entry_point = (ev.value & 0xFFFF, ev.seg)
+            # The end of the source: MACRO-80, MAC and RMAC read no further,
+            # from a macro, a REPT or an INCLUDE file too.  um80 went on,
+            # and assembled what followed.
+            self.ended = True
             return True
 
         # Conditional assembly
@@ -3967,6 +4182,8 @@ class Assembler:
                 self._process_single_statement(read(statements[0]))
                 # Process subsequent statements (they can't have labels from original line)
                 for stmt in statements[1:]:
+                    if self.ended:
+                        break
                     # Add leading space to prevent treating first word as label
                     if stmt and not stmt[0].isspace():
                         stmt = '        ' + stmt.strip()
@@ -3978,20 +4195,22 @@ class Assembler:
         tail, self.repeat_line_tail = self.repeat_line_tail, None
         if tail is not None:
             for stmt in self.split_on_exclamation(tail):
-                if stmt.strip():
+                if stmt.strip() and not self.ended:
                     self._process_single_statement(read('        ' + stmt.strip()))
 
     def _body_statement(self, label, operator, line):
         """The label and operator of a line of a body being collected.
 
         A label may be made with `&' there - `L&X:' is L1 and L2 in `IRP
-        X,<1,2>' - and parse_line() finds no operator after one: `L&X:
-        ENDM' did not end the IRP, and every line after it went into the
-        body ("Unterminated IRP").  M80, MAC and RMAC end it there.
+        X,<1,2>' - and parse_line() does not read one: it takes the `L' of
+        `L&X: ENDM' for the operation (or, with --dri, for a label, with no
+        operation after it), so the ENDM did not end the IRP, and every line
+        after it went into the body ("Unterminated IRP").  M80, MAC and RMAC
+        end it there.
         """
-        if operator is None and '&' in line:
+        if '&' in line:
             m = re.match(r'\s*([$A-Za-z_@?&][A-Za-z0-9_@?$.&]*)::?(\s.*)?$', line)
-            if m:
+            if m and '&' in m.group(1):
                 return m.group(1), self.parse_line('\t' + (m.group(2) or ''))[1]
         return label, operator
 
@@ -4108,6 +4327,9 @@ class Assembler:
             self.define_value(label, self.here())
 
         if not operator:
+            if operands:
+                # A statement that starts with a value: `5,6', `'AB''.
+                self.statement_of_values(None, operands)
             self._save_listing_entry(line)
             return
 
@@ -4143,8 +4365,65 @@ class Assembler:
             self._save_listing_entry(line)
             return
 
-        self.error(f"Unknown instruction or directive: {operator}")
+        self.statement_of_values(operator, operands,
+                                 column_one=not line[:1].isspace())
         self._save_listing_entry(line)
+
+    def statement_of_values(self, word, rest, column_one=False):
+        """A statement whose first word, `word' (None if it starts with
+        something else), is no instruction, directive or macro.
+
+        MACRO-80 3.44 assembles it as a DB of the whole statement: after
+        `FOO EQU 5', `FOO' is the byte 05, `FOO+1,'AB'' is 06 41 42 and
+        `LAB: 5,6' is 05 06.  um80 left out a statement that started with a
+        value, without a word.  It warns, as M80 does not: M80 takes a
+        mistyped mnemonic or a label with no colon for a value too (`LAB
+        DS 1' is U, and one byte).  --dri reads the source as MAC and RMAC
+        do, which assemble no such statement (S) - a word there is a label
+        (parse_line()).
+        """
+        text = f"{word} {rest}".strip() if word else rest
+        shown = text if len(text) <= 40 else text[:37] + '...'
+        errors = len(self.errors)
+        # An instruction of the other processor (`OR A' before .Z80) is not
+        # a value, but for a symbol of that name: say so now, not in pass 2
+        # (the operator OR with nothing in front of it is only reported
+        # there).
+        other = word in (INSTRUCTIONS_8080 if self.z80_mode else INSTRUCTIONS_Z80) \
+            and not self.names_symbol(word)
+        if not self.dri and not text.startswith('*') and not other:
+            self.assemble_pseudo_op('DB', text, None)
+            if len(self.errors) == errors:
+                if self.pass_num == 2:
+                    self.warning(f"'{shown}' is no instruction, directive or "
+                                 f"macro: it is assembled as DB {shown}, as in M80")
+                return
+            cause = self.errors[errors].message
+            del self.errors[errors:]
+        else:
+            cause = ''
+        if word is None:
+            # `LAB: 5,FOO' with no FOO: say so.
+            hint = f" ({cause})" if cause.startswith('Undefined symbol') else ''
+            if not self.dri and text.startswith('*'):
+                hint = (" (a comment starts with ';': MAC's '*' comment lines"
+                        " are read with --dri)")
+            elif not self.dri and LINE_NUMBER.match(text):
+                hint = " (MAC's line numbers are read with --dri)"
+            self.error(f"'{shown}' is not an instruction, directive or macro, "
+                       f"nor values to assemble{hint}")
+            return
+        hint = ''
+        after = NAME_WORD.match(rest or '')
+        if not self.dri and (after and self.is_operation(after.group(1))
+                             or not rest and column_one):
+            hint = (" (a label needs a colon, as in M80: MAC's labels"
+                    " without one are read with --dri)")
+        elif word in (INSTRUCTIONS_8080 if self.z80_mode else INSTRUCTIONS_Z80):
+            hint = (" (an 8080 instruction: .8080 assembles 8080 mnemonics)"
+                    if self.z80_mode else
+                    " (a Z80 instruction: .Z80 assembles Z80 mnemonics)")
+        self.error(f"Unknown instruction or directive: {word}{hint}")
 
     def process_macro_argument(self, arg):
         """Process a macro argument, handling angle brackets and ! operator.
@@ -4415,6 +4694,8 @@ class Assembler:
         self.macro_level += 1
         cond_depth = len(self.cond_stack)
         for body_line in macro.body:
+            if self.ended:
+                break
             # Check for LOCAL directive
             label, op, opnds, comment = self.parse_line(body_line)
             if op and op.upper() == 'LOCAL':
@@ -4496,6 +4777,8 @@ class Assembler:
         """
         cond_depth = len(self.cond_stack)
         for line in body:
+            if self.ended:
+                return True
             expanded = line
             if iter_var and value is not None:
                 # As a macro's parameter (substitute_macro_params()): in a
@@ -4584,6 +4867,8 @@ class Assembler:
 
             # Process each line
             for line in lines:
+                if self.ended:
+                    break
                 self.process_line(line)
 
         except IOError as e:
@@ -4633,7 +4918,10 @@ class Assembler:
             self.current_common = None
             self.rel_common = None  # no COMMON block selected in the .REL yet
 
+        self.ended = False
         for line in lines:
+            if self.ended:
+                break
             self.process_line(line)
 
         # An IF/IFx/COND left open at end of pass is an error (M80 reports
@@ -5013,8 +5301,9 @@ def main():
                         help='Read the source as DRI\'s MAC and RMAC do where they '
                              'differ from M80: a $ inside a name is ignored '
                              '(NMB$LST is NMBLST), a macro body is read with '
-                             'MAC\'s names, and an IF a macro body leaves open '
-                             'ends with it')
+                             'MAC\'s names, an IF a macro body leaves open '
+                             'ends with it, a label needs no colon, PUSH A is '
+                             'PUSH PSW, and = < <= > >= <> are relations')
     parser.add_argument('-s', '--strict', action='store_true',
                         help='Strict mode: error on out-of-range JR/DJNZ instead of promoting to JP')
 

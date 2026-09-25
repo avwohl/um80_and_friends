@@ -5,10 +5,12 @@ All notable changes to the um80 toolchain are documented here.
 ## [Unreleased]
 
 Building MP/M II (https://github.com/avwohl/mpm2) from Digital Research's
-unmodified sources found the defects below. Each expected result was
-confirmed with the genuine MACRO-80 3.44, DRI's MAC 2.0 and RMAC 1.1, and
-LINK-80 3.44 under cpmemu, and each has a regression test that fails on
-0.3.50.
+unmodified sources found the defects below, and so did assembling DRI's
+`CONTROL` macro libraries (`SELECT`, `STACK`, `SEQIO`, `COMPARE`, `DISKDEF`,
+...) and dropping the workarounds uplm80 carries for um80. Each expected
+result was confirmed with the genuine MACRO-80 3.44, DRI's MAC 2.0 and RMAC
+1.1, and LINK-80 3.44 under cpmemu, and each has a regression test that fails
+on 0.3.50.
 
 ### Added
 - um80 assembler: `--dri` reads a source as DRI's MAC and RMAC read it where
@@ -19,23 +21,57 @@ LINK-80 3.44 under cpmemu, and each has a regression test that fails on
   list of an `IRP` or `IRPC`, which MAC and RMAC read as text: `PRINT HELLO$`
   passes `HELLO$`, so `DB '&MSG'` keeps its BDOS terminator, and `IRPC C,12$3`
   iterates four times. A macro body is matched to its formal parameters as
-  written, as in MAC. Without `--dri` a `$` is part of the name, as in M80,
-  where `LDA NMB$LST` after `NMBLST EQU 5` is an undefined symbol and `AB EQU
-  1` with `A$B EQU 2` defines two symbols. MP/M II's sources spell names both
-  ways (`MPM.ASM` stores to `nmb$lst`, which `DATAPG.ASM` defines as
-  `nmblst`). With `--dri -t`, DRI's unmodified `MPM.ASM`, `CLI.ASM`,
-  `MEMMGR.ASM`, `RESBDOS1.ASM` and `BNKBDOS.ASM` assemble to the objects the
-  copies mpm2 edits to one spelling give. The V2.0 nucleus - XDOS, BNKXDOS,
-  RESBDOS and TMP - built with `--dri -t` from DRI's `NUCLEUS` sources,
-  changed only to carry DRI's serial number, is DRI's byte for byte, and
-  BNKBDOS.SPR from the unmodified `BNKBDOS.ASM` is DRI's V2.1 file. `--dri
-  --aseg` assembles `MPMLDR/LDRBDOS.ASM` to the bytes at 0D00H-164CH of
-  MPMLDR.COM (V2.0 and V2.1). `--dri` does not imply `--aseg` or `-t`;
-  `docs/EXTENSIONS.md` says exactly what it changes.
+  written, with MAC's names and RMAC's rules for an `&` in a string, and an
+  `IF` a macro body leaves open ends with it (see Fixed). Without `--dri` a
+  `$` is part of the name, as in M80, where `LDA NMB$LST` after `NMBLST EQU 5`
+  is an undefined symbol and `AB EQU 1` with `A$B EQU 2` defines two symbols.
+  MP/M II's sources spell names both ways (`MPM.ASM` stores to `nmb$lst`,
+  which `DATAPG.ASM` defines as `nmblst`). With `--dri -t`, DRI's unmodified
+  `MPM.ASM`, `CLI.ASM`, `MEMMGR.ASM`, `RESBDOS1.ASM` and `BNKBDOS.ASM`
+  assemble to the objects the copies mpm2 edits to one spelling give. The V2.0
+  nucleus - XDOS, BNKXDOS, RESBDOS and TMP - built with `--dri -t` from DRI's
+  `NUCLEUS` sources, changed only to carry DRI's serial number, is DRI's byte
+  for byte, and BNKBDOS.SPR from the unmodified `BNKBDOS.ASM` is DRI's V2.1
+  file. `--dri --aseg` assembles `MPMLDR/LDRBDOS.ASM` to the bytes at
+  0D00H-164CH of MPMLDR.COM (V2.0 and V2.1). `--dri` does not imply `--aseg`
+  or `-t`; `docs/EXTENSIONS.md` says exactly what it changes.
+- um80 assembler: with `--dri`, the first word of a statement that is no
+  instruction, directive or macro is a label, colon or not, in any column, as
+  in MAC and RMAC: `OBP DS 1` (MP/M II's `UTIL3/GENHEX.ASM`), `<TAB>LAB NOP`,
+  and `HALT LXI H,1` in 8080 code. A line number in front of a statement
+  (`00010 LAB: NOP`), a line that starts with `*` (a `!` still ends it, as in
+  MAC) and MAC's assembly controls (`$-MACRO`) are ignored, as in MAC.
+- um80 assembler: with `--dri`, `PUSH A`, `POP A` and `PUSH 7` are `PUSH PSW`
+  and `POP PSW`, and an expression may have two register names in it
+  (`A*256+B`), as in MAC and RMAC (see Changed).
+- um80 assembler: with `--dri`, MAC's relational operators `=`, `<`, `<=`,
+  `>`, `>=` and `<>` are `EQ`, `LT`, `LE`, `GT`, `GE` and `NE`, as in MAC's
+  manual and RMAC (`IF @Y = 1`, in DRI's `CONTROL/DEBLOCK.ASM`), and a `<` or
+  `>` in a list of values is an operator, not a bracket (`DW 1<2,3` is two
+  words). And `HIGH` and `LOW` apply to all that follows them, as MAC's
+  manual has them and MAC and RMAC read them: `HIGH(100H)+1` is `HIGH(101H)`,
+  1, and `HIGH 1234H OR 0F00H` 1FH. M80 has no such operators (`O`), and
+  applies `HIGH` and `LOW` to the term after them (2 and 0F12H), and so does
+  um80 without `--dri`.
+- um80 assembler: M80's `$TITLE('text')` (a subtitle) and `$EJECT`. um80 took
+  `$TITLE` in column 1 for a label.
 - ul80 linker: `--fatal-mult-def` makes a global that more than one module
   defines an error: ul80 writes no output and exits 1 (see Changed).
 
 ### Changed
+- um80 assembler: a label needs a colon without `--dri`, as in MACRO-80 3.44,
+  which has no label without one. um80 took a word in column 1 for a label
+  (see Fixed); `OBP DS 1` is now an error, an undefined `OBP` (M80: `U`), with
+  a hint to add the colon or read the source with `--dri`. So is a line that
+  starts with `*` (M80: `U`, but for its `*EJECT` in column 1) or with a line
+  number (M80: `O`); um80 left both out, without a word. DRI sources that
+  have them - `CPM22.ASM`, `GENHEX.ASM`, MP/M II's `BNKBDOS.ASM` - need
+  `--dri`.
+- um80 assembler: `PUSH A` and `POP A` are an error without `--dri`, as M80
+  flags them (`A`); with `--dri` they are `PUSH PSW` and `POP PSW`, as in MAC
+  and RMAC, which also take `PUSH 7`. um80 took `PUSH A` for `PUSH PSW` in
+  either mode (and rejected `PUSH 7`). MP/M II's `BNKBDOS.ASM`,
+  `RESBDOS1.ASM` and `BDOS30.ASM` need `--dri`.
 - ul80 linker: a global that a second module defines is now LINK-80's
   warning, with its message, `%Mult. Def. Global FOO`, and ul80 says which
   modules define it and whose definition every reference uses: the first one
@@ -49,6 +85,62 @@ LINK-80 3.44 under cpmemu, and each has a regression test that fails on
   that must not link such a program passes `--fatal-mult-def`.
 
 ### Fixed
+- um80 assembler: an instruction, a directive or a macro in column 1 is that,
+  as in MACRO-80, MAC and RMAC. um80 took any word in column 1 without a colon
+  for a label, so `NOP`, `RET`, `XCHG`, `END` or `DB 7` there assembled
+  nothing, without a word, and `MVI A,5` there was "Unknown instruction or
+  directive: A". An `ENDM` in column 1 did not end a `REPT` or a macro, so
+  every line after it became its body, and a `LOCAL` in column 1 was a label
+  in the expansion. The name in front of an `EQU`, `SET`, `DEFL`, `ASET` or
+  `MACRO` is still a name, in any column (`NOP EQU 5` defines `NOP`, as in
+  M80).
+- um80 assembler: a name is read whole where it ends in the letters of a
+  word operator (MOD, SHL, SHR, AND, OR, XOR, NOT, EQ, NE, LT, LE, GT, GE,
+  HIGH, LOW, NUL, TYPE) and a `+` or `-` follows: `X1EQ+2`, `@P$NUL-1` and
+  `X1LOW+1` are the symbol plus or minus the number, as in M80 and MAC. um80
+  took the letters for the operator and the sign for its operand's, so each
+  was "Cannot parse expression", and uplm80 renamed such names or wrote the
+  offset first (`2+X1EQ`).
+- um80 assembler: a symbol named like an operator is that symbol wherever
+  the name occurs, as in M80, even when it is defined further down or
+  EXTRN: after `EQ: NOP`, `DW EQ` is the label (um80: 0FFFFH, `0 EQ 0`, so
+  `CALL EQ` called 0FFFFH, without a word); after `TYPE EQU 5`, `DB TYPE+2`
+  is 07 (um80: TYPE of +2, 00); `NUL EQU 5` then `DB NUL` is 05. It is not
+  the operator there, as in M80: `DB 1 EQ 1` is then an error (M80: `O`).
+  MAC and RMAC do not let a program define such a name. An operator with
+  nothing on one side - `DW EQ` or `DW SHL` with no such symbol, `DW 1 EQ` -
+  is an error, as in M80 (`O`); um80 took the missing value for 0.
+- um80 assembler: in 8080 code a register name is its number in any
+  expression, as in M80 and MAC: `X EQU D+1` is 3 (`MOV A,X` is 7BH), `DB B`
+  00, `MVI A,B` 3E 00, `LXI H,SP` 21 06 00, `JMP B` C3 00 00, `IF B EQ 0`
+  true, `DB BC,DE,HL` (M80) 00 02 04. um80 stopped at each with "Register
+  'B' used as value" - the number was a register operand's only. An
+  expression with two register names in it (`A*256+B`) is an error without
+  `--dri`, as M80 flags it (`O`); MAC takes it. A symbol named like a
+  register is that symbol, as in M80, in a register operand too: after `C
+  EQU 2`, `MOV A,C` is `MOV A,D` and `DB C` 02 (um80: `MOV A,C`, and an
+  error). In Z80 code, where M80 makes every register name 0, a register
+  name in an expression is still an error.
+- um80 assembler: in Z80 code, `JP P` after a label `P` jumps to it, as in
+  M80, and so do `JP Z`, `JP NZ`, `JP PE` and the rest after labels of those
+  names, defined before or after the jump. um80 stopped with "JP with
+  condition requires address", so uplm80 wrote `JP 0+P` for a jump to its
+  procedure `P`. (M80 3.44 gets one defined further down wrong: its pass 1
+  takes `JP P` for one byte, and it reports a phase error.)
+- um80 assembler: `TYPE` of an expression that is not a name is its mode
+  with the defined bit, as in M80: `TYPE 5`, `TYPE 'A'` and `TYPE +2` are
+  20H, `TYPE (LAB)` with LAB in CSEG 21H. um80 gave 0 for all of them.
+- um80 assembler: `END` ends the source, as in MACRO-80, MAC and RMAC,
+  which read nothing after it - not the rest of the file, nor the rest of a
+  macro, a `REPT` or an `INCLUDE` file that has one. um80 went on and
+  assembled what followed (`DB 1 / END / DB 2` was 01 02), and a label
+  after the `END` was defined, where all three report it undefined. An `END`
+  in a false `IF` is still skipped.
+- um80 assembler: a statement whose first word is no instruction, directive
+  or macro is a list of values assembled as `DB`, as in M80: after `FOO EQU
+  5`, `FOO` is the byte 05, `FOO+1,'AB'` is 06 41 42 and `LAB: 5,6` is 05 06.
+  um80 left out a statement that started with a value (`LAB: 5,6`, `'AB'`),
+  without a word. um80 warns, as M80 does not.
 - um80 assembler: a source byte with bit 7 set is now read with bit 7
   clear, as MACRO-80, MAC and RMAC all read it. um80 read it as a character
   that no name or operator starts with, so a line that began with one was
