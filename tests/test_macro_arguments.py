@@ -170,6 +170,86 @@ def test_a_bracket_with_no_close_goes_with_a_warning(dri):
     assert any("no '>'" in w for w in warnings), warnings
 
 
+# A `>' with no `<' open before it in a macro call's arguments.  MAC 2.0
+# and RMAC 1.1 read it as text, and a later comma still ends the argument:
+# `MM 1>2,3' passes `1>2' and 3.  MACRO-80 3.44 ends the argument at it, as
+# at a comma, and flags the line Q: there `MM 1>2,3' passes 1, 2 and 3.
+# um80 took it for a closing bracket, so the depth went below 0 and no
+# later comma split: `MM 1>2,3' was one argument, `1>2,3' - with --dri EE
+# 00 03 EE, without a word, and without it "Cannot parse expression".
+TWO = "MM\tMACRO\tP,Q\n\tDB\t0EEH\n\tDB\tP\n\tDB\t0EEH\n\tDB\tQ\n\tENDM\n"
+THREE = ("MM\tMACRO\tP,Q,R\n\tDB\t0EEH\n\tDB\tP\n\tDB\t0EEH\n\tDB\tQ\n"
+         "\tDB\t0EEH\n\tDB\tR\n\tENDM\n")
+TWO_TEXT = ("MM\tMACRO\tP,Q\n\tDB\t0EEH\n\tDB\t'Z&P'\n\tDB\t0EEH\n\tDB\t'Y&Q'\n"
+            "\tENDM\n")
+THREE_TEXT = ("MM\tMACRO\tP,Q,R\n\tDB\t0EEH\n\tDB\t'Z&P'\n\tDB\t0EEH\n"
+              "\tDB\t'Y&Q'\n\tDB\t0EEH\n\tDB\t'X&R'\n\tENDM\n")
+MACROS = {'2': TWO, '3': THREE, "2'": TWO_TEXT, "3'": THREE_TEXT}
+
+
+@pytest.mark.parametrize('macro, call, mac', [
+    ('2', '1>2,3', 'ee00ee03'),
+    ('2', '5>(2),4', 'eeffee04'),
+    ('2', '1>=2,3', 'ee00ee03'),
+    ('2', '3>2=0FFH,4', 'ee00ee04'),
+    ('3', '2>1,1,3', 'eeffee01ee03'),
+    ('2', '<1>2>1,4', 'eeffee04'),
+    ('2', '%5>2,4', 'eeffee04'),
+    ("2'", 'A>B,C', 'ee5a413e42ee5943'),                  # ZA>B, YC
+    ("3'", 'A>,B', 'ee5a413eee5942ee58'),
+    ("3'", '>A,B', 'ee5a3e41ee5942ee58'),
+    ("3'", 'A,>,B', 'ee5a41ee593eee5842'),
+    ("3'", '<A>B>C,D', 'ee5a41423e43ee5944ee58'),
+    ("3'", '<A,B>>C,D', 'ee5a412c423e43ee5944ee58'),
+    ("3'", '(A>B),C', 'ee5a28413e4229ee5943ee58'),
+    ("3'", 'A(>)B,C', 'ee5a41283e2942ee5943ee58'),
+])
+def test_mac_reads_a_close_bracket_with_no_open_as_text(macro, call, mac):
+    ok, code, errors, warnings = _assemble(MACROS[macro] + "\tMM\t" + call + "\n", dri=True)
+    assert ok, errors
+    assert code == mac and warnings == []
+
+
+@pytest.mark.parametrize('macro, call, m80', [
+    ('2', '1>2,3', 'ee01ee02'),
+    ('2', '5>(2),4', 'ee05ee02'),
+    ('3', '2>1,1,3', 'ee02ee01ee01'),
+    ('2', '<1>2>1,4', 'ee0cee01'),
+    ('3', '1,2>3', 'ee01ee02ee03'),
+    # An empty argument in a string is a 00 byte in M80.
+    ("2'", 'A>B,C', 'ee5a41ee5942'),                      # ZA, YB
+    ("2'", '<A>>B', 'ee5a41ee5942'),
+    ("2'", '>', 'ee5a00ee5900'),
+    ("3'", 'A>,B', 'ee5a41ee5900ee5842'),
+    ("3'", 'A>>B', 'ee5a41ee5900ee5842'),
+    ("3'", 'A>B;C', 'ee5a41ee5942ee5800'),
+    ("3'", '>A,B', 'ee5a00ee5941ee5842'),
+    ("3'", 'A,>,B', 'ee5a41ee5900ee5800'),
+    ("3'", '<A>B>C,D', 'ee5a4142ee5943ee5844'),
+    ("3'", 'A,B,C>D', 'ee5a41ee5942ee5843'),
+    # Inside parentheses too.
+    ("3'", '(A>B),C', 'ee5a2841ee594229ee5843'),
+    ("3'", 'A(>)B,C', 'ee5a4128ee592942ee5843'),
+])
+def test_m80_ends_an_argument_at_a_close_bracket_with_no_open(macro, call, m80):
+    ok, code, errors, warnings = _assemble(MACROS[macro] + "\tMM\t" + call + "\n")
+    assert ok, errors
+    assert code == m80
+    assert any("has no '<'" in w for w in warnings), warnings
+
+
+@pytest.mark.parametrize('call, m80', [
+    ('"A>B",C', 'ee5a22413e4222ee5943ee5800'),   # in a string
+    ('A!>B,C', 'ee5a413e42ee5943ee5800'),        # after a `!'
+    ('A<(>)B,C', 'ee5a41282942ee5943ee5800'),     # it closes the `<'
+])
+def test_m80_a_close_bracket_that_is_text_ends_nothing(call, m80):
+    # M80 flags none of these.
+    ok, code, errors, warnings = _assemble(THREE_TEXT + "\tMM\t" + call + "\n")
+    assert ok, errors
+    assert code == m80 and warnings == []
+
+
 # The items of an IRP list.  MACRO-80 3.44 ends an item at a `,', a `;', a
 # blank or a tab, and skips the blanks in front of one.  4558825 made a `;'
 # inside the list's <...> text, so `IRP P,<A;B;C>' went round once, with

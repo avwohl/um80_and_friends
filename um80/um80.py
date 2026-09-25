@@ -1918,6 +1918,15 @@ class Assembler:
         following character so an escaped comma/bracket is not treated as a
         delimiter (M80 macro syntax). The '!' is retained in the returned
         argument for process_macro_argument() to consume (issue #3).
+
+        In a macro call's arguments (escape_bang) a '>' with no '<' open
+        before it closes nothing.  MAC and RMAC (--dri) read it as text:
+        `MM 1>2,3' passes `1>2' and 3.  MACRO-80 ends the argument there,
+        as at a comma, and flags the line Q: `MM A>B,C' passes A, B and C,
+        `MM A>,B' A, an empty argument and B, and um80 warns.  um80 took it
+        for a closing bracket, so the depth went below 0 and no later comma
+        split: `MM 1>2,3' passed the one argument `1>2,3' - with --dri
+        `DB P' was 00 03, without a word, and without it an error.
         """
         if not operands:
             return []
@@ -1928,6 +1937,7 @@ class Assembler:
         angle_depth = 0
         in_string = False
         string_char = None
+        stray_gt = False
 
         i = 0
         n = len(operands)
@@ -1960,9 +1970,16 @@ class Assembler:
             elif ch == '<' and angles:
                 angle_depth += 1
                 current += ch
-            elif ch == '>' and angles:
+            elif ch == '>' and angles and (angle_depth or not escape_bang):
                 angle_depth -= 1
                 current += ch
+            elif ch == '>' and angles and not self.dri:
+                # A '>' with no '<' in a macro call: M80 ends the argument
+                # here, inside parentheses too (`MM (A>B),C' is `(A', `B)'
+                # and C).
+                stray_gt = True
+                result.append(current.strip())
+                current = ''
             elif ch == ',' and paren_depth == 0 and angle_depth == 0:
                 result.append(current.strip())
                 current = ''
@@ -1973,6 +1990,11 @@ class Assembler:
         if current.strip():
             result.append(current.strip())
 
+        if stray_gt and self.pass_num == 2:
+            self.warning(f"'>' in the arguments '{operands}' has no '<': it"
+                         " ends the argument, as a ',' does (M80 flags it Q;"
+                         " MAC and RMAC, and um80 with --dri, read it as"
+                         " text)")
         return result
 
     def split_on_exclamation(self, line):

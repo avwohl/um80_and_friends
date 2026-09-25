@@ -178,7 +178,11 @@ drops its `&`, and reads the rest of the line as if outside a string, until
 a quote starts another (`'&X &X'` is `K &K` there, `K K` in RMAC; `'&X''&Y'`
 is `K'L` in both). RMAC folds case in a string, as um80 does; MAC 2.0 does
 not. An empty argument in a string is nothing in MAC (`'Z&P'` is `Z`), where
-M80 passes it as a 00 byte (5A 00).
+M80 passes it as a 00 byte (5A 00). A `>` with no `<` before it in a macro
+call's arguments is text, as in MAC, and a later comma still ends the
+argument: `MM 1>2,3` passes `1>2` and 3. M80 ends the argument at such a `>`,
+as at a comma, and flags it `Q` (there `MM 1>2,3` passes 1, 2 and 3); without
+`--dri` um80 does the same, and warns.
 Only an argument that starts with `%` is a value, as in MAC; M80 also reads
 `A%E` as `A` and E's value, and evaluates a `%` in an `IRP` list, which MAC
 reads as text. An item of an `IRP` list ends at a comma only, as in MAC

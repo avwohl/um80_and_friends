@@ -434,7 +434,7 @@ For more details on these extensions and compatibility notes, see [docs/EXTENSIO
 
 ## Testing
 
-The test suite (790 tests) runs under `pytest`:
+The test suite (825 tests) runs under `pytest`:
 
 ```bash
 pip install -e ".[dev]"
@@ -454,7 +454,7 @@ Digital Research's MAC 2.0 and RMAC 1.1:
 | `test_macro_bang_args.py` | DRI `!` separator vs. M80 argument-quote `!`, escaped commas |
 | `test_macro_concat.py` | `&` concatenation: leading/trailing/shared, in-string `&param`, case folding |
 | `test_macro_expansion.py` | EXITM in conditionals, macro shadowing built-ins, string-safe substitution, `NUL` |
-| `test_macro_arguments.py` | (DRI) A `;` inside `<...>` in a macro call's arguments or an `IRP` list is text (DRI's `DISKDEF.LIB`); a `<...>` group anywhere in an argument or `IRP` item loses its brackets (`MM 1<2>3` is 123); an `IRP` item ends at a `;` or a blank, as in M80, or a comma only, and a `;` is an error, as in MAC (`--dri`); an `IRPC` with an empty string, as M80 and as MAC go round it |
+| `test_macro_arguments.py` | (DRI) A `;` inside `<...>` in a macro call's arguments or an `IRP` list is text (DRI's `DISKDEF.LIB`); a `<...>` group anywhere in an argument or `IRP` item loses its brackets (`MM 1<2>3` is 123); an `IRP` item ends at a `;` or a blank, as in M80, or a comma only, and a `;` is an error, as in MAC (`--dri`); an `IRPC` with an empty string, as M80 and as MAC go round it; a `>` with no `<` in a macro call's arguments is text, as in MAC (`--dri`), or ends the argument, as in M80 |
 | `test_macro_conditionals.py` | (DRI) `EXITM` ends the `IF`s it is in without a message; with `--dri` an `IF` a macro body leaves open ends with it, as in MAC, and without it goes on, as in M80 |
 | `test_macro_endm_label.py` | (DRI) A label on the `ENDM` of a body: defined where the body ends with `--dri`, as in MAC (DRI's `STACK.LIB`); ignored without, as in M80; `L&X: ENDM` ends an `IRP` |
 | `test_macro_names.py` | (DRI) A macro body is matched to its parameters name by name: `?Y` and `@N` are parameters (DRI's `COMPARE.LIB`, `STACK.LIB`), `?X` and `X?` are not `X`, `1X` is 1 then `X`; M80's and MAC's name characters; which `&` goes in a string, in M80 and in RMAC; an `IRP`/`IRPC` body the same way; a `LOCAL` name as a parameter; an empty argument in a string is a 00 byte in M80, nothing in MAC |

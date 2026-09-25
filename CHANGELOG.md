@@ -328,6 +328,18 @@ on 0.3.50.
   as in MACRO-80, which passes an empty argument as a 00: `'Z&P'` is 5A 00,
   and `IRP P,<A;;B>` with `DB '&P'` is 41 00 42 (um80: 5A, and 41 42). MAC
   and RMAC pass nothing (5A), and so does um80 with `--dri`.
+- um80 assembler: a `>` with no `<` open before it in a macro call's
+  arguments no longer stops every later comma from ending an argument. um80
+  took it for a closing bracket, so the bracket depth went below zero: `MM
+  1>2,3` passed one argument, `1>2,3`. With `--dri` that was wrong bytes
+  without a word - `DB P` and `DB Q` gave 00 03 and nothing, where MAC and
+  RMAC read the `>` as text and pass `1>2` and 3 (00, 03); `MM A>B,C` with
+  `DB 'Z&P'` and `DB 'Y&Q'` gave `ZA>B,C` and `Y` for MAC's `ZA>B` and `YC`.
+  Now `--dri` reads it as MAC does. MACRO-80 ends the argument at such a
+  `>`, as at a comma, and flags the line `Q`: `MM 1>2,3` passes 1, 2 and 3,
+  `MM A>,B` A, an empty argument and B, and `MM <A>>B` A and B. Without
+  `--dri` um80 now does the same, and warns; it had passed `1>2,3`, an
+  error, or `A>B` (`MM <A>>B`) without a word.
 
 ## [0.3.50] - 2026-09-25
 
