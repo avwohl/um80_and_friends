@@ -133,3 +133,25 @@ def test_dri_drops_every_ampersand_next_to_a_parameter_in_a_string():
                                         '414b20424b' '4b204b4c' '4b4c' '4b4b'
                                         '4b204b' '4b' '4b42' '415826' '264b'
                                         '4b4b')
+
+
+@BOTH
+def test_an_irp_or_irpc_body_is_matched_the_same_way(dri):
+    # The parameter of an IRP or IRPC is read as a macro's is.  M80, MAC and
+    # RMAC: 'X' stays X (58; um80 gave K), '&X' is K, '&X?' and 'A&XB' are
+    # text (26 58 3F, 41 26 58 42; um80 gave K? and AKB); ?X is ?X (11; um80
+    # ?K), X&B is KB (22; um80 K&B, a parse error); IRPC ?C,12 with
+    # '&?C',?C is 31 01 32 02.
+    src = ("?X\tEQU\t11H\n?K\tEQU\t21H\nXB\tEQU\t12H\nKB\tEQU\t22H\n"
+           "\tIRP\tX,<K>\n\tDB\t'X','&X','&X?','A&XB'\n\tDB\t?X,X&B\n\tENDM\n"
+           "\tIRPC\t?C,12\n\tDB\t'&?C',?C\n\tENDM\n")
+    assert _code(src, dri=dri) == '584b' '26583f' '41265842' '1122' '31013202'
+
+
+def test_an_irp_body_string_follows_m80_or_rmac():
+    # `'&X &X'' and `'X&'' in an IRP or IRPC body: M80 4B 20 26 4B, 58 26;
+    # MAC and RMAC 4B 20 4B, 4B.
+    src = ("\tIRP\tX,<K>\n\tDB\t'&X &X'\n\tENDM\n"
+           "\tIRPC\tX,K\n\tDB\t'X&'\n\tENDM\n")
+    assert _code(src) == '4b20264b' '5826'
+    assert _code(src, dri=True) == '4b204b' '4b'

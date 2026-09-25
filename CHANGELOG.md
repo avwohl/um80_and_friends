@@ -141,6 +141,12 @@ LINK-80 3.44 under cpmemu, and each has a regression test that fails on
   as written, so `'&abc'` is not its parameter `ABC`; RMAC 1.1, M80 and um80
   fold case.
 
+- um80 assembler: the parameter of an `IRP` or `IRPC` is now replaced in its
+  body as a macro's parameter is, as in MACRO-80, MAC and RMAC. um80 replaced
+  it inside quoted strings without an `&` (`IRP X,<K>` with `DB 'X'` gave
+  `K`; M80 and MAC `X`), inside longer names (`'A&XB'` gave `AKB`, `?X`
+  `?K`), and left the `&` of `X&B`, a parse error.
+
 ## [0.3.50] - 2026-09-25
 
 mbasic2025 (https://github.com/avwohl/mbasic2025) rebuilds historic Microsoft

@@ -4431,10 +4431,9 @@ class Assembler:
         for line in body:
             expanded = line
             if iter_var and value is not None:
-                expanded = expanded.replace(f'&{iter_var}', value)
-                expanded = expanded.replace(f'&{iter_var.lower()}', value)
-                expanded = re.sub(r'\b' + re.escape(iter_var) + r'\b',
-                                  value, expanded, flags=re.IGNORECASE)
+                # As a macro's parameter (substitute_macro_params()): in a
+                # string only next to an `&', and `?X' is another name.
+                expanded = self.substitute_macro_params(line, {iter_var: value})
             if not self.repeat_stack and self.cond_false_depth == 0:
                 _, op, _, _ = self.parse_line(expanded)
                 if op and op.upper() == 'EXITM':
