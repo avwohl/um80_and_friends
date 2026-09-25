@@ -410,6 +410,7 @@ For more details on these extensions and compatibility notes, see [docs/EXTENSIO
 ## Documentation
 
 - Man pages: `man um80`, `man ul80`, `man ulib80`, `man ucref80`, `man ud80`, `man ux80`
+- [docs/mbasic2025.md](docs/mbasic2025.md): mbasic2025 built with um80/ul80 and with the genuine M80/L80
 - Original Microsoft manuals in `docs/external/`:
   - `m80.pdf` - MACRO-80 assembler
   - `l80.pdf` - LINK-80 linker
@@ -418,7 +419,7 @@ For more details on these extensions and compatibility notes, see [docs/EXTENSIO
 
 ## Testing
 
-The test suite (143 tests) runs under `pytest`:
+The test suite (487 tests) runs under `pytest`:
 
 ```bash
 pip install -e ".[dev]"
@@ -445,6 +446,10 @@ to documented M80 behavior:
 | `test_linker_absolute_code.py` | A module's code placed above the absolute code loaded before it; absolute code overlapping anything is an error, or with `--allow-overlap` a warning and the byte loaded last in the image |
 | `test_linker_dupglobal.py` | Multiply-defined PUBLIC global is a link error |
 | `test_linker_loaded_over.py` | A byte loaded over a relocatable word or an item-12 chain word (an ORG back, a COMMON block declared again or shared) replaces that byte, as L80 relocates on loading |
+| `test_irp_list_brackets.py` | An `IRP`/`IRPC` `<...>` list ends at its matching `>` (`IRPC C,<>>` is empty); `!` in an `IRP`/`IRPC` line |
+| `test_module_name.py` | The module name from `NAME('X')` and, without it, from the last `TITLE` |
+| `test_extrn_declared.py` | An `EXTRN` never used is written as an empty chain, and it pulls a library module; ul80 warns if nothing defines it |
+| `test_truncate_m80.py` | `-t` cuts names to M80's 6 characters, so a um80 object links with an M80 object's `FBUFP2` |
 
 Further tests cover the toolchain more broadly: `test_ds_org.py` (DS/ORG and
 segment placement), `test_defs_fill.py` (DEFS fill value), `test_end_symbol.py`
@@ -452,6 +457,40 @@ segment placement), `test_defs_fill.py` (DEFS fill value), `test_end_symbol.py`
 `test_jr_promotion.py` (JR/DJNZ out-of-range promotion),
 `test_no_operand_strict.py` (an operand on a no-operand instruction is an
 error, the one deliberate divergence from M80), and `test_case_sensitivity.py`.
+
+### mbasic2025: historic binaries, byte for byte
+
+`test_mbasic2025.py` builds the sources of
+[mbasic2025](https://github.com/avwohl/mbasic2025) with each variant's own
+build commands and this checkout's um80 and ul80. It compares the results,
+byte for byte, with the historic Microsoft binaries: MBASIC 5.21 (14 modules,
+and one Z80 file) and Altair 4K and 8K BASIC 4.0. It needs a mbasic2025
+checkout, at `$MBASIC2025_DIR` or next to this repository. Without one, the
+test is skipped:
+
+```bash
+git clone https://github.com/avwohl/mbasic2025 ../mbasic2025
+pytest tests/test_mbasic2025.py -v -rw
+```
+
+CI (`.github/workflows/tests.yml`) checks out mbasic2025 and runs the whole
+suite on every push and pull request.
+
+`tools/fourway_mbasic.py` builds the same sources with every mix of the genuine
+MACRO-80/LINK-80 and um80/ul80. Each assembler builds all modules. Then one
+module comes from the other assembler, for each module. Each of these is
+linked with both linkers. The tool compares each image with the M80 + L80
+build and with the historic binary. Microsoft's binaries are not in this
+repository. Give their paths, and a [cpmemu](https://github.com/avwohl/cpmemu)
+to run them:
+
+```bash
+python3 tools/fourway_mbasic.py --m80 path/M80.COM --l80 path/L80.COM \
+    --cpmemu path/cpmemu [--variant mbasic_521] [--um80-flag=-t]
+```
+
+[docs/mbasic2025.md](docs/mbasic2025.md) has the results and the changes that
+mbasic2025's sources need.
 
 ## Example Workflow
 

@@ -2,6 +2,93 @@
 
 All notable changes to the um80 toolchain are documented here.
 
+## [Unreleased]
+
+mbasic2025 (https://github.com/avwohl/mbasic2025) rebuilds historic Microsoft
+BASIC binaries - MBASIC 5.21, as 14 modules and as one Z80 file, and Altair
+4K and 8K BASIC 4.0 - from MACRO-80 sources, and is now part of the test
+suite. The same sources were also built with the genuine MACRO-80 and
+LINK-80 3.44 under a CP/M emulator, and with every mix of them and
+um80/ul80: each assembler for all modules, one module from the other
+assembler, and both linkers for each. That found the defects below. Each
+has a regression test that fails on 0.3.49. `docs/mbasic2025.md` has the
+results.
+
+### Added
+- tests: `tests/test_mbasic2025.py` builds every variant of mbasic2025 that has
+  a historic binary with each variant's own build commands and this checkout's
+  um80 and ul80, and compares the result with the binary byte for byte. The
+  historic binaries are pinned by SHA-256. The MBASIC 5.2 sources, which have
+  no historic binary, are pinned to the image M80 and L80 build from them. It
+  runs when the sources are at `$MBASIC2025_DIR` or in a `mbasic2025` checkout
+  next to this repository; otherwise it is skipped. Three of the sources have
+  a defect that the historic binary does not have (see Fixed, and
+  `docs/mbasic2025.md`). The test changes its copy of those lines and reports
+  each change as a warning.
+- CI: `.github/workflows/tests.yml` runs the test suite on every push and
+  pull request, with avwohl/mbasic2025 checked out. Before this, CI ran only
+  pylint.
+- tools: `tools/fourway_mbasic.py` builds mbasic2025 with every mix of the
+  genuine M80.COM/L80.COM (supplied by path; they are not in this
+  repository) and this checkout's um80/ul80. It compares each module's two
+  .REL files and each image with the all-Microsoft build and the historic
+  binary. The exit status is 1 when a tool mix differs from M80 + L80.
+
+### Changed
+- um80 assembler: `-t` cuts every PUBLIC, EXTRN and module name to 6
+  characters, as MACRO-80 does. Before, it cut names to 8 characters, which
+  neither M80 (6) nor LINK-80 (reads 7) does. MBASIC 5.21's `BINTRP.MAC`
+  declares `PUBLIC FBUFP27`, which M80 writes as `FBUFP2`. A `F4.REL` from um80
+  asked for `FBUFP27`, so a link of `BINTRP.REL` from one assembler and `F4.REL`
+  from the other failed: L80 reported an undefined global and left 4 bytes
+  unset, and ul80 stopped. With `-t`, all 60 links of mbasic_521 (30 .REL
+  sets, two linkers) build the historic binary.
+
+### Fixed
+- um80 assembler: the `<...>` list of an `IRPC` or `IRP` now ends at the `>`
+  that matches its `<`, and um80 ignores the rest of the line, as MACRO-80
+  3.44 does. Before, um80 dropped the first and last characters of the
+  operand. The difference shows when a macro wraps its argument in brackets
+  (`IRPC CH,<STR>`) and the argument is `!>`: M80 reads `IRPC CH,<>>`, an
+  empty list. mbasic2025's 4K and 8K BASIC sources build their keyword tables
+  with such a macro (`rdc <!>>`). um80 built the historic 8K BASIC from them,
+  but the genuine M80 left out the `>` keyword byte, so every address after
+  it moved (6645 bytes of 8192). um80 now assembles what M80 assembles, and
+  warns about the `>` it ignores. The sources need `db '>'+80h`, as the 8K
+  source already has for `<`. A list with no closing `>` runs to the end of
+  the line, with a warning (M80 flags it `Q`). `IRPC C,<A>B` is `A`;
+  `IRP X,<1,2>,3` is 1 and 2.
+- um80 assembler: a `!` in an `IRP` or `IRPC` line was taken as DRI's
+  statement separator, so `IRPC C,<!>` became `IRPC C,<` and a stray `>`
+  line. In an `IRPC` list a `!` is an ordinary character. In an `IRP` list it
+  quotes the next character, as in a macro argument (`IRP X,<1!,2,3>` is `1,2`
+  and `3`). An unbracketed `IRPC` string ends at a blank (`IRPC C,A B` is `A`).
+- um80 assembler: `NAME('XYZ')` wrote the module name `'XYZ'`, with the quotes.
+  It is now `XYZ`, cut to 6 characters as M80 does.
+- um80 assembler: `TITLE` now names a module that has no `NAME`, as MACRO-80
+  does. The name is the first 6 characters of the text of the last `TITLE`, up
+  to a blank. mbasic2025's `BINTRP.MAC` is the module `BASIC` from both
+  assemblers. Before, um80 used the file name `BINTRP`.
+- um80 assembler: an `EXTRN` that no instruction uses, and an external that is
+  used only in a link-time expression, now go into the .REL as an empty chain,
+  as MACRO-80 writes them. The chain tells the linker that the module needs
+  the symbol. LINK-80 and ul80 then search a library for it, so that `EXTRN X`
+  alone links the module that defines X, and LINK-80 lists the symbol as an
+  undefined global if no module defines it. um80 wrote nothing, so the
+  library module was not linked.
+- ul80 linker: an external that a module only declares, and that no module
+  defines, is now a warning and the program is written, as LINK-80 does. There
+  is nothing in the program to fill in. Before, ul80 stopped with
+  "Undefined symbol", also on objects from the genuine M80. An external that
+  something refers to is still an error.
+
+### Removed
+- `tests/mbasic.com`, the MBASIC 5.21 binary, which no test used. It came
+  from the mbasic2025 project this repository split from. That project has
+  the same file (`mbasic_521/com/mbasic.com`), and `tests/test_mbasic2025.py`
+  pins it by SHA-256. It is not part of the package, and this repository does
+  not otherwise ship Microsoft's binaries.
+
 ## [0.3.49] - 2026-09-24
 
 `LOW`/`HIGH` of a relocatable or external value, and any such value in a
