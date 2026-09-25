@@ -125,6 +125,67 @@ The `$` character can be used as a visual separator within numeric literals for 
 
 The `$` characters are stripped during parsing and do not affect the numeric value. This is particularly useful for binary constants where grouping bits improves readability.
 
+### DRI sources (`--dri`)
+
+`um80 --dri` reads a source the way DRI's MAC and RMAC read it where they
+differ from MACRO-80. It changes one thing:
+
+**A `$` inside a name is ignored.** DRI's manuals: "All characters are
+significant in an identifier, except for the embedded dollar sign ($) which
+can be used to improve readability of the name." `NMB$LST`, `NMBLST` and
+`N$M$B$LST` are one symbol, and so are `AB$` and `AB`. This holds wherever a
+name is read - labels, `EQU`/`SET` names, operands, macro names and their
+parameters, `IF` operands - and for `PUBLIC` and `EXTRN` names: `PUBLIC
+A$BC` writes `ABC`, as RMAC does. Kept as they are:
+
+- a `$` that starts a word: `$` alone is the location counter (`JMP $+3`),
+  and a name may start with `$`;
+- everything inside a quoted string (`DB 'Hello$'`, `NAME('M$OD')`) and after
+  a `;`.
+
+um80 drops each such `$` from a line as it reads it, so the listing shows the
+line without them. A `$` in a number (`0001$1111B`) is ignored with or without
+`--dri`.
+
+Without `--dri`, a `$` is part of the name, as in MACRO-80 3.44: there
+`NMBLST EQU 5` then `LDA NMB$LST` is an undefined symbol, and `AB EQU 1` with
+`A$B EQU 2` defines two symbols, where MAC reports `AB` defined twice.
+
+MP/M II's sources need `--dri`: `NUCLEUS/MPM.ASM` stores to `nmb$lst`, which
+`DATAPG.ASM` defines as `nmblst`; `RESBDOS1.ASM` calls both `SET$DMABUFA` and
+`SET$DMA$BUFA`; `CLI.ASM` defines `cli$slct$user` and uses `cli$slctuser`;
+`BNKBDOS.ASM` defines `getmemseg` and calls `GET$MEM$SEG`. With `um80 --dri -t`
+the unmodified `MPM.ASM`, `CLI.ASM`, `MEMMGR.ASM`, `RESBDOS1.ASM` (with
+`CONBDOS.ASM`) and `BNKBDOS/BNKBDOS.ASM` assemble to the objects that copies
+with the names spelled one way give. Built with `--dri -t` from DRI's
+`NUCLEUS` sources, changed only where `VER.ASM` and `RESBDOS1.ASM` carry the
+serial number placeholder `'654321'`, the V2.0 XDOS.SPR, BNKXDOS.SPR,
+RESBDOS.SPR and TMP.SPR are DRI's byte for byte, and BNKBDOS.SPR from the
+unmodified `BNKBDOS.ASM` is DRI's V2.1 file. `um80 --dri --aseg` assembles
+`MPMLDR/LDRBDOS.ASM` to exactly the bytes at 0D00H-164CH of MPMLDR.COM (V2.0
+and V2.1) that it loads. Every other assembler source in DRI's MP/M II release
+that um80 assembles without `--dri` assembles to the same object with it.
+
+`--dri` does not imply the other options a DRI source may need:
+
+- `--aseg`, for MAC's sources: MAC has no relocatable segments, so its `ORG`
+  is an absolute address. RMAC's sources are relocatable, like M80's.
+- `-t`, for RMAC's objects: RMAC, like M80, writes the first six characters of
+  a `PUBLIC` or `EXTRN` name. MP/M II's nucleus depends on it (`DSPTCH.ASM`'s
+  `extrn userprocess` is `MEMMGR.ASM`'s `userpr`).
+
+Where MAC, RMAC and M80 agree, um80 behaves that way with or without `--dri`:
+a source byte's bit 7 is cleared (a line ending CR 8AH is a line end), the name
+of an `EQU`, `SET` or `MACRO` may be indented, and in 8080 code a register name
+is a number (`RD EQU D` then `DAD RD` is `DAD D`).
+
+Other differences between MAC/RMAC and M80 that `--dri` does not cover (none of
+MP/M II's sources needs them): MAC takes `=` as `EQ` (`IF @Y = 1`, in
+`CONTROL/DEBLOCK.ASM`), where M80 reports a syntax error; MAC takes an indented
+word with no colon that is not an instruction, directive or macro as a label
+(`<TAB>LAB<TAB>NOP`), where M80 reports it undefined; and MAC stops reading at a
+9AH byte (1AH with bit 7), where M80 reads on.
+
 ### Register Names as Values (EQU of a register)
 
 In 8080 code, MACRO-80 and DRI's MAC and RMAC give each register name a
@@ -593,6 +654,7 @@ L80, which relocates a word as it loads it.
 | `HIGH(expr)` syntax | ✗ | ✓ | ✓ | ✓ |
 | `HIGH expr` syntax | ✓ | ✓ | ✓ | ✓ |
 | `$` digit separator | ✗ | ✓ | ✓ | ✗ |
+| `$` ignored inside names | ✗ | `--dri` | ✓ | ✗ |
 | Register EQU aliases | ✓ | ✓ | ✓ | ✗ |
 | PUSH A / POP A | ✗ | ✓ | ✓ | ✗ |
 | EQU external+offset | ✗ | ✓ | ✗ | ✓ |
@@ -604,7 +666,7 @@ L80, which relocates a word as it loads it.
 
 ## Version History
 
-- **Unreleased** — link-time expressions (REL extension link items): HIGH/LOW of relocatable and external values; `.REL` objects the genuine LINK-80 reads (item 14's A-field, item 9 for EXT+n, item 10 always, COMMON block selection, ASEG set-location held back); M80 objects ul80 links (typed chain links, item 12 chain address, `$MEMRY`); code placed above absolute code as L80 places it, and absolute code that overlaps anything an error (a warning with `--allow-overlap`); a byte loaded over a relocatable word replaces it, as L80 relocates on loading
+- **Unreleased** — `--dri` (a `$` inside a name is ignored, as in MAC and RMAC); in 8080 code a register name is its number, as in M80 and MAC
 - **0.3.50** — MACRO-80 IRP/IRPC lists, 6-character `-t`, mbasic2025 in the test suite
 - **0.3.49** — link-time expressions (REL extension link items), LINK-80 interchange, absolute code in a link
 - **0.3.48** — `--spr`, `--extra` and `--aseg`; `--prl` links a transient at 100H

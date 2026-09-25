@@ -66,6 +66,52 @@ def source_lines(data):
     return text.split('\n')
 
 
+def drop_name_dollars(line):
+    """`line' with every `$' inside a name or a number left out.
+
+    DRI's MAC and RMAC ignore a `$' embedded in a name, to make it easier
+    to read: NMB$LST, NMBLST and NMB$L$ST are one symbol, and `public
+    a$bc' writes ABC.  MACRO-80 keeps it: there they are three.  um80
+    already ignores one in a number (`0001$1111B'), which M80 does not
+    accept.  With --dri (Assembler(dri=True)) each line is read through
+    this first.  A `$' that starts a word - the location counter, `$+3' -
+    is kept, and so is everything in a quoted string and after a `;'.
+    """
+    if '$' not in line:
+        return line
+    out = []
+    i, n = 0, len(line)
+    in_word = False
+    while i < n:
+        c = line[i]
+        if c == ';':
+            out.append(line[i:])
+            break
+        # A quoted string, as parse_line() finds one: a ' after a letter
+        # or digit does not start one (Z80's AF').  A doubled quote stays in.
+        if c in '\'"' and not (c == "'" and i > 0 and line[i - 1].isalnum()):
+            j = i + 1
+            while j < n:
+                if line[j] == c:
+                    if j + 1 < n and line[j + 1] == c:
+                        j += 2
+                        continue
+                    j += 1
+                    break
+                j += 1
+            out.append(line[i:j])
+            i = j
+            in_word = False
+            continue
+        if c == '$' and in_word:
+            i += 1
+            continue
+        in_word = c.isalnum() or c in '_@?.'
+        out.append(c)
+        i += 1
+    return ''.join(out)
+
+
 def is_string_literal(text):
     """True if `text' is one quoted string, like 'it''s' - not 'A'+'B'.
 
@@ -203,8 +249,11 @@ class Assembler:
     """MACRO-80 compatible assembler."""
 
     def __init__(self, predefined=None, export_all_symbols=False, truncate_symbols=False,
-                 strict_jr=False):
+                 strict_jr=False, dri=False):
         self.symbols = {}  # Symbol table
+        # --dri: read the source as DRI's MAC and RMAC do where they differ
+        # from MACRO-80 - a `$' inside a name is left out (drop_name_dollars()).
+        self.dri = dri
         self.export_all_symbols = export_all_symbols  # -g flag: export all as PUBLIC
         self.truncate_symbols = truncate_symbols  # -t flag: names cut to 6 chars, as M80
         self.strict_jr = strict_jr  # --strict flag: error on out-of-range JR instead of promoting to JP
@@ -3792,6 +3841,8 @@ class Assembler:
         """Process a single source line."""
         self.line_num += 1
         self._start_listing_line()
+        if self.dri:
+            line = drop_name_dollars(line)
 
         # DRI extension: split on '!' separator for multi-statement lines.
         # Only do this when not collecting macro or repeat bodies, and not on a
@@ -4702,6 +4753,10 @@ def main():
     parser.add_argument('--aseg', action='store_true',
                        help='Assemble as absolute code, the way DRI\'s MAC does: '
                             'the file starts in ASEG, so ORG is an absolute address')
+    parser.add_argument('--dri', action='store_true',
+                        help='Read the source as DRI\'s MAC and RMAC do where they '
+                             'differ from M80: a $ inside a name is ignored '
+                             '(NMB$LST is NMBLST)')
     parser.add_argument('-s', '--strict', action='store_true',
                         help='Strict mode: error on out-of-range JR/DJNZ instead of promoting to JP')
 
@@ -4729,7 +4784,8 @@ def main():
 
     # Create assembler and run
     asm = Assembler(predefined=predefined, export_all_symbols=args.globals,
-                    truncate_symbols=args.truncate, strict_jr=args.strict)
+                    truncate_symbols=args.truncate, strict_jr=args.strict,
+                    dri=args.dri)
     if args.aseg:
         asm.default_seg = 'ASEG'
         asm.current_seg = 'ASEG'

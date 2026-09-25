@@ -40,6 +40,7 @@ um80 -t program.mac                 # Cut symbol names to 6 chars, as M80 does
 um80 -e ".z80" program.mac          # Execute code before source (set Z80 mode)
 um80 --pre macros.mac program.mac   # Include file before source
 um80 --aseg program.asm             # Absolute, like DRI's MAC: ORG is an address
+um80 --dri program.asm              # DRI source: a $ inside a name is ignored
 ```
 
 ### Link object files
@@ -331,6 +332,15 @@ The `$` character can be used as a visual separator within numeric literals for 
 ```
 
 The `$` characters are ignored during parsing and do not affect the numeric value.
+
+### `$` Inside Names (`--dri`)
+
+DRI's MAC and RMAC also ignore a `$` inside a name: `NMB$LST` and `NMBLST` are
+one symbol. MACRO-80 keeps it, so by default um80 does too. `um80 --dri` reads
+names as MAC and RMAC do; MP/M II's sources need it (`MPM.ASM` stores to
+`nmb$lst`, which `DATAPG.ASM` defines as `nmblst`). See
+[docs/EXTENSIONS.md](docs/EXTENSIONS.md#dri-sources---dri) for exactly what it
+changes.
 
 ### Register Names as Values
 

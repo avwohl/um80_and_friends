@@ -7,6 +7,9 @@ um80 \- Microsoft MACRO-80 compatible assembler for 8080/Z80
 [\fB\-o\fR \fIoutput.rel\fR]
 [\fB\-l\fR \fIlisting.prn\fR]
 [\fB\-g\fR]
+[\fB\-t\fR]
+[\fB\-\-aseg\fR]
+[\fB\-\-dri\fR]
 [\fB\-D\fR \fISYMBOL\fR[=\fIVALUE\fR]]...
 [\fB\-I\fR \fIPATH\fR]...
 .I input.mac
@@ -45,6 +48,19 @@ relocated addresses using the \fB\-S\fR option.
 Cut every PUBLIC, EXTRN and module name in the .REL file to 6 characters, as
 MACRO-80 does. Use it for an object that is to be linked with objects that
 M80 assembled, when a PUBLIC or EXTRN name is longer than 6 characters.
+.TP
+.B \-\-aseg
+Start the file in ASEG, so that an ORG is an absolute address, as in
+Digital Research's MAC, which has no relocatable segments.
+.TP
+.B \-\-dri
+Read the source as Digital Research's MAC and RMAC read it where they differ
+from MACRO-80: a \fB$\fR inside a name is ignored, so NMB$LST and NMBLST are
+one symbol, and \fBPUBLIC A$BC\fR writes ABC.  A \fB$\fR that starts a word
+(the location counter) and one in a quoted string or a comment are kept.
+Without \fB\-\-dri\fR a \fB$\fR is part of the name, as in MACRO-80.
+\fB\-\-dri\fR does not imply \fB\-\-aseg\fR (MAC's absolute sources) or
+\fB\-t\fR (RMAC's six-character names).
 .TP
 .BI \-D " SYMBOL" [= VALUE ]
 Define a symbol before assembly begins. If no value is given, the symbol is
