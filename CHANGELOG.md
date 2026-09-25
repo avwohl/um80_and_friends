@@ -156,6 +156,14 @@ LINK-80 3.44 under cpmemu, and each has a regression test that fails on
   the local's address). And `'&L'` in a string is now the unique name, as
   in M80 (`..0000`) and MAC (`??0001`); um80's is `L?0001`.
 
+- um80 assembler: an `EXITM` inside a true `IF` now ends that `IF` with the
+  expansion, as MACRO-80, MAC and RMAC end it. The `IF`'s `ENDIF` is never
+  read, so um80 left it open to the end of the file and warned
+  "Unterminated conditional (missing ENDIF)" where they report nothing:
+  DRI's `CONTROL/INTER.LIB` `SETLITE` with `DEBUG` true, or `IF NUL P /
+  EXITM / ENDIF` inside another `IF`. The same holds for an `EXITM` in a
+  `REPT`, `IRP` or `IRPC` body.
+
 ## [0.3.50] - 2026-09-25
 
 mbasic2025 (https://github.com/avwohl/mbasic2025) rebuilds historic Microsoft

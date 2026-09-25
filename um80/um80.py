@@ -4357,6 +4357,7 @@ class Assembler:
 
         # Expand body lines with parameter substitution
         self.macro_level += 1
+        cond_depth = len(self.cond_stack)
         for body_line in macro.body:
             # Check for LOCAL directive
             label, op, opnds, comment = self.parse_line(body_line)
@@ -4374,7 +4375,9 @@ class Assembler:
                 # Exit macro expansion early. Ignored inside a false conditional
                 # branch (the canonical IF cond / EXITM / ENDIF idiom), and in
                 # a REPT/IRP/IRPC body being collected: that EXITM ends the
-                # repeat when it runs, not the macro now.
+                # repeat when it runs, not the macro now.  It ends the IFs
+                # of the expansion too - their ENDIFs are not read.
+                self.end_conditionals(cond_depth)
                 break
 
             # Parameters and LOCAL names, in one pass, as M80 reads a LOCAL
@@ -4416,6 +4419,7 @@ class Assembler:
         iterating). EXITM is honored only at this level (not while a nested
         repeat is being collected) and not inside a false conditional branch.
         """
+        cond_depth = len(self.cond_stack)
         for line in body:
             expanded = line
             if iter_var and value is not None:
@@ -4425,9 +4429,26 @@ class Assembler:
             if not self.repeat_stack and self.cond_false_depth == 0:
                 _, op, _, _ = self.parse_line(expanded)
                 if op and op.upper() == 'EXITM':
+                    self.end_conditionals(cond_depth)
                     return True
             self.process_line(expanded)
         return False
+
+    def end_conditionals(self, depth):
+        """End the IFs opened since the conditional stack was `depth' deep.
+
+        An EXITM ends a macro expansion or a repetition inside the IFs it
+        opened, and their ENDIFs are never read: `IF 1 / EXITM / ENDIF' left
+        its IF open to the end of the file ("Unterminated conditional"),
+        where MACRO-80 3.44, MAC 2.0 and RMAC 1.1 close it without a word.
+        The expansion began in a true state, so every IF above `depth' is
+        true, or the EXITM would have been skipped.
+        """
+        if len(self.cond_stack) > depth:
+            del self.cond_stack[depth:]
+            self.cond_else_levels = {level for level in self.cond_else_levels
+                                     if level <= depth}
+            self.cond_false_depth = 0
 
     def find_include_file(self, filename):
         """Find an include file, searching in various locations."""
