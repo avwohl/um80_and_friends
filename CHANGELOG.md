@@ -111,6 +111,13 @@ LINK-80 3.44 under cpmemu, and each has a regression test that fails on
   name written with a `$` that is defined without one, assembled wrong
   bytes. A forward reference is still its value.
 
+- um80 assembler: without `--dri`, a `%` in an item of an `IRP` list is
+  evaluated when the `IRP` is read, as MACRO-80 reads an item like a macro
+  argument: `IRP X,<%E,2>` iterates over E's value and 2. um80 passed `%E`
+  on as text, which was a parse error where the body used it. M80 flags a
+  `%` in the last item O and passes 0; um80 takes the value and warns. MAC
+  and RMAC read the list as text, and so does `--dri`.
+
 ## [0.3.50] - 2026-09-25
 
 mbasic2025 (https://github.com/avwohl/mbasic2025) rebuilds historic Microsoft

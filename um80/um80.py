@@ -3732,6 +3732,16 @@ class Assembler:
                 # iterates once with an empty argument (matches real M80).
                 values = self.split_operands(inner, escape_bang=True) \
                     if inner.strip() else ['']
+            if not self.dri:
+                # M80 reads an item as it reads a macro argument, `%' and
+                # all: `IRP X,<%E,2>' iterates over E's value then, and 2.
+                # MAC and RMAC read the list as text.  M80 flags a `%' in
+                # the last item O and passes 0.
+                last = values[-1]
+                values = [self.percent_argument(v) for v in values]
+                if values[-1] != last and self.pass_num == 2:
+                    self.warning("M80 flags a `%' in the last item of an IRP"
+                                 " list O; um80 takes its value")
             self.block_open_line = self.line_num
             self.repeat_stack.append(('IRP', values, [], param, label))
             return True

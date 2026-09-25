@@ -438,7 +438,7 @@ Digital Research's MAC 2.0 and RMAC 1.1:
 | `test_macro_bang_args.py` | DRI `!` separator vs. M80 argument-quote `!`, escaped commas |
 | `test_macro_concat.py` | `&` concatenation: leading/trailing/shared, in-string `&param`, case folding |
 | `test_macro_expansion.py` | EXITM in conditionals, macro shadowing built-ins, string-safe substitution, `NUL` |
-| `test_macro_percent.py` | (DRI) A `%` argument is its value at the call, as digits in the current radix, and an undefined name in it an error; in a `REPT` body in a macro, on each repetition (DRI's `SELECT.LIB`); with `--dri`, `%N$C` is the value of `NC` |
+| `test_macro_percent.py` | (DRI) A `%` argument is its value at the call, as digits in the current radix, and an undefined name in it an error; M80 evaluates one in an `IRP` list; in a `REPT` body in a macro, on each repetition (DRI's `SELECT.LIB`); with `--dri`, `%N$C` is the value of `NC` |
 | `test_repeat_blocks.py` | Nested REPT/IRP/IRPC, IRP sublists, EXITM |
 | `test_radix_conditional.py` | Decimal `.RADIX` operand, unterminated / duplicate-`ELSE` diagnostics |
 | `test_symbol_class.py` | SET vs. EQU/label redefinability classes |

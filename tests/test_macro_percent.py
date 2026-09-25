@@ -189,3 +189,25 @@ def test_a_forward_reference_is_its_value():
     assert _code("GEN\tMACRO\tN\n\tDB\tN\n\tENDM\n\tGEN\t%F\nF\tEQU\t9\n") == '09'
     assert _code("GEN\tMACRO\tN\n\tDB\tN\n\tENDM\n\tGEN\t%F\nF\tEQU\t9\n",
                  dri=True) == '09'
+
+
+def test_m80_evaluates_a_percent_in_an_irp_list():
+    # M80: `IRP X,<%VV,2>' is 07 02, `<1,%VV,3>' 01 07 03, `<%VV+1,3>' 08
+    # 03 - the value when the IRP is read (`<%VV,4>' with VV SET after it:
+    # 01 04).  In the last item M80 flags it O and passes 0; um80 takes the
+    # value and warns.  MAC and RMAC read the list as text: `DB %VV' is E.
+    irp = "VV\tSET\t7\n\tIRP\tX,<{}>\n\tDB\tX\n\tENDM\n"
+    assert _code(irp.format('%VV,2')) == '0702'
+    assert _code(irp.format('1,%VV,3')) == '010703'
+    assert _code(irp.format('%VV+1,3')) == '0803'
+    assert _code("VV\tSET\t1\n\tIRP\tX,<%VV,4>\nVV\tSET\tVV+5\n\tDB\tX\n"
+                 "\tENDM\n") == '0104'
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, 't.asm')
+        with open(p, 'w') as f:
+            f.write(HEAD + irp.format('2,%VV') + "\tend\n")
+        asm = Assembler()
+        assert asm.assemble(p)
+        assert len(asm.warnings) == 1 and 'last item' in asm.warnings[0]
+    ok, _, errors = _assemble(irp.format('%VV,2'), dri=True)
+    assert not ok and len(errors) == 1, errors
