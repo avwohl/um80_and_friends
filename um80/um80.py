@@ -37,6 +37,19 @@ class AssemblerError(Exception):
 IDENT_CHARS = frozenset('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
                         '0123456789_@?$.')
 
+# The characters of a name, where a macro body is matched to the names of
+# its parameters (Assembler.substitute_macro_params()).  In MACRO-80 a name
+# is letters, digits and $ . ? @ _, and a digit does not start one: with the
+# parameter X, `?X', `X?', `@X', `X$1', `X.1' and `_X' are other names, and
+# `1X' is 1 then X.  In MAC and RMAC it is letters, digits, ? and @: a `$',
+# `_' or `.' ends it.
+M80_NAME_START = frozenset('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
+                           '$.?@_')
+M80_NAME_CHARS = M80_NAME_START | frozenset('0123456789')
+DRI_NAME_START = frozenset('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
+                           '?@')
+DRI_NAME_CHARS = DRI_NAME_START | frozenset('0123456789')
+
 # Every byte of a source file with its bit 7 cleared (see source_lines()).
 STRIP_PARITY = bytes(b & 0x7F for b in range(256))
 # An 8AH that does not follow a CR or an 8DH (see source_lines()).
@@ -264,7 +277,10 @@ class Assembler:
                  strict_jr=False, dri=False):
         self.symbols = {}  # Symbol table
         # --dri: read the source as DRI's MAC and RMAC do where they differ
-        # from MACRO-80 - a `$' inside a name is left out (_dri_statement()).
+        # from MACRO-80 - a `$' inside a name is left out (_dri_statement()),
+        # a macro body is read with MAC's names (substitute_macro_params(),
+        # percent_argument()), and an IF a body leaves open ends with it
+        # (end_conditionals()).
         self.dri = dri
         self.export_all_symbols = export_all_symbols  # -g flag: export all as PUBLIC
         self.truncate_symbols = truncate_symbols  # -t flag: names cut to 6 chars, as M80
@@ -297,6 +313,7 @@ class Assembler:
         self.cond_else_levels = set()  # Conditional depths that have seen an ELSE
 
         self.local_counter = 0  # For LOCAL symbols in macros
+        self.irpc_from_argument = False  # see expand_macro()
         self.expanding_macro = False
         self.macro_level = 0
 
@@ -1497,12 +1514,21 @@ class Assembler:
             return value - self.segments['DSEG'].org
         return value
 
-    def parse_line(self, line):
-        """Parse a source line, return (label, operator, operands, comment)."""
+    def parse_line(self, line, brackets=False):
+        """Parse a source line, return (label, operator, operands, comment).
+
+        In the arguments of a macro call and the list of an IRP or IRPC a
+        `;' inside <...> is text, not a comment, as in MACRO-80, MAC and
+        RMAC: DRI's CONTROL/DISKDEF.LIB passes `<;sec per track>' to a
+        macro that puts it after a DW.  Such a line is read again with
+        `brackets'.
+        """
+        whole = line
         # Remove comment
         comment = ''
         in_string = False
         string_char = None
+        depth = 0
         for i, ch in enumerate(line):
             if in_string:
                 if ch == string_char:
@@ -1515,7 +1541,9 @@ class Assembler:
                 else:
                     in_string = True
                     string_char = ch
-            elif ch == ';':
+            elif brackets and ch in '<>':
+                depth = depth + 1 if ch == '<' else max(depth - 1, 0)
+            elif ch == ';' and not depth:
                 comment = line[i+1:]
                 line = line[:i]
                 break
@@ -1579,6 +1607,9 @@ class Assembler:
         operator = match.group(1).upper()
         operands = line[match.end():].strip()
 
+        if (comment and not brackets and '<' in operands
+                and (operator in self.macros or operator in ('IRP', 'IRPC'))):
+            return self.parse_line(whole, brackets=True)
         return (label, operator, operands, comment)
 
     def split_operands(self, operands, escape_bang=False):
@@ -3732,13 +3763,23 @@ class Assembler:
                 # iterates once with an empty argument (matches real M80).
                 values = self.split_operands(inner, escape_bang=True) \
                     if inner.strip() else ['']
+            if not self.dri:
+                # M80 reads an item as it reads a macro argument, `%' and
+                # all: `IRP X,<%E,2>' iterates over E's value then, and 2.
+                # MAC and RMAC read the list as text.  M80 flags a `%' in
+                # the last item O and passes 0.
+                last = values[-1]
+                values = [self.percent_argument(v) for v in values]
+                if values[-1] != last and self.pass_num == 2:
+                    self.warning("M80 flags a `%' in the last item of an IRP"
+                                 " list O; um80 takes its value")
             self.block_open_line = self.line_num
             self.repeat_stack.append(('IRP', values, [], param, label))
             return True
 
         # IRPC - iterate over characters
         if operator == 'IRPC':
-            if len(ops) < 2:
+            if not ops or ',' not in operands:
                 self.error("IRPC requires parameter and string")
                 return True
             param = ops[0].strip().upper()
@@ -3749,8 +3790,15 @@ class Assembler:
                 chars = re.split(r'[\s,]', text, maxsplit=1)[0]
                 self._repeat_line_tail(text[len(chars):],
                                        "IRPC string ends at a blank or a comma")
+            chars = list(chars)
+            if not chars and (self.dri or self.irpc_from_argument):
+                # An empty string: MAC and RMAC go round once, with the
+                # parameter empty (SEQIO.LIB's `IRPC ?FC,FC' tests NUL ?FC
+                # for it).  M80 does not, except where a macro's empty
+                # argument made the string empty (expand_macro()).
+                chars = ['']
             self.block_open_line = self.line_num
-            self.repeat_stack.append(('IRPC', list(chars), [], param, label))
+            self.repeat_stack.append(('IRPC', chars, [], param, label))
             return True
 
         # ENDM for REPT/IRP/IRPC
@@ -3933,9 +3981,38 @@ class Assembler:
                 if stmt.strip():
                     self._process_single_statement(read('        ' + stmt.strip()))
 
+    def _body_statement(self, label, operator, line):
+        """The label and operator of a line of a body being collected.
+
+        A label may be made with `&' there - `L&X:' is L1 and L2 in `IRP
+        X,<1,2>' - and parse_line() finds no operator after one: `L&X:
+        ENDM' did not end the IRP, and every line after it went into the
+        body ("Unterminated IRP").  M80, MAC and RMAC end it there.
+        """
+        if operator is None and '&' in line:
+            m = re.match(r'\s*([$A-Za-z_@?&][A-Za-z0-9_@?$.&]*)::?(\s.*)?$', line)
+            if m:
+                return m.group(1), self.parse_line('\t' + (m.group(2) or ''))[1]
+        return label, operator
+
+    def _endm_label(self, label, body):
+        """A label on the ENDM that ends a body being collected.
+
+        MAC and RMAC define it where the body ends, each time it is
+        expanded or repeated: DRI's CONTROL/STACK.LIB ends SIZ with `STACK:
+        ENDM' (a LOCAL name, the stack top), COMPARE.LIB's GTR with `FL:
+        ENDM', SEQIO.LIB's FILLFCB with `PFCB: ENDM'.  With --dri it goes at
+        the end of the body.  MACRO-80 3.44 ignores it (a reference to it is
+        U), and so does um80 without --dri.
+        """
+        if label and self.dri:
+            body.append(label + ':')
+
     def _process_single_statement(self, line):
         """Process a single statement (internal helper for ! separator support)."""
         label, operator, operands, comment = self.parse_line(line)
+        if self.collecting_macro is not None or self.repeat_stack:
+            label, operator = self._body_statement(label, operator, line)
         upper_op = operator.upper() if operator else ''
 
         # If collecting macro definition, handle specially
@@ -3973,6 +4050,7 @@ class Assembler:
                     self.macro_body.append(line_for_macro)
                 else:
                     # End of macro definition
+                    self._endm_label(label, self.macro_body)
                     self.macros[self.collecting_macro] = Macro(
                         self.collecting_macro, self.macro_params, self.macro_body
                     )
@@ -4000,6 +4078,7 @@ class Assembler:
                 else:
                     # ENDM of the outer block - execute it.
                     rept_type, param_or_count, body, iter_var, rept_label = self.repeat_stack.pop()
+                    self._endm_label(label, body)
                     self.execute_repeat(rept_type, param_or_count, body, iter_var)
             else:
                 self.repeat_stack[-1][2].append(line)
@@ -4126,113 +4205,179 @@ class Assembler:
                 i += 1
         return spans
 
-    def _sub_outside_strings(self, line, pattern, repl):
-        """Apply pattern.sub(repl, ...) only outside quoted string literals."""
-        spans = self._string_spans(line)
-        if not spans:
-            return pattern.sub(repl, line)
-        result = []
-        pos = 0
-        for (s, e) in spans:
-            result.append(pattern.sub(repl, line[pos:s]))
-            result.append(line[s:e])
-            pos = e
-        result.append(pattern.sub(repl, line[pos:]))
-        return ''.join(result)
-
     def substitute_macro_params(self, line, subst):
-        """Substitute macro parameters, honoring '&' concatenation and strings.
+        """`line' with each name in `subst' replaced by its text.
 
-        Outside quoted strings a parameter is replaced wherever it appears as a
-        token (bare, or adjacent to '&'); an adjacent '&' is removed. Inside a
-        quoted string a parameter is replaced ONLY in the leading-'&' form
-        (&param), with the '&' removed (verified against real M80: "&name"
-        substitutes, but "a&b" -> "aCD", "pfx&_x" -> "pfx&_x", and a bare
-        parameter name in a string stays literal). Parameter names fold case;
-        longest first so a parameter that is a prefix of another wins.
+        A body line is read as MACRO-80 - or with --dri MAC - reads it: a
+        run of name characters (M80_NAME_CHARS, DRI_NAME_CHARS) is one
+        name, and only a name that is a parameter is replaced.  With the
+        parameter ?Y, `'&?Y'' and `ADC&?C' are replaced (um80 used to miss
+        any parameter that starts with `?' or `@'), and with X, `?X' and
+        `X?' are other names; `1X' is 1 then X, as in M80 and MAC (15 after
+        `MM 5').  Outside a quoted string a name is replaced wherever it
+        is, and an `&' next to it on either side is dropped: `A&X' and
+        `X&B'.  Names fold case.
+
+        Inside a string only a name next to an `&' is a parameter.  In M80
+        that is one after the `&' (`'&X'', `'A&X''), and M80 drops the `&'
+        only in the first one, and in a chain `&X&Y' right after it: `'&X
+        &X'' is 'K &K', `'&X&Y'' KL.  In MAC a name before an `&' is one
+        too (`'X&B'' is KB), and every such `&' goes.  Names fold case here
+        too, as in M80 and RMAC 1.1; MAC 2.0 matches a string as written,
+        so `'&abc'' is not its parameter ABC.
+
+        A LOCAL name is in subst too, with its unique name: M80 and MAC read
+        it as a parameter, so `'&L'' is the unique name, `L?:' with LOCAL
+        L? is one, and an argument's text is not matched again (`MM LL'
+        with LOCAL LL and `DB P' is the LL outside the macro).
         """
-        names = sorted((n for n in subst if n), key=len, reverse=True)
-        if not names:
+        table = {name.upper(): text for name, text in subst.items() if name}
+        if not table:
             return line
-        alt = '|'.join(re.escape(n) for n in names)
-        out_pat = re.compile(r'&?\b(' + alt + r')\b&?', re.IGNORECASE)
-        in_pat = re.compile(r'&\b(' + alt + r')\b', re.IGNORECASE)
-
-        def out_repl(m):
-            return subst[m.group(1).upper()]
-
-        def in_repl(m):
-            return subst[m.group(1).upper()]
-
-        spans = self._string_spans(line)
-        if not spans:
-            return out_pat.sub(out_repl, line)
-        result = []
+        out = []
         pos = 0
-        for (s, e) in spans:
-            result.append(out_pat.sub(out_repl, line[pos:s]))
-            result.append(in_pat.sub(in_repl, line[s:e]))
+        for (s, e) in self._string_spans(line):
+            out.append(self._substitute_names(line[pos:s], table))
+            out.append(self._substitute_in_string(line[s:e], table))
             pos = e
-        result.append(out_pat.sub(out_repl, line[pos:]))
-        return ''.join(result)
+        out.append(self._substitute_names(line[pos:], table))
+        return ''.join(out)
 
-    def process_percent_operator(self, line):
-        """Process % operator (expression -> number), skipping quoted strings."""
-        spans = self._string_spans(line)
-        if not spans:
-            return self._percent_segment(line)
-        result = []
-        pos = 0
-        for (s, e) in spans:
-            result.append(self._percent_segment(line[pos:s]))
-            result.append(line[s:e])
-            pos = e
-        result.append(self._percent_segment(line[pos:]))
-        return ''.join(result)
+    def _name_end(self, text, i):
+        """The end of the name that starts at text[i], or None."""
+        start, chars = ((DRI_NAME_START, DRI_NAME_CHARS) if self.dri
+                        else (M80_NAME_START, M80_NAME_CHARS))
+        if text[i] not in start:
+            return None
+        j = i + 1
+        while j < len(text) and text[j] in chars:
+            j += 1
+        return j
 
-    def _percent_segment(self, line):
-        """Process % operator within a string-free segment."""
-        result = []
-        i = 0
-        while i < len(line):
-            if line[i] == '%':
-                # Find the expression following %
-                # Expression ends at comma, space, or end of line
-                j = i + 1
-                paren_depth = 0
-                while j < len(line):
-                    ch = line[j]
-                    if ch == '(':
-                        paren_depth += 1
-                    elif ch == ')':
-                        if paren_depth > 0:
-                            paren_depth -= 1
-                        else:
-                            break
-                    elif paren_depth == 0 and ch in ',; \t':
-                        break
-                    j += 1
-                expr = line[i + 1:j]
-                if expr:
-                    val = self.number_operand(expr, 'The % operator',
-                                              allow_undefined=True).value & 0xFFFF
-                    # Convert to current radix
-                    if self.radix == 16:
-                        result.append(f'{val:X}H')
-                    elif self.radix == 8:
-                        result.append(f'{val:o}O')
-                    elif self.radix == 2:
-                        result.append(f'{val:b}B')
-                    else:
-                        result.append(str(val))
-                    i = j
-                else:
-                    result.append('%')
-                    i += 1
-            else:
-                result.append(line[i])
+    def _substitute_names(self, text, table):
+        """substitute_macro_params() outside a quoted string."""
+        res = []
+        amp = False  # the last thing copied is an `&'
+        i, n = 0, len(text)
+        while i < n:
+            j = self._name_end(text, i)
+            if j is None:
+                amp = text[i] == '&'
+                res.append(text[i])
                 i += 1
-        return ''.join(result)
+                continue
+            value = table.get(text[i:j].upper())
+            if value is None:
+                res.append(text[i:j])
+            else:
+                if amp:
+                    res.pop()
+                res.append(value)
+                if j < n and text[j] == '&':
+                    j += 1
+            amp = False
+            i = j
+        return ''.join(res)
+
+    def _substitute_in_string(self, text, table):
+        """substitute_macro_params() in a quoted string, quotes and all."""
+        res = []
+        amp = False   # the last thing copied is an `&'
+        chain = -1    # where a name's dropped `&' after it leads
+        first = True  # M80: no `&' dropped yet
+        i, n = 0, len(text)
+        while i < n:
+            j = self._name_end(text, i)
+            if j is None:
+                if chain == i:
+                    first = False
+                amp = text[i] == '&'
+                res.append(text[i])
+                i += 1
+                continue
+            word = text[i:j]
+            value = table.get(word.upper())
+            before, amp = amp, False
+            chained = chain == i
+            after = j < n and text[j] == '&'
+            if value is None or not (before or chained or (self.dri and after)):
+                if chained:
+                    first = False
+                res.append(word)
+            elif self.dri or first:
+                if before:
+                    res.pop()
+                res.append(value)
+                if after:
+                    j += 1
+                    chain = j
+                else:
+                    first = False
+            else:
+                res.append(value)
+            i = j
+        return ''.join(res)
+
+    def percent_argument(self, arg):
+        """A macro argument with its `%expression' replaced by the value.
+
+        `%' makes an argument a value: the expression after it is
+        evaluated when the macro is called, and the argument is the value's
+        digits in the current radix, as MACRO-80 writes them: with .RADIX
+        16 26 is 1A and 160 is 0A0 (a 0 before a letter, and no H), with
+        .RADIX 8 it is 32, and in any other radix decimal - 26, even with
+        .RADIX 2.  MAC has only decimal.  The expression runs to the end of
+        the argument, blanks and all (`%(A + 1)', `% A').  MAC and M80 both
+        evaluate it at the call: `GEN %E' passes E's value then, however
+        the body changes E, and a call in a REPT body inside a macro is
+        evaluated on each repetition - DRI's SELECT.LIB counts its cases so.
+        The digits substitute like any other text, so `LB&N:' is LB10 and
+        `DB '&N'' is '10'.  In M80 the `%' may follow other text (`A%E' is
+        A7); in MAC and RMAC (--dri) only an argument that starts with `%'
+        is a value, and --dri reads a name in the expression without its
+        `$', so `%N$C' is the value of NC.  An argument in <...> is text,
+        as is a `%' after `!' or in a quoted string.
+        """
+        i = self._percent_position(arg)
+        if i is None or not arg[i + 1:].strip():
+            return arg
+        expr = arg[i + 1:]
+        if self.dri:
+            expr = drop_name_dollars(expr)
+        # An undefined name is an error, as in M80 and MAC (U), where it
+        # was a silent 0; pass 1 reads a forward reference as 0 or as its
+        # predicted value (forward_value()).
+        value = self.number_operand(expr, 'The % operator',
+                                    allow_undefined=(self.pass_num == 1)
+                                    ).value & 0xFFFF
+        if self.radix == 16:
+            text = f'{value:X}'
+            text = '0' + text if text[0] > '9' else text
+        elif self.radix == 8:
+            text = f'{value:o}'
+        else:
+            text = str(value)
+        return arg[:i] + text
+
+    def _percent_position(self, arg):
+        """Where the `%' that makes `arg' a value is, or None."""
+        if self.dri:
+            return 0 if arg.startswith('%') else None
+        i = 0
+        while i < len(arg):
+            ch = arg[i]
+            if ch == '<':
+                return None
+            if ch == '!':
+                i += 2
+                continue
+            if self._starts_string(arg, i):
+                i = self._string_end(arg, i)
+                continue
+            if ch == '%':
+                return i
+            i += 1
+        return None
 
     def expand_macro(self, name, operands):
         """Expand a macro."""
@@ -4244,10 +4389,12 @@ class Assembler:
         # Parse actual arguments, handling ! operator. '!' quotes the next
         # character (including an argument-separating comma), so split with
         # escape_bang and let process_macro_argument() resolve the escapes.
+        # A `%expression' is evaluated now, at the call (percent_argument()).
         args = []
         if operands:
             raw_args = self.split_operands(operands, escape_bang=True)
-            args = [self.process_macro_argument(arg) for arg in raw_args]
+            args = [self.process_macro_argument(self.percent_argument(arg))
+                    for arg in raw_args]
 
         # Build substitution map
         subst = {}
@@ -4266,6 +4413,7 @@ class Assembler:
 
         # Expand body lines with parameter substitution
         self.macro_level += 1
+        cond_depth = len(self.cond_stack)
         for body_line in macro.body:
             # Check for LOCAL directive
             label, op, opnds, comment = self.parse_line(body_line)
@@ -4283,25 +4431,40 @@ class Assembler:
                 # Exit macro expansion early. Ignored inside a false conditional
                 # branch (the canonical IF cond / EXITM / ENDIF idiom), and in
                 # a REPT/IRP/IRPC body being collected: that EXITM ends the
-                # repeat when it runs, not the macro now.
+                # repeat when it runs, not the macro now.  It ends the IFs
+                # of the expansion too - their ENDIFs are not read.
+                self.end_conditionals(cond_depth)
                 break
 
-            # Substitute parameters (M80 '&' concatenation, string-aware).
-            expanded = self.substitute_macro_params(body_line, subst)
+            # Parameters and LOCAL names, in one pass, as M80 reads a LOCAL
+            # name as a parameter: an argument's text is not read again.
+            names = {sym: sym + local_suffix for sym in local_syms}
+            names.update(subst)
+            expanded = self.substitute_macro_params(body_line, names)
 
-            # Replace local symbols with unique versions (outside strings only).
-            for local_sym in local_syms:
-                pat = re.compile(r'\b' + re.escape(local_sym) + r'\b', re.IGNORECASE)
-                expanded = self._sub_outside_strings(
-                    expanded, pat, local_sym + local_suffix)
-
-            # Process % operator (convert expressions to numbers)
-            expanded = self.process_percent_operator(expanded)
+            # M80 goes round an IRPC once, with its parameter empty, when an
+            # empty argument made its string empty (`IRPC C,P' with P
+            # empty), though not for `IRPC C,' or `IRPC C,<>' as written.
+            self.irpc_from_argument = (
+                op == 'IRPC' and self._irpc_string(opnds) not in ('', '<>')
+                and self._irpc_string(self.parse_line(expanded)[2]) in ('', '<>'))
 
             # Process the expanded line
-            self.process_line(expanded)
+            try:
+                self.process_line(expanded)
+            finally:
+                self.irpc_from_argument = False
+        if self.dri:
+            # MAC and RMAC end the IFs a body leaves open at its ENDM (M80
+            # carries them on).
+            self.end_conditionals(cond_depth)
 
         self.macro_level -= 1
+
+    @staticmethod
+    def _irpc_string(operands):
+        """The text after the comma of an IRPC's operands, stripped."""
+        return (operands or '').partition(',')[2].strip()
 
     def execute_repeat(self, rept_type, param_or_count, body, iter_var):
         """Execute a REPT/IRP/IRPC block."""
@@ -4331,19 +4494,47 @@ class Assembler:
         iterating). EXITM is honored only at this level (not while a nested
         repeat is being collected) and not inside a false conditional branch.
         """
+        cond_depth = len(self.cond_stack)
         for line in body:
             expanded = line
             if iter_var and value is not None:
-                expanded = expanded.replace(f'&{iter_var}', value)
-                expanded = expanded.replace(f'&{iter_var.lower()}', value)
-                expanded = re.sub(r'\b' + re.escape(iter_var) + r'\b',
-                                  value, expanded, flags=re.IGNORECASE)
+                # As a macro's parameter (substitute_macro_params()): in a
+                # string only next to an `&', and `?X' is another name.
+                expanded = self.substitute_macro_params(line, {iter_var: value})
             if not self.repeat_stack and self.cond_false_depth == 0:
                 _, op, _, _ = self.parse_line(expanded)
                 if op and op.upper() == 'EXITM':
+                    self.end_conditionals(cond_depth)
                     return True
             self.process_line(expanded)
+        if self.dri:
+            self.end_conditionals(cond_depth)
         return False
+
+    def end_conditionals(self, depth):
+        """End the IFs opened since the conditional stack was `depth' deep.
+
+        An EXITM ends a macro expansion or a repetition inside the IFs it
+        opened, and their ENDIFs are never read: `IF 1 / EXITM / ENDIF' left
+        its IF open to the end of the file ("Unterminated conditional"),
+        where MACRO-80 3.44, MAC 2.0 and RMAC 1.1 close it without a word.
+        The expansion began in a true state, so every IF above `depth' is
+        true, or the EXITM would have been skipped.
+
+        MAC and RMAC also end the IFs a body leaves open at its end, true
+        or false, and with --dri so does um80, after each expansion and
+        each repetition.  DRI's libraries leave them so: COMPARE.LIB's
+        TEST? ends `IF ... / ELSE / LXI H,Y / SUB M' with its ENDM, and
+        SEQIO.LIB's `IRPC ?C,FN / IF NOT (...) / @C SET 0 / ENDM' opens one
+        IF each time round.  M80 carries them on past the ENDM (a false
+        one skips the rest of the file) and says "Unterminated
+        Conditional"; without --dri um80 does the same.
+        """
+        if len(self.cond_stack) > depth:
+            del self.cond_stack[depth:]
+            self.cond_else_levels = {level for level in self.cond_else_levels
+                                     if level <= depth}
+            self.cond_false_depth = 0
 
     def find_include_file(self, filename):
         """Find an include file, searching in various locations."""
@@ -4821,7 +5012,9 @@ def main():
     parser.add_argument('--dri', action='store_true',
                         help='Read the source as DRI\'s MAC and RMAC do where they '
                              'differ from M80: a $ inside a name is ignored '
-                             '(NMB$LST is NMBLST)')
+                             '(NMB$LST is NMBLST), a macro body is read with '
+                             'MAC\'s names, and an IF a macro body leaves open '
+                             'ends with it')
     parser.add_argument('-s', '--strict', action='store_true',
                         help='Strict mode: error on out-of-range JR/DJNZ instead of promoting to JP')
 

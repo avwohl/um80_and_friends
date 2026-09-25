@@ -60,7 +60,14 @@ one symbol, and \fBPUBLIC A$BC\fR writes ABC.  A \fB$\fR that starts a word
 (the location counter), one in a quoted string or a comment, and one in the
 arguments of a macro call or the list of an IRP or IRPC, which MAC reads as
 text, are kept.
-Without \fB\-\-dri\fR a \fB$\fR is part of the name, as in MACRO-80.
+A macro body is matched to its parameters with MAC's names, which end at a
+\fB$\fR, \fB_\fR or \fB.\fR, and with RMAC's rules for an \fB&\fR in a
+string; only an argument that starts with \fB%\fR is a value; an IF that
+a macro expansion, or one repetition of a REPT, IRP or IRPC, leaves open ends
+with it; a label on the ENDM that ends a body is defined where the body ends;
+and an IRPC with an empty string goes round once.
+Without \fB\-\-dri\fR a \fB$\fR is part of the name, and a macro body is
+read, as in MACRO-80.
 \fB\-\-dri\fR does not imply \fB\-\-aseg\fR (MAC's absolute sources) or
 \fB\-t\fR (RMAC's six-character names).
 .TP
@@ -158,6 +165,15 @@ Declare local symbols within a macro.
 .TP
 .B EXITM
 Exit macro expansion early.
+.TP
+.B %\fIexpression\fR
+As a macro argument: the value of the expression when the macro is called,
+as digits in the current radix, written as MACRO-80 writes them (with
+.B .RADIX 16,
+26 is 1A and 160 is 0A0).
+With
+.B \-\-dri
+only an argument that starts with % is a value, as in MAC.
 .SS Repeat Blocks
 .TP
 .B REPT \fIcount\fR
