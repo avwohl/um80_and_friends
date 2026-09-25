@@ -118,6 +118,19 @@ LINK-80 3.44 under cpmemu, and each has a regression test that fails on
   `%` in the last item O and passes 0; um80 takes the value and warns. MAC
   and RMAC read the list as text, and so does `--dri`.
 
+- um80 assembler: a macro body is matched to its parameters name by name,
+  as MACRO-80, MAC and RMAC read it. A parameter whose name starts with `?`
+  or `@` was never replaced: DRI's `CONTROL/COMPARE.LIB` (`TDIG? SET
+  '&?Y'-'0'`), `STACK.LIB` (`LHLD ADC&?C`), `NCOMPARE.LIB` and `Z80.LIB`
+  (`?N`, `?DD`) could not be used. A parameter was replaced inside a longer
+  name that has a `?`, `@`, `$` or `.` in it: with the parameter `FC`,
+  `SEQIO.LIB`'s `IRPC ?FC,FC` became `IRPC ?X,X`, and with `X`, `?X`, `X?`,
+  `@X`, `X@`, `X$1` and `A.X` were all changed. And `1X` was left alone, where
+  M80 and MAC read 1 and then the parameter X. In M80 a name is letters,
+  digits and `$ . ? @ _`; with `--dri` it is MAC's, letters, digits, `?`
+  and `@`, and a `$`, `_` or `.` ends it (`X$1` is the parameter X, then
+  `$1`).
+
 ## [0.3.50] - 2026-09-25
 
 mbasic2025 (https://github.com/avwohl/mbasic2025) rebuilds historic Microsoft

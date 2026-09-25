@@ -157,7 +157,10 @@ A line of a `MACRO`, `REPT`, `IRP` or `IRPC` body is kept as written, and read
 when it is expanded, because MAC finds a formal parameter in the body as
 written, and a `$` ends the name it looks for. With the formal `A`, `DB A$B`
 is `DB X$B` after `MM X`; `DB P$1` is not the formal `P$1` (MAC reports it
-undefined), and `LOCAL L$1` declares `L1`.
+undefined), and `LOCAL L$1` declares `L1`. So do a `_` and a `.`: in MAC a
+name is letters, digits, `?` and `@`, where in M80 it is also `$`, `.` and
+`_`, so with the formal `X` MAC reads `'&X_'` as the argument and `_`, and
+M80 as the text `&X_`.
 
 um80 drops each such `$` from a statement as it reads it, so the listing shows
 the statement without them. A `$` in a number (`0001$1111B`) is ignored with

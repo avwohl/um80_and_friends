@@ -37,6 +37,19 @@ class AssemblerError(Exception):
 IDENT_CHARS = frozenset('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
                         '0123456789_@?$.')
 
+# The characters of a name, where a macro body is matched to the names of
+# its parameters (Assembler.substitute_macro_params()).  In MACRO-80 a name
+# is letters, digits and $ . ? @ _, and a digit does not start one: with the
+# parameter X, `?X', `X?', `@X', `X$1', `X.1' and `_X' are other names, and
+# `1X' is 1 then X.  In MAC and RMAC it is letters, digits, ? and @: a `$',
+# `_' or `.' ends it.
+M80_NAME_START = frozenset('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
+                           '$.?@_')
+M80_NAME_CHARS = M80_NAME_START | frozenset('0123456789')
+DRI_NAME_START = frozenset('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
+                           '?@')
+DRI_NAME_CHARS = DRI_NAME_START | frozenset('0123456789')
+
 # Every byte of a source file with its bit 7 cleared (see source_lines()).
 STRIP_PARITY = bytes(b & 0x7F for b in range(256))
 # An 8AH that does not follow a CR or an 8DH (see source_lines()).
@@ -4151,40 +4164,88 @@ class Assembler:
         return ''.join(result)
 
     def substitute_macro_params(self, line, subst):
-        """Substitute macro parameters, honoring '&' concatenation and strings.
+        """`line' with each name in `subst' replaced by its text.
 
-        Outside quoted strings a parameter is replaced wherever it appears as a
-        token (bare, or adjacent to '&'); an adjacent '&' is removed. Inside a
-        quoted string a parameter is replaced ONLY in the leading-'&' form
-        (&param), with the '&' removed (verified against real M80: "&name"
-        substitutes, but "a&b" -> "aCD", "pfx&_x" -> "pfx&_x", and a bare
-        parameter name in a string stays literal). Parameter names fold case;
-        longest first so a parameter that is a prefix of another wins.
+        A body line is read as MACRO-80 - or with --dri MAC - reads it: a
+        run of name characters (M80_NAME_CHARS, DRI_NAME_CHARS) is one
+        name, and only a name that is a parameter is replaced.  With the
+        parameter ?Y, `'&?Y'' and `ADC&?C' are replaced (um80 used to miss
+        any parameter that starts with `?' or `@'), and with X, `?X' and
+        `X?' are other names; `1X' is 1 then X, as in M80 and MAC (15 after
+        `MM 5').  Outside a quoted string a name is replaced wherever it
+        is, and an `&' next to it on either side is dropped: `A&X' and
+        `X&B'.  Inside a string only `&X' is replaced, and its `&' dropped.
+        Names fold case.
         """
-        names = sorted((n for n in subst if n), key=len, reverse=True)
-        if not names:
+        table = {name.upper(): text for name, text in subst.items() if name}
+        if not table:
             return line
-        alt = '|'.join(re.escape(n) for n in names)
-        out_pat = re.compile(r'&?\b(' + alt + r')\b&?', re.IGNORECASE)
-        in_pat = re.compile(r'&\b(' + alt + r')\b', re.IGNORECASE)
-
-        def out_repl(m):
-            return subst[m.group(1).upper()]
-
-        def in_repl(m):
-            return subst[m.group(1).upper()]
-
-        spans = self._string_spans(line)
-        if not spans:
-            return out_pat.sub(out_repl, line)
-        result = []
+        out = []
         pos = 0
-        for (s, e) in spans:
-            result.append(out_pat.sub(out_repl, line[pos:s]))
-            result.append(in_pat.sub(in_repl, line[s:e]))
+        for (s, e) in self._string_spans(line):
+            out.append(self._substitute_names(line[pos:s], table))
+            out.append(self._substitute_in_string(line[s:e], table))
             pos = e
-        result.append(out_pat.sub(out_repl, line[pos:]))
-        return ''.join(result)
+        out.append(self._substitute_names(line[pos:], table))
+        return ''.join(out)
+
+    def _name_end(self, text, i):
+        """The end of the name that starts at text[i], or None."""
+        start, chars = ((DRI_NAME_START, DRI_NAME_CHARS) if self.dri
+                        else (M80_NAME_START, M80_NAME_CHARS))
+        if text[i] not in start:
+            return None
+        j = i + 1
+        while j < len(text) and text[j] in chars:
+            j += 1
+        return j
+
+    def _substitute_names(self, text, table):
+        """substitute_macro_params() outside a quoted string."""
+        res = []
+        amp = False  # the last thing copied is an `&'
+        i, n = 0, len(text)
+        while i < n:
+            j = self._name_end(text, i)
+            if j is None:
+                amp = text[i] == '&'
+                res.append(text[i])
+                i += 1
+                continue
+            value = table.get(text[i:j].upper())
+            if value is None:
+                res.append(text[i:j])
+            else:
+                if amp:
+                    res.pop()
+                res.append(value)
+                if j < n and text[j] == '&':
+                    j += 1
+            amp = False
+            i = j
+        return ''.join(res)
+
+    def _substitute_in_string(self, text, table):
+        """substitute_macro_params() in a quoted string, quotes and all."""
+        res = []
+        amp = False  # the last thing copied is an `&'
+        i, n = 0, len(text)
+        while i < n:
+            j = self._name_end(text, i)
+            if j is None:
+                amp = text[i] == '&'
+                res.append(text[i])
+                i += 1
+                continue
+            value = table.get(text[i:j].upper())
+            if value is not None and amp:
+                res.pop()
+                res.append(value)
+            else:
+                res.append(text[i:j])
+            amp = False
+            i = j
+        return ''.join(res)
 
     def percent_argument(self, arg):
         """A macro argument with its `%expression' replaced by the value.
