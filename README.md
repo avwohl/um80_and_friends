@@ -357,10 +357,10 @@ changes.
 
 ### Register Names as Values
 
-In 8080 code um80 gives each register name a number and reads a register
-operand as an expression, as MACRO-80 and DRI's MAC and RMAC do: B 0, C 1,
-D 2, E 3, H 4, L 5, M 6, A 7, SP and PSW 6. A symbol equated to a register
-name names that register:
+In 8080 code um80 gives each register name a number, in any expression, and
+reads a register operand as an expression, as MACRO-80 and DRI's MAC and RMAC
+do: B 0, C 1, D 2, E 3, H 4, L 5, M 6, A 7, SP and PSW 6 (`DB B` is 00, `X EQU
+D+1` is 3). A symbol equated to a register name names that register:
 
 ```asm
 UR      EQU     B                   ; 0: register B
@@ -380,11 +380,12 @@ bytes into the code, is `DAD D`), with a warning. See
 
 ### PUSH A / POP A
 
-DRI assemblers allowed `PUSH A` and `POP A` as synonyms for `PUSH PSW` and `POP PSW`:
+DRI's MAC and RMAC take `PUSH A` and `POP A` for `PUSH PSW` and `POP PSW`, and
+so does `um80 --dri`; M80 flags them, and without `--dri` they are an error:
 
 ```asm
-        PUSH A                      ; Same as PUSH PSW (push A and flags)
-        POP A                       ; Same as POP PSW (pop A and flags)
+        PUSH A                      ; PUSH PSW (push A and flags), with --dri
+        POP A                       ; POP PSW (pop A and flags), with --dri
 ```
 
 ### External Symbol Aliases (EQU external+offset)
@@ -430,7 +431,7 @@ For more details on these extensions and compatibility notes, see [docs/EXTENSIO
 
 ## Testing
 
-The test suite (614 tests) runs under `pytest`:
+The test suite (630 tests) runs under `pytest`:
 
 ```bash
 pip install -e ".[dev]"
@@ -468,6 +469,7 @@ Digital Research's MAC 2.0 and RMAC 1.1:
 | `test_dri_names.py` | (DRI) `--dri` ignores a `$` inside a name, as MAC and RMAC do, but not in a macro call's arguments or an `IRP`/`IRPC` list; without it `$` is part of the name, as in M80 |
 | `test_operator_names.py` | A name that ends in an operator's letters (`X1EQ+2`) is read whole; a symbol named like an operator (`EQ:`, `TYPE EQU 5`) is that symbol, as in M80; an operator with nothing on one side is an error; `TYPE` of an expression |
 | `test_condition_names.py` | In Z80 code a label named like a condition (`P:`, `NZ:`) is `JP`'s address, as in M80 |
+| `test_register_expressions.py` | (DRI) A register name is its number in any 8080 expression (`DB B`, `X EQU D+1`); M80 flags two in one expression and `PUSH A`, MAC takes them (`--dri`); a symbol named like a register is that symbol, as in M80 |
 | `test_end_directive.py` | (DRI) Nothing after `END` is assembled - the rest of the file, a macro, a `REPT`, an `INCLUDE` file - as in M80, MAC and RMAC |
 | `test_column_one.py` | (DRI) An instruction, directive or macro in column 1 is one; a statement of values is a `DB` and a label needs a colon, as in M80; with `--dri` a word with no colon is a label and a line number or a `*` line is ignored, as in MAC |
 

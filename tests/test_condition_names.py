@@ -52,6 +52,13 @@ def test_a_label_named_like_a_condition_as_m80():
                                         ' C3 P0011 C3 P0014')
 
 
+def test_c_and_m_are_labels_too():
+    # C and M are also registers.  M80: 00 C3 P0000 C3 P0004.
+    ok, items, errors = _assemble("\t.z80\nc:\tnop\n\tjp\tc\nm:\tjp\tm\n\tend\n")
+    assert ok, errors
+    assert _fields(items) == ['00', 'C3', 'P0000', 'C3', 'P0004']
+
+
 def test_defined_further_down():
     # M80 gets this one wrong (P, a phase error: its pass 1 took `JP NC'
     # for a one-byte instruction), and jumps to 18H.

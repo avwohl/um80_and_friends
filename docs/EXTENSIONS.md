@@ -203,10 +203,16 @@ that um80 assembles without `--dri` assembles to the same object with it.
   a `PUBLIC` or `EXTRN` name. MP/M II's nucleus depends on it (`DSPTCH.ASM`'s
   `extrn userprocess` is `MEMMGR.ASM`'s `userpr`).
 
+**`PUSH A` is `PUSH PSW`, and an expression may have two register names in
+it,** as in MAC and RMAC (M80 flags both); see
+[PUSH A / POP A](#push-a--pop-a) and
+[Register Names as Values](#register-names-as-values-equ-of-a-register).
+
 Where MAC, RMAC and M80 agree, um80 behaves that way with or without `--dri`:
 a source byte's bit 7 is cleared (a line ending CR 8AH is a line end), the name
 of an `EQU`, `SET` or `MACRO` may be indented, and in 8080 code a register name
-is a number (`RD EQU D` then `DAD RD` is `DAD D`).
+is a number in any expression (`RD EQU D` then `DAD RD` is `DAD D`, `DB B` is
+00).
 
 Other differences between MAC/RMAC and M80 that `--dri` does not cover (none of
 MP/M II's sources needs them): MAC takes `=` as `EQ` (`IF @Y = 1`, in
@@ -218,7 +224,8 @@ and um80 leave it out (`DB 'A<8AH>B'` is 41 42).
 ### Register Names as Values (EQU of a register)
 
 In 8080 code, MACRO-80 and DRI's MAC and RMAC give each register name a
-number and read a register operand as an expression, and so does um80:
+number, in any expression, and read a register operand as an expression, and
+so does um80:
 
 | Name | B | C | D | E | H | L | M | A | SP | PSW |
 |------|---|---|---|---|---|---|---|---|----|-----|
@@ -257,16 +264,46 @@ Up to 0.3.50 um80 took a value for a pair's own encoding (0 BC, 1 DE, 2 HL,
 3 SP), so `RD EQU D` then `DAD RD` was `DAD H`, and an odd value was quietly
 taken for the pair of the register below it.
 
+The number is the name's value in any expression, not only in a register
+operand: `X EQU D+1` is 3 (`MOV A,X` is 7BH), `DB B` is 00, `MVI A,B` is 3E
+00, `JMP B` is C3 00 00, `OUT A` is D3 07 and `IF B EQ 0` is true, in M80 and
+MAC alike. Up to 0.3.50 um80 stopped at each with "Register 'B' used as
+value". M80 also reads `BC`, `DE` and `HL` as 0, 2 and 4 (MAC: undefined),
+and so does um80. Where they differ:
+
+- M80 flags an expression with two register names in it (`A*256+B`, `C-B`,
+  `A EQ B`) `O`, though it computes it; MAC does not. um80 reports it without
+  `--dri`, and takes it with. Through symbols (`X EQU A`, `Y EQU B`, `X-Y`)
+  neither flags anything.
+- A program may define a symbol named like a register (MAC flags it `S`).
+  M80 then reads the name as that symbol everywhere, in a register operand
+  too, and so does um80: after `C EQU 2`, `MOV A,C` is `MOV A,D` and `DB C`
+  is 02; after `A: NOP`, `DW A` is the label.
+- M80 gives its internal numbers to the Z80 names in 8080 code (`IX` 44H,
+  `IY` 64H, `AF` 6, `I` 8, `R` 9) and to the conditions (`Z` 1, `PE` 5); MAC
+  reports them undefined, and so does um80.
+- In Z80 code (`.Z80`) M80 gives every register name the value 0 in an
+  expression (`X EQU B` then `LD A,X` is `LD A,0`); um80 reports it. A
+  symbol of the name is the symbol there too (after `C: NOP`, `JP C` jumps to
+  it); but a register operand is still the register (`B EQU 9` then `LD A,B`
+  is `LD A,B`, where M80 loads 9).
+
 ### PUSH A / POP A
 
-DRI assemblers allowed `PUSH A` and `POP A` as synonyms for `PUSH PSW` and `POP PSW`:
+DRI's MAC and RMAC take `PUSH A` and `POP A` - `PUSH 7`, any register pair
+operand whose value is A's 7 - for `PUSH PSW` and `POP PSW`, and so does
+`um80 --dri`:
 
 ```asm
-        PUSH A                      ; Same as PUSH PSW
-        POP A                       ; Same as POP PSW
+        PUSH A                      ; Same as PUSH PSW, with --dri
+        POP A                       ; Same as POP PSW, with --dri
 ```
 
-This is shorthand recognized in MP/M and CP/M Plus source code.
+MP/M II's `BNKBDOS.ASM` and `BDOS30.ASM` use them. M80 flags them `A` (and
+pushes PSW), and without `--dri` they are an error in um80, as they are in
+M80. Up to 0.3.50 um80 took `PUSH A` for `PUSH PSW` without `--dri` and
+rejected `PUSH 7`. The other odd numbers (`PUSH 1`, `DAD 7`, `DAD A`) are
+errors in all three.
 
 ### The first word of a statement
 
@@ -733,7 +770,8 @@ defined global" but wrote the output and exited 0.
 | `$` digit separator | ✗ | ✓ | ✓ | ✗ |
 | `$` ignored inside names | ✗ | `--dri` | ✓ | ✗ |
 | Register EQU aliases | ✓ | ✓ | ✓ | ✗ |
-| PUSH A / POP A | ✗ | ✓ | ✓ | ✗ |
+| Register name in any expression (`DB B`) | ✓ | ✓ | ✓ | ✗ |
+| PUSH A / POP A | ✗ | `--dri` | ✓ | ✗ |
 | Label with no colon | ✗ | `--dri` | ✓ | ✗ |
 | Statement of values (`LAB: 5,6` is `DB`) | ✓ | ✓ | ✗ | ✗ |
 | EQU external+offset | ✗ | ✓ | ✗ | ✓ |
@@ -745,7 +783,7 @@ defined global" but wrote the output and exited 0.
 
 ## Version History
 
-- **Unreleased** — `--dri` (a `$` inside a name is ignored, a word with no colon may be a label, as in MAC and RMAC); an instruction or directive in column 1 is one, and a statement of values is a `DB`, as in M80; in 8080 code a register name is its number, as in M80 and MAC; ul80 `--fatal-mult-def`
+- **Unreleased** — `--dri` (a `$` inside a name is ignored, a word with no colon may be a label, `PUSH A` is `PUSH PSW`, as in MAC and RMAC); an instruction or directive in column 1 is one, and a statement of values is a `DB`, as in M80; in 8080 code a register name is its number in any expression, as in M80 and MAC; ul80 `--fatal-mult-def`
 - **0.3.50** — MACRO-80 IRP/IRPC lists, 6-character `-t`, mbasic2025 in the test suite
 - **0.3.49** — link-time expressions (REL extension link items), LINK-80 interchange, absolute code in a link
 - **0.3.48** — `--spr`, `--extra` and `--aseg`; `--prl` links a transient at 100H

@@ -418,6 +418,11 @@ class Assembler:
         # While an 8080 register operand is read (register_value()), a
         # register name in it is its number.
         self.register_operand = False
+        # Register names read as values in the expression being evaluated
+        # (eval_operand()), and how deep in it the evaluation is.
+        self.registers_read = 0
+        self.eval_depth = 0
+        self.register_number = None  # what register_value() last read
         self.phase = None  # (run address, location counter) after .PHASE
         self.rel_common = None  # COMMON block last selected in the .REL
         self.reported_unlinkable = set()  # symbols report_unlinkable() named
@@ -1146,7 +1151,29 @@ class Assembler:
         The value/seg/ext/name fields are exactly what parse_expression() has
         always returned; `kind' and the postfix form say what the linker has
         to be told when the value depends on segment placement or externals.
+
+        In 8080 code a register name is its number (REG_VALUES), as in M80
+        and MAC: `X EQU D+1' is 3, `DB B' 00, `MVI A,B' 3E 00.  M80 flags an
+        expression with two register names in it (`A*256+B', `C-B') O,
+        though it computes it; MAC does not, and neither does um80 with
+        --dri.
         """
+        top = self.eval_depth == 0
+        if top:
+            self.registers_read = 0
+        self.eval_depth += 1
+        try:
+            ev = self._evaluate(expr, allow_undefined)
+        finally:
+            self.eval_depth -= 1
+        if (top and self.registers_read > 1 and not self.dri
+                and self.pass_num == 2):
+            self.error(f"'{expr.strip()}' has {self.registers_read} register names"
+                       f" in it (M80: O; MAC takes it: --dri)")
+        return ev
+
+    def _evaluate(self, expr, allow_undefined=False):
+        """eval_operand() of `expr', which may be part of the expression."""
         expr = expr.strip()
         if not expr:
             return ExprValue(0)
@@ -1330,6 +1357,9 @@ class Assembler:
             self.reading_pure = False
             arg = expr[4:].strip()
             if re.match(r'^[A-Za-z_@?][A-Za-z0-9_@?$.]*$', arg):
+                if (arg.upper() in REG_VALUES and not self.z80_mode
+                        and not self.names_symbol(arg)):
+                    return ExprValue(0x20)  # a number, as M80 has it
                 sym = self.symbols.get(arg.upper())
                 if sym:
                     result = sym.seg_type & 0x03
@@ -1361,10 +1391,17 @@ class Assembler:
         if re.match(r'^[$A-Za-z_@?][A-Za-z0-9_@?$.]*$', expr):
             upper = expr.upper()
 
-            # Check if it's a register (not a symbol)
-            if self.register_operand and upper in REG_VALUES:
-                return ExprValue(REG_VALUES[upper])
-            if upper in REGS or upper in REGPAIRS or upper in REGPAIRS_PUSHPOP:
+            # A register name, but for a symbol of that name (M80 reads
+            # `B EQU 9' / `DB B' as 09): in 8080 code, its number, as in
+            # M80 and MAC.  um80 made it "Register 'B' used as value" but in
+            # a register operand, so `X EQU D+1', `DB B', `MVI A,B' and `IF
+            # B EQ 0' did not assemble.  In Z80 code M80 gives every
+            # register name 0; um80 keeps the error.
+            if ((upper in REGS or upper in REGPAIRS or upper in REGPAIRS_PUSHPOP)
+                    and not self.names_symbol(upper)):
+                if self.register_operand or not self.z80_mode:
+                    self.registers_read += 1
+                    return ExprValue(REG_VALUES[upper])
                 self.error(f"Register '{expr}' used as value")
                 return ExprValue(0)
 
@@ -2097,8 +2134,10 @@ class Assembler:
         an address (`HIGH LAB', `LAB-Y') is None, as it was in 0.3.50.
         """
         name = text.strip().upper()
-        if name in REG_VALUES:
-            return REG_VALUES[name]
+        self.register_number = None
+        if name in REG_VALUES and not self.names_symbol(name):
+            self.register_number = REG_VALUES[name]
+            return self.register_number
         errors = len(self.errors)
         self.register_operand = True
         try:
@@ -2114,6 +2153,7 @@ class Assembler:
             what = 'an external' if ev.kind == 'ext' else 'an address'
             self.warning(f"register operand '{text.strip()}' is {what}: its offset,"
                          f" {ev.value}, is taken for the register, as in M80 (RMAC: V)")
+        self.register_number = ev.value
         return ev.value
 
     def resolve_register_alias(self, name):
@@ -2122,7 +2162,7 @@ class Assembler:
         The operand is a register name or an expression whose value is the
         register's number, 0 to 7 (register_value()).
         """
-        if name.strip().upper() in REGS:
+        if name.strip().upper() in REGS and not self.names_symbol(name.strip()):
             return name.strip().upper()
         val = self.register_value(name)
         for reg, num in REGS.items():
@@ -2142,7 +2182,7 @@ class Assembler:
         MAC flags it R.
         """
         upper = name.strip().upper()
-        if upper in regpair_dict:
+        if upper in regpair_dict and not self.names_symbol(upper):
             return upper
         val = self.register_value(name)
         if val is None or val & 1 or not 0 <= val <= 6:
@@ -2282,12 +2322,15 @@ class Assembler:
             if len(ops) != 1:
                 self.error(f"{operator} requires one operand")
                 return True
-            # DRI extension: PUSH A / POP A is alias for PUSH PSW / POP PSW
-            op_upper = ops[0].strip().upper()
-            if op_upper == 'A':
+            rp = self.resolve_regpair_alias(ops[0], REGPAIRS_PUSHPOP)
+            if rp is None and self.register_number == 7:
+                # PUSH A, POP A, PUSH 7: MAC and RMAC take it for PSW.  M80
+                # flags it A (and pushes PSW).
+                if not self.dri:
+                    self.error(f"{operator} {ops[0].strip()}: A (7) is not a register"
+                               f" pair (M80: A; MAC takes it for PSW: --dri)")
+                    return True
                 rp = 'PSW'
-            else:
-                rp = self.resolve_regpair_alias(ops[0], REGPAIRS_PUSHPOP)
             if rp is None:
                 self.error(f"Invalid register pair for {operator}: {ops[0]}")
                 return True
@@ -3291,7 +3334,7 @@ class Assembler:
             # is 0, and MR then names register B (register_value()); `X EQU
             # SP' and `X EQU PSW' are 6.
             op_upper = ops[0].strip().upper()
-            if op_upper in REG_VALUES:
+            if op_upper in REG_VALUES and not self.names_symbol(op_upper):
                 self.define_symbol(label, REG_VALUES[op_upper], ADDR_ABSOLUTE)
                 return True
             reads = {} if self.pass_num == 1 else None
@@ -3330,7 +3373,7 @@ class Assembler:
             link_expr = None
             name = label.upper()
             k = self.set_count.get(name, 0) + 1  # this SET's node: (name, k)
-            if op_upper in REG_VALUES:
+            if op_upper in REG_VALUES and not self.names_symbol(op_upper):
                 val, seg = REG_VALUES[op_upper], ADDR_ABSOLUTE
             else:
                 # `X SET X+1' reads the X of the line before, not the one

@@ -38,6 +38,9 @@ LINK-80 3.44 under cpmemu, and each has a regression test that fails on
   and `HALT LXI H,1` in 8080 code. A line number in front of a statement
   (`00010 LAB: NOP`), a line that starts with `*` (a `!` still ends it, as in
   MAC) and MAC's assembly controls (`$-MACRO`) are ignored, as in MAC.
+- um80 assembler: with `--dri`, `PUSH A`, `POP A` and `PUSH 7` are `PUSH PSW`
+  and `POP PSW`, and an expression may have two register names in it
+  (`A*256+B`), as in MAC and RMAC (see Changed).
 - um80 assembler: M80's `$TITLE('text')` (a subtitle) and `$EJECT`. um80 took
   `$TITLE` in column 1 for a label.
 - ul80 linker: `--fatal-mult-def` makes a global that more than one module
@@ -52,6 +55,11 @@ LINK-80 3.44 under cpmemu, and each has a regression test that fails on
   number (M80: `O`); um80 left both out, without a word. DRI sources that
   have them - `CPM22.ASM`, `GENHEX.ASM`, MP/M II's `BNKBDOS.ASM` - need
   `--dri`.
+- um80 assembler: `PUSH A` and `POP A` are an error without `--dri`, as M80
+  flags them (`A`); with `--dri` they are `PUSH PSW` and `POP PSW`, as in MAC
+  and RMAC, which also take `PUSH 7`. um80 took `PUSH A` for `PUSH PSW` in
+  either mode (and rejected `PUSH 7`). MP/M II's `BNKBDOS.ASM` and
+  `BDOS30.ASM` need `--dri`.
 - ul80 linker: a global that a second module defines is now LINK-80's
   warning, with its message, `%Mult. Def. Global FOO`, and ul80 says which
   modules define it and whose definition every reference uses: the first one
@@ -90,6 +98,17 @@ LINK-80 3.44 under cpmemu, and each has a regression test that fails on
   MAC and RMAC do not let a program define such a name. An operator with
   nothing on one side - `DW EQ` or `DW SHL` with no such symbol, `DW 1 EQ` -
   is an error, as in M80 (`O`); um80 took the missing value for 0.
+- um80 assembler: in 8080 code a register name is its number in any
+  expression, as in M80 and MAC: `X EQU D+1` is 3 (`MOV A,X` is 7BH), `DB B`
+  00, `MVI A,B` 3E 00, `LXI H,SP` 21 06 00, `JMP B` C3 00 00, `IF B EQ 0`
+  true, `DB BC,DE,HL` (M80) 00 02 04. um80 stopped at each with "Register
+  'B' used as value" - the number was a register operand's only. An
+  expression with two register names in it (`A*256+B`) is an error without
+  `--dri`, as M80 flags it (`O`); MAC takes it. A symbol named like a
+  register is that symbol, as in M80, in a register operand too: after `C
+  EQU 2`, `MOV A,C` is `MOV A,D` and `DB C` 02 (um80: `MOV A,C`, and an
+  error). In Z80 code, where M80 makes every register name 0, a register
+  name in an expression is still an error.
 - um80 assembler: in Z80 code, `JP P` after a label `P` jumps to it, as in
   M80, and so do `JP Z`, `JP NZ`, `JP PE` and the rest after labels of those
   names, defined before or after the jump. um80 stopped with "JP with

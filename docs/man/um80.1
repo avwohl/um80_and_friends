@@ -66,6 +66,9 @@ macro is a label, colon or not, in any column (\fBOBP DS 1\fR); a line
 number in front of a statement, a line that starts with \fB*\fR and MAC's
 assembly controls (\fB$\-MACRO\fR) are ignored.  Without \fB\-\-dri\fR a
 label needs its colon, as in MACRO-80.
+\fBPUSH A\fR and \fBPOP A\fR are PUSH PSW and POP PSW, and an expression may
+have two register names in it; MACRO-80 flags both, and so does um80 without
+\fB\-\-dri\fR.
 \fB\-\-dri\fR does not imply \fB\-\-aseg\fR (MAC's absolute sources) or
 \fB\-t\fR (RMAC's six-character names).
 .TP
