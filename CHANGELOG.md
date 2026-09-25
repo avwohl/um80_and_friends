@@ -74,6 +74,25 @@ LINK-80 3.44 under cpmemu, and each has a regression test that fails on
   in the expansion. The name in front of an `EQU`, `SET`, `DEFL`, `ASET` or
   `MACRO` is still a name, in any column (`NOP EQU 5` defines `NOP`, as in
   M80).
+- um80 assembler: a name is read whole where it ends in the letters of a
+  word operator (MOD, SHL, SHR, AND, OR, XOR, NOT, EQ, NE, LT, LE, GT, GE,
+  HIGH, LOW, NUL, TYPE) and a `+` or `-` follows: `X1EQ+2`, `@P$NUL-1` and
+  `X1LOW+1` are the symbol plus or minus the number, as in M80 and MAC. um80
+  took the letters for the operator and the sign for its operand's, so each
+  was "Cannot parse expression", and uplm80 renamed such names or wrote the
+  offset first (`2+X1EQ`).
+- um80 assembler: a symbol named like an operator is that symbol wherever
+  the name occurs, as in M80, even when it is defined further down or
+  EXTRN: after `EQ: NOP`, `DW EQ` is the label (um80: 0FFFFH, `0 EQ 0`, so
+  `CALL EQ` called 0FFFFH, without a word); after `TYPE EQU 5`, `DB TYPE+2`
+  is 07 (um80: TYPE of +2, 00); `NUL EQU 5` then `DB NUL` is 05. It is not
+  the operator there, as in M80: `DB 1 EQ 1` is then an error (M80: `O`).
+  MAC and RMAC do not let a program define such a name. An operator with
+  nothing on one side - `DW EQ` or `DW SHL` with no such symbol, `DW 1 EQ` -
+  is an error, as in M80 (`O`); um80 took the missing value for 0.
+- um80 assembler: `TYPE` of an expression that is not a name is its mode
+  with the defined bit, as in M80: `TYPE 5`, `TYPE 'A'` and `TYPE +2` are
+  20H, `TYPE (LAB)` with LAB in CSEG 21H. um80 gave 0 for all of them.
 - um80 assembler: `END` ends the source, as in MACRO-80, MAC and RMAC,
   which read nothing after it - not the rest of the file, nor the rest of a
   macro, a `REPT` or an `INCLUDE` file that has one. um80 went on and

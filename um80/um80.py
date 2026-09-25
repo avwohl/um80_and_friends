@@ -1041,7 +1041,8 @@ class Assembler:
                                 # `X<TAB>AND<TAB>0FH' and `(X)SHR(4)').
                                 before_ok = (start == 0 or expr[start-1] not in IDENT_CHARS)
                                 after_ok = (i+1 >= len(expr) or expr[i+1] not in IDENT_CHARS)
-                                if before_ok and after_ok:
+                                if (before_ok and after_ok
+                                        and not self.names_symbol(op)):
                                     return (start, len(op))
                             else:
                                 # Symbol operator
@@ -1055,6 +1056,28 @@ class Assembler:
         'MOD', 'SHL', 'SHR', 'AND', 'OR', 'XOR', 'NOT',
         'EQ', 'NE', 'LT', 'LE', 'GT', 'GE', 'HIGH', 'LOW', 'NUL', 'TYPE',
     })
+
+    def names_symbol(self, name):
+        """True if `name' is a symbol of the program: defined, EXTRN, or
+        defined further down (the time through pass 1 before defined it).
+
+        MACRO-80 3.44 reads such a name as the symbol wherever it could also
+        be an operator or a register: after `EQ: NOP', `DW EQ' is the label
+        and `DW 1 EQ 1' is an error (O); after `TYPE EQU 5', `DB TYPE+2' is
+        07; after `B EQU 9', `DB B' is 09.  MAC and RMAC do not let a
+        program define such a name (S).
+        """
+        name = name.upper()
+        sym = self.symbols.get(name)
+        if sym is not None and (sym.defined or sym.external):
+            return True
+        return self.pass_num == 1 and name in self.prev_defs
+
+    def prefix_word(self, expr, word):
+        """prefix_operand(), for an operator the program has not made a
+        symbol (names_symbol())."""
+        rest = prefix_operand(expr, word)
+        return None if rest is None or self.names_symbol(word) else rest
 
     def find_binary_addsub(self, expr):
         """Rightmost binary '+'/'-' at paren level 0, skipping unary signs.
@@ -1093,8 +1116,14 @@ class Assembler:
             elif level == 0 and ch in '+-':
                 left = expr[:i].rstrip()
                 if left and left[-1] not in '+-*/(<,':
-                    m = re.search(r'([A-Za-z]+)$', left)
-                    if not (m and m.group(1).upper() in self._PRECEDING_WORD_OPS):
+                    # The word before the sign, whole: X1EQ, @P$NUL and
+                    # ALOW end in letters that make an operator, but are
+                    # names (`X1EQ+2' is X1EQ plus 2, as in M80; um80 read
+                    # it as X1 EQ +2, which did not parse).
+                    m = re.search(r'[A-Za-z0-9_@?$.]+$', left)
+                    word = m.group(0) if m else ''
+                    if not (word.upper() in self._PRECEDING_WORD_OPS
+                            and not self.names_symbol(word)):
                         return (i, ch)
             i -= 1
         return (-1, '')
@@ -1157,6 +1186,8 @@ class Assembler:
             idx, oplen = self.find_op_at_level0(expr, list(words))
             if idx >= 0:
                 word = expr[idx:idx+oplen].upper()
+                if self.missing_operand(expr, expr[:idx], expr[idx+oplen:], word):
+                    return ExprValue(0)
                 left = self.eval_operand(expr[:idx], allow_undefined)
                 right = self.eval_operand(expr[idx+oplen:], allow_undefined)
                 a, b = left.value & 0xFFFF, right.value & 0xFFFF
@@ -1165,7 +1196,7 @@ class Assembler:
                 return self._link_binary(word, left, right, value)
 
         # NOT (unary): binds tighter than AND/OR/XOR, looser than relational.
-        rest = prefix_operand(expr, 'NOT')
+        rest = self.prefix_word(expr, 'NOT')
         if rest is not None:
             operand = self.eval_operand(rest, allow_undefined)
             return self._link_unary(EXT_OP_NOT, operand,
@@ -1175,6 +1206,8 @@ class Assembler:
         idx, oplen = self.find_op_at_level0(expr, ['EQ', 'NE', 'LT', 'LE', 'GT', 'GE'])
         if idx >= 0:
             op = expr[idx:idx+oplen].strip().upper()
+            if self.missing_operand(expr, expr[:idx], expr[idx+oplen:], op):
+                return ExprValue(0)
             left = self.eval_operand(expr[:idx], allow_undefined)
             right = self.eval_operand(expr[idx+oplen:], allow_undefined)
             left_val, right_val = left.value & 0xFFFF, right.value & 0xFFFF
@@ -1228,6 +1261,8 @@ class Assembler:
         idx, oplen = self.find_op_at_level0(expr, ['*', '/', 'MOD', 'SHL', 'SHR'])
         if idx >= 0:
             op = expr[idx:idx+oplen].strip().upper()
+            if self.missing_operand(expr, expr[:idx], expr[idx+oplen:], op):
+                return ExprValue(0)
             left = self.eval_operand(expr[:idx], allow_undefined)
             right = self.eval_operand(expr[idx+oplen:], allow_undefined)
             # The offset beside an external may be negative (EXT-1).
@@ -1269,7 +1304,7 @@ class Assembler:
         # So a relocatable or external operand makes this an expression for
         # the linker to finish; see _link_unary().
         for word, code in (('HIGH', EXT_OP_HIGH), ('LOW', EXT_OP_LOW)):
-            inner = prefix_operand(expr, word)
+            inner = self.prefix_word(expr, word)
             if inner is not None:
                 # HIGH X, HIGH(X), HIGH<TAB>X.  A binary operator after the
                 # operand - HIGH(1234H)+1 - has already been split above.
@@ -1281,7 +1316,8 @@ class Assembler:
 
         # NUL operator - true (0FFFFh) if its argument is null/empty. The empty
         # case (a macro arg omitted, leaving a bare 'NUL') is its primary use.
-        if upper == 'NUL' or prefix_operand(expr, 'NUL') is not None:
+        if (upper == 'NUL' and not self.names_symbol('NUL')
+                or self.prefix_word(expr, 'NUL') is not None):
             arg = expr[3:].strip()
             if not arg or arg == '<>' or arg == "''":
                 return ExprValue(0xFFFF)
@@ -1290,7 +1326,7 @@ class Assembler:
         # TYPE operator - returns byte describing expression characteristics
         # Lower 2 bits: mode (0=abs, 1=prog rel, 2=data rel, 3=common rel)
         # Bit 5 (20H): defined; Bit 7 (80H): external
-        if prefix_operand(expr, 'TYPE') is not None:
+        if self.prefix_word(expr, 'TYPE') is not None:
             self.reading_pure = False
             arg = expr[4:].strip()
             if re.match(r'^[A-Za-z_@?][A-Za-z0-9_@?$.]*$', arg):
@@ -1302,7 +1338,8 @@ class Assembler:
                     if sym.external:
                         result |= 0x80
                     return ExprValue(result)
-            return ExprValue(0)
+                return ExprValue(0)
+            return ExprValue(self.type_of(arg))
 
         # Handle ## suffix (6-character truncation operator, implies external)
         if expr.endswith('##'):
@@ -1377,6 +1414,40 @@ class Assembler:
 
         self.error(f"Cannot parse expression: '{expr}'")
         return ExprValue(0)
+
+    def type_of(self, text):
+        """TYPE of an expression that is not a name: 20H (defined) with its
+        mode in the low two bits, 80H for an external, 0 if it does not
+        evaluate.  M80: `TYPE 5', `TYPE 'A'' and `TYPE +2' are 20H, `TYPE
+        (LAB)' 21H with LAB in CSEG; um80 gave 0 for all of them.  (TYPE
+        binds tighter than + and -: `TYPE LAB+1' is (TYPE LAB)+1.)
+        """
+        errors = len(self.errors)
+        ev = self.eval_operand(text)
+        if len(self.errors) > errors:
+            del self.errors[errors:]
+            return 0
+        if ev.kind == 'abs':
+            return 0x20
+        if ev.kind == 'rel':
+            return 0x20 | (ev.seg & 0x03)
+        if ev.kind == 'ext':
+            return 0x80
+        return 0
+
+    def missing_operand(self, expr, left, right, word):
+        """True, and an error in pass 2, if a binary operator has nothing on
+        one side: `DW EQ' or `DW SHL', with no symbol EQ or SHL, and `* TEXT'
+        (M80: O).  um80 took the missing value for 0, so `DW EQ' was 0FFFFH
+        (0 EQ 0), without a word.  Pass 1 does not report it: a name defined
+        further down (`DW EQ / EQ: NOP') is only a symbol from the second
+        time through (names_symbol()).
+        """
+        if left.strip() and right.strip():
+            return False
+        if self.pass_num == 2:
+            self.error(f"'{expr}': {word} needs a value on each side")
+        return True
 
     @staticmethod
     def _ext_offset(value):
