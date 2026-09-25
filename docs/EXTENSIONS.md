@@ -198,7 +198,9 @@ M80 as well.
 Only an argument that starts with `%` is a value, as in MAC; M80 also reads
 `A%E` as `A` and E's value, and `<A>%E` as `A` and the value, and evaluates a
 `%` in an `IRP` list, which MAC reads as text. A `%` expression runs to its
-comma, blanks and all, in all three (`MM %1 + 1,5` passes 2 and 5). An item of
+comma, blanks and all, in all three (`MM %1 + 1,5` passes 2 and 5), and a `<`
+or a `>` in it is MAC's relational operator, not a bracket (`MM %1<2,3`
+passes 65535 and 3; M80 flags the `<`). An item of
 an `IRP` list ends at a comma only, as in MAC (`<A ,B>` is A and B), and a `;`
 in the list, outside a nested `<...>`, is an error, as MAC and RMAC flag it
 `B`; M80 ends an item at a `,`, a `;`, a blank or a tab, so there `<A;B>` and

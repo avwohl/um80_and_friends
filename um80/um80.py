@@ -1928,10 +1928,15 @@ class Assembler:
         the rest is comment (um80 passed `"A;B"' and C).  So do M80, MAC
         and RMAC in the string of an IRPC: `IRPC X,"A;B"' goes round `"'
         and A.
+
+        In a macro call's argument that starts with `%' MAC's `<' and `>'
+        are operators, not brackets (macro_call_arguments()): with --dri
+        `MM %1<2;X' passes 65535, and X is comment.
         """
         irpc = operator == 'IRPC'
         bang = not self.dri and not irpc
-        depth, end = 0, i
+        percent = self.dri and operator not in ('IRP', 'IRPC')
+        depth, value, first, end = 0, False, True, i
         n = len(line)
         while i < n:
             ch = line[i]
@@ -1940,18 +1945,25 @@ class Assembler:
                 continue
             if bang and ch == '!' and i + 1 < n:
                 i += 2
-                end = i
+                first, end = False, i
                 continue
             if ch == "'" or (ch == '"' and not irpc):
                 if self._starts_argument_string(line, i):
                     i = end = self._string_end(line, i)
+                    first = False
                     continue
             if ch == ';' and not depth:
                 return end, i
-            if ch == '<':
+            if first and percent and ch == '%' and not depth:
+                value = True
+            if value:
+                if ch == ',':
+                    value = False
+            elif ch == '<':
                 depth += 1
             elif ch == '>':
                 depth = max(depth - 1, 0)
+            first = ch == ',' and not depth
             i += 1
             end = i
         return end, None
@@ -2044,7 +2056,11 @@ class Assembler:
         else they flag S and leave out, and um80 reports an error (`MM A B'
         passes A in MAC).  A '>' with no '<' is text: `MM 1>2,3' passes
         `1>2' and 3.  A `"' is text, not a quote (_starts_argument_string()):
-        `MM "A,B",C' passes `"A', `B"' and C.
+        `MM "A,B",C' passes `"A', `B"' and C.  In an argument that starts
+        with `%' a `<' or a `>' is MAC's operator, not a bracket: `MM
+        %1<2,3' passes 1<2's value, 65535, and 3 (um80 read `<2,3' as a
+        group that ran to the end of the line, and could not parse the
+        expression).
 
         um80 kept a blank in an argument: `MM A B' passed `A B', and `MM 1
         + 1,5' `1 + 1' and 5, where M80 passes 1, +, 1 and 5, without a
@@ -2066,7 +2082,9 @@ class Assembler:
                 if self._starts_argument_string(operands, i):
                     i = self._string_end(operands, i)
                     continue
-                if ch == '<':
+                if value and self.dri and ch in '<>':
+                    pass            # MAC's LT or GT (`MM %1<2,3')
+                elif ch == '<':
                     depth += 1
                 elif ch == '>' and depth:
                     depth -= 1
@@ -5084,7 +5102,8 @@ class Assembler:
         is a value, and --dri reads a name in the expression without its
         `$', so `%N$C' is the value of NC.  A `%' inside a <...> group is
         text, as is one after `!' or in a quoted string; in M80 one after
-        a group is a value (`<A>%1+1' is A2).
+        a group is a value (`<A>%1+1' is A2).  In MAC a `<' or a `>' in the
+        expression is an operator (`MM %1<2,3', macro_call_arguments()).
         """
         i = self._percent_position(arg)
         if i is None or not arg[i + 1:].strip():

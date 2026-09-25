@@ -541,6 +541,45 @@ def test_mac_flags_a_semicolon_after_a_double_quote_in_an_irp_list(lst, m80):
     assert not ok and any("';'" in e and 'IRP' in e for e in errors), errors
 
 
+# In a macro call's argument that starts with `%', MAC 2.0 and RMAC 1.1
+# read a `<' or a `>' as an operator, not a bracket: `MM %1<2,3' passes 1<2's
+# value, 65535, and 3.  um80 --dri read `<2,3' as a group that ran to the end
+# of the line - "Cannot parse expression" - and a `;' after such a `<' was
+# not a comment.  (M80 flags the `<' O.)
+MACROS['1'] = "MM\tMACRO\tP\n\tDB\t0EEH\n\tDB\tP\n\tENDM\n"
+
+
+@pytest.mark.parametrize('macro, call, mac', [
+    ('2', '%1<2,3', 'eeffee03'),
+    ('2', '%2<1,3', 'ee00ee03'),
+    ('2', '%1<=2,3', 'eeffee03'),
+    ('2', '%1 < 2,3', 'eeffee03'),
+    ('2', '%1<2 ,3', 'eeffee03'),
+    ('2', '%1<=2 , 3', 'eeffee03'),
+    ('2', '%0<-1,3', 'eeffee03'),
+    ('2', '%(1<2),3', 'eeffee03'),
+    ('2', "%'<'<2,3", 'ee00ee03'),
+    ('2', '%1<2,<3>', 'eeffee03'),
+    ('2', '%1<2,%3<2', 'eeffee00'),
+    ('3', '5,%1<2,3', 'ee05eeffee03'),
+    # A `;' after it starts the comment.
+    ('1', '%1<2;X', 'eeff'),
+    ('1', '%1<2 ;<X', 'eeff'),
+    ('1', '%2<1;<', 'ee00'),
+    ('2', '%(1<2),3;X', 'eeffee03'),
+    ('2', '%1<2,<3;4>', 'eeffee03'),
+    # As before.
+    ('2', '%1<2>1,3', 'eeffee03'),
+    ('2', '1,%2<3', 'ee01eeff'),
+    ('2', '<1>,%1<2', 'ee01eeff'),
+])
+def test_mac_a_bracket_in_a_percent_argument_is_an_operator(macro, call, mac):
+    ok, code, errors, warnings = _assemble(MACROS[macro] + "\tMM\t" + call + "\n",
+                                           dri=True)
+    assert ok, errors
+    assert code == mac and warnings == []
+
+
 # The items of an IRP list.  MACRO-80 3.44 ends an item at a `,', a `;', a
 # blank or a tab, and skips the blanks in front of one.  4558825 made a `;'
 # inside the list's <...> text, so `IRP P,<A;B;C>' went round once, with

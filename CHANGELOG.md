@@ -380,6 +380,12 @@ on 0.3.50.
   without a word. In the string of an `IRPC` a `"` is text in M80 too:
   `IRPC X,"A;B"` goes round `"` and A in all three, where um80 went round
   `"`, A, `;`, B and `"`, with or without `--dri`.
+- um80 assembler: with `--dri`, a `<` or a `>` in a macro argument that
+  starts with `%` is now MAC's relational operator, not a bracket: `MM
+  %1<2,3` passes 65535 (1<2 is true) and 3, as in MAC and RMAC (FF 03 from
+  `DB P` and `DB Q`). um80 read `<2,3` as a `<...>` group that ran to the
+  end of the line, and reported "Cannot parse expression", and a `;` after
+  such a `<` was not a comment (`MM %1<2;X`).
 
 ## [0.3.50] - 2026-09-25
 
