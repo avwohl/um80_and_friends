@@ -1922,8 +1922,15 @@ class Assembler:
         first `;' outside a string, and then passed `A!', `A"B;C', `A>'
         and `A!' there, without a word.  (MAC and RMAC end the statement
         at the '!', and um80 --dri reads the comment as before.)
+
+        MAC and RMAC (--dri) read a `"' in a macro call's arguments and an
+        IRP list as text, not as a quote: `MM "A;B",C' passes `"A', and
+        the rest is comment (um80 passed `"A;B"' and C).  So do M80, MAC
+        and RMAC in the string of an IRPC: `IRPC X,"A;B"' goes round `"'
+        and A.
         """
-        bang = not self.dri and operator != 'IRPC'
+        irpc = operator == 'IRPC'
+        bang = not self.dri and not irpc
         depth, end = 0, i
         n = len(line)
         while i < n:
@@ -1935,9 +1942,10 @@ class Assembler:
                 i += 2
                 end = i
                 continue
-            if self._starts_string(line, i):
-                i = end = self._string_end(line, i)
-                continue
+            if ch == "'" or (ch == '"' and not irpc):
+                if self._starts_argument_string(line, i):
+                    i = end = self._string_end(line, i)
+                    continue
             if ch == ';' and not depth:
                 return end, i
             if ch == '<':
@@ -2035,7 +2043,8 @@ class Assembler:
         comma there starts the next (`MM A ,B' passes A and B), and anything
         else they flag S and leave out, and um80 reports an error (`MM A B'
         passes A in MAC).  A '>' with no '<' is text: `MM 1>2,3' passes
-        `1>2' and 3.
+        `1>2' and 3.  A `"' is text, not a quote (_starts_argument_string()):
+        `MM "A,B",C' passes `"A', `B"' and C.
 
         um80 kept a blank in an argument: `MM A B' passed `A B', and `MM 1
         + 1,5' `1 + 1' and 5, where M80 passes 1, +, 1 and 5, without a
@@ -2054,7 +2063,7 @@ class Assembler:
                 if ch == '!' and i + 1 < n:
                     i += 2
                     continue
-                if self._starts_string(operands, i):
+                if self._starts_argument_string(operands, i):
                     i = self._string_end(operands, i)
                     continue
                 if ch == '<':
@@ -4285,7 +4294,7 @@ class Assembler:
                 if ch == '!':
                     i += 2
                     continue
-                if self._starts_string(rest, i):
+                if self._starts_argument_string(rest, i):
                     i = self._string_end(rest, i)
                     continue
             if ch == '<':
@@ -4337,7 +4346,7 @@ class Assembler:
                 if ch == '!' and i + 1 < n:
                     i += 2
                     continue
-                if self._starts_string(inner, i):
+                if self._starts_argument_string(inner, i):
                     i = self._string_end(inner, i)
                     continue
                 if ch == '<':
@@ -4365,6 +4374,16 @@ class Assembler:
         """
         ch = text[i]
         return ch == '"' or (ch == "'" and not (i and text[i - 1].isalnum()))
+
+    def _starts_argument_string(self, text, i):
+        """Whether text[i] opens a quoted string in a macro call's
+        arguments or an IRP list.
+
+        MAC and RMAC (--dri) quote with `'' only, and read a `"' as text:
+        `MM "A,B",C' passes `"A', `B"' and C, and `IRP X,<"A,B">' goes
+        round `"A' and `B"'.  M80 reads `"A,B"' as one string.
+        """
+        return self._starts_string(text, i) and not (self.dri and text[i] == '"')
 
     @staticmethod
     def _string_end(text, i):
@@ -4766,7 +4785,7 @@ class Assembler:
                 result.append(arg[i + 1])
                 i += 2
                 continue
-            if self._starts_string(arg, i):
+            if self._starts_argument_string(arg, i):
                 end = self._string_end(arg, i)
                 result.append(arg[i:end])
                 i = end

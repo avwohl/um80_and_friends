@@ -66,7 +66,8 @@ string; only an argument that starts with \fB%\fR is a value; an item of
 an IRP list ends at a comma only, and a \fB;\fR in the list is an error
 (MACRO-80 ends an item at a comma, a \fB;\fR, a blank or a tab); the
 arguments of a macro call end at a blank after one, and text after it
-other than a comma is an error (MACRO-80 reads the blank as a comma); an IF that
+other than a comma is an error (MACRO-80 reads the blank as a comma); a
+\fB"\fR in a macro call's arguments or an IRP list is text, not a quote; an IF that
 a macro expansion, or one repetition of a REPT, IRP or IRPC, leaves open ends
 with it; a label on the ENDM that ends a body is defined where the body ends;
 and an IRPC with an empty string goes round once.

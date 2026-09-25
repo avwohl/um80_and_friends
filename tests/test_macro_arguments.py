@@ -470,6 +470,77 @@ def test_m80_a_bang_in_an_irp_list_quotes_a_semicolon(head, m80):
     assert code == m80 and warnings == []
 
 
+# MAC 2.0 and RMAC 1.1 quote a string with `'' only: a `"' in a macro
+# call's arguments or an IRP list is text, and a comma, a blank or a `;'
+# after it is what it is anywhere else - `MM "A,B",C' passes `"A', `B"' and
+# C.  um80 --dri read `"A,B"' as a string, as M80 does, so it passed `"A,B"'
+# and C, and `MM "A;B",C' `"A;B"' and C, without a word.
+@pytest.mark.parametrize('call, mac', [
+    ('"A,B",C', 'ee5a2241ee594222ee5843'),                # `"A', `B"', C
+    ('A"B,C"', 'ee5a412242ee594322ee58'),
+    ('A","B', 'ee5a4122ee592242ee58'),
+    ('A, "B,C"', 'ee5a41ee592242ee584322'),
+    ('"A;B",C', 'ee5a2241ee59ee58'),                      # `"A'
+    ('"A,B" ;"C', 'ee5a2241ee594222ee58'),
+    ('"<A,B>",C', 'ee5a22412c4222ee5943ee58'),            # `"A,B"', C
+    ('<">,A', 'ee5a22ee5941ee58'),                        # `"', A
+    # As before.
+    ('"A>B",C', 'ee5a22413e4222ee5943ee58'),
+    ('"""",A', 'ee5a22222222ee5941ee58'),
+])
+def test_mac_a_double_quote_in_a_macro_argument_is_text(call, mac):
+    ok, code, errors, warnings = _assemble(THREE_TEXT + "\tMM\t" + call + "\n",
+                                           dri=True)
+    assert ok, errors
+    assert code == mac and warnings == []
+
+
+def test_mac_a_blank_after_a_double_quote_ends_the_arguments():
+    # `MM "A B",C': MAC and RMAC flag `B",C' S; um80 passed `"A B"' and C.
+    ok, _, errors, _ = _assemble(THREE_TEXT + "\tMM\t\"A B\",C\n", dri=True)
+    assert not ok
+    assert any('flag it S' in e for e in errors), errors
+
+
+@pytest.mark.parametrize('call, m80', [
+    # M80 reads `"...."' as a string.
+    ('"A,B",C', 'ee5a22412c4222ee5943ee5800'),
+    ('"A;B",C', 'ee5a22413b4222ee5943ee5800'),
+    ('"<A,B>",C', 'ee5a223c412c423e22ee5943ee5800'),
+    ('"A B",C', 'ee5a2241204222ee5943ee5800'),
+])
+def test_m80_a_double_quote_in_a_macro_argument_quotes(call, m80):
+    ok, code, errors, warnings = _assemble(THREE_TEXT + "\tMM\t" + call + "\n")
+    assert ok, errors
+    assert code == m80 and warnings == []
+
+
+@pytest.mark.parametrize('head, m80, mac', [
+    # An IRP list: M80's string, MAC's text.
+    ('IRP\tX,<"A,B">', 'ee5122412c4222', 'ee512241ee514222'),
+    # An IRPC string: text in all three, so a `;' starts the comment (um80
+    # went round `"A;B"' with or without --dri).
+    ('IRPC\tX,"A;B"', 'ee5122ee5141', 'ee5122ee5141'),
+    ('IRPC\tX,"A;B" ;C', 'ee5122ee5141', 'ee5122ee5141'),
+    ('IRPC\tX,A"B;C"', 'ee5141ee5122ee5142', 'ee5141ee5122ee5142'),
+])
+def test_a_double_quote_in_an_irp_list_or_an_irpc_string(head, m80, mac):
+    for dri, want in ((False, m80), (True, mac)):
+        ok, code, errors, warnings = _assemble("\t" + head + "\n" + Q_ITEM, dri=dri)
+        assert ok, errors
+        assert code == want and warnings == [], dri
+
+
+@pytest.mark.parametrize('lst, m80', [
+    ('<"A;B">', 'ee5122413b4222'),
+    ('<A,"B;C">', 'ee5141ee5122423b4322'),
+])
+def test_mac_flags_a_semicolon_after_a_double_quote_in_an_irp_list(lst, m80):
+    assert _code("\tIRP\tX," + lst + "\n" + Q_ITEM) == m80
+    ok, _, errors, _ = _assemble("\tIRP\tX," + lst + "\n" + Q_ITEM, dri=True)
+    assert not ok and any("';'" in e and 'IRP' in e for e in errors), errors
+
+
 # The items of an IRP list.  MACRO-80 3.44 ends an item at a `,', a `;', a
 # blank or a tab, and skips the blanks in front of one.  4558825 made a `;'
 # inside the list's <...> text, so `IRP P,<A;B;C>' went round once, with

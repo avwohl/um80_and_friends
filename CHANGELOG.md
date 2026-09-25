@@ -372,6 +372,14 @@ on 0.3.50.
   at the end of the arguments is kept (`MM A! ;B` passes `A `; um80 `A!`) -
   all without a word. With `--dri` the comment starts where it did; MAC and
   RMAC end the statement at the `!`.
+- um80 assembler: with `--dri`, a `"` in a macro call's arguments or an `IRP`
+  list is now text, as in MAC and RMAC, which quote a string with `'` only:
+  `MM "A,B",C` passes `"A`, `B"` and C, `MM "A;B",C` passes `"A` (the rest
+  is comment), and `IRP X,<"A,B">` goes round `"A` and `B"`. um80 read
+  `"A,B"` and `"A;B"` as strings, as M80 does, and passed them and C,
+  without a word. In the string of an `IRPC` a `"` is text in M80 too:
+  `IRPC X,"A;B"` goes round `"` and A in all three, where um80 went round
+  `"`, A, `;`, B and `"`, with or without `--dri`.
 
 ## [0.3.50] - 2026-09-25
 

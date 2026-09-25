@@ -190,7 +190,11 @@ next argument (`MM A ,B` passes A and B), and anything else is an error, as
 MAC and RMAC flag it `S` and leave it out (`MM A B` passes A there). M80
 reads the blanks after an argument as a separator, as a comma, so without
 `--dri` `MM A B` passes A and B, `MM 5 GT 2,4` 5, GT, 2 and 4, and `MM A ,B`
-A, an empty argument and B.
+A, an empty argument and B. A `"` in a macro call's arguments or an `IRP`
+list is text, as MAC and RMAC quote a string with `'` only: `MM "A,B",C`
+passes `"A`, `B"` and C, and `MM "A;B",C` `"A`, the rest a comment (M80
+reads `"A,B"` and `"A;B"` as strings). In an `IRPC` string a `"` is text in
+M80 as well.
 Only an argument that starts with `%` is a value, as in MAC; M80 also reads
 `A%E` as `A` and E's value, and `<A>%E` as `A` and the value, and evaluates a
 `%` in an `IRP` list, which MAC reads as text. A `%` expression runs to its
