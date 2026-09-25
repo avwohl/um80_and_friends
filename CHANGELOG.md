@@ -86,7 +86,6 @@ LINK-80 3.44 under cpmemu, and each has a regression test that fails on
   `LAB` two bytes into the code `DAD LAB` is `DAD D` (19H), and with `Y`
   EXTRN `MOV A,Y` is `MOV A,B`; um80 warns, and RMAC flags it V. 0.3.50 took
   the offset too, as the pair's encoding (`DAD H`), and rejected an external.
-
 - um80 assembler: a macro argument written `%expression` is now the
   expression's value when the macro is called, as in MACRO-80, MAC and RMAC.
   um80 left the `%` in the argument and evaluated each `%` in a body line as
@@ -104,20 +103,17 @@ LINK-80 3.44 under cpmemu, and each has a regression test that fails on
   other text (`A%E` is `A7`); with `--dri` only an argument that starts with
   `%` is a value, as in MAC. A `%` in a body line that is not an argument is
   an error, as in M80 (O) and MAC (E); um80 evaluated it.
-
 - um80 assembler: an undefined name in the expression of a `%` macro
   argument is now an error, as MACRO-80 (U, fatal) and MAC (U) report it.
   um80 passed 0 without a word, so a misspelt name, or without `--dri` a
   name written with a `$` that is defined without one, assembled wrong
   bytes. A forward reference is still its value.
-
 - um80 assembler: without `--dri`, a `%` in an item of an `IRP` list is
   evaluated when the `IRP` is read, as MACRO-80 reads an item like a macro
   argument: `IRP X,<%E,2>` iterates over E's value and 2. um80 passed `%E`
   on as text, which was a parse error where the body used it. M80 flags a
   `%` in the last item O and passes 0; um80 takes the value and warns. MAC
   and RMAC read the list as text, and so does `--dri`.
-
 - um80 assembler: a macro body is matched to its parameters name by name,
   as MACRO-80, MAC and RMAC read it. A parameter whose name starts with `?`
   or `@` was never replaced: DRI's `CONTROL/COMPARE.LIB` (`TDIG? SET
@@ -130,7 +126,6 @@ LINK-80 3.44 under cpmemu, and each has a regression test that fails on
   digits and `$ . ? @ _`; with `--dri` it is MAC's, letters, digits, `?`
   and `@`, and a `$`, `_` or `.` ends it (`X$1` is the parameter X, then
   `$1`).
-
 - um80 assembler: in a quoted string in a macro body, the `&` next to a
   parameter now goes as it goes in MACRO-80, and with `--dri` as in RMAC.
   M80 drops the `&` of the first `&X` in a string, and one right after it
@@ -140,13 +135,11 @@ LINK-80 3.44 under cpmemu, and each has a regression test that fails on
   too: `'X&B'` is `KB` (M80: `X&B`). MAC 2.0 also matches a string's text
   as written, so `'&abc'` is not its parameter `ABC`; RMAC 1.1, M80 and um80
   fold case.
-
 - um80 assembler: the parameter of an `IRP` or `IRPC` is now replaced in its
   body as a macro's parameter is, as in MACRO-80, MAC and RMAC. um80 replaced
   it inside quoted strings without an `&` (`IRP X,<K>` with `DB 'X'` gave
   `K`; M80 and MAC `X`), inside longer names (`'A&XB'` gave `AKB`, `?X`
   `?K`), and left the `&` of `X&B`, a parse error.
-
 - um80 assembler: a `LOCAL` name is now read as MACRO-80, MAC and RMAC read
   it, as a parameter of the macro. A local name with a `?` in it (`LOCAL
   L?,?L`, as DRI's `SEQIO.LIB` has `EOB?`) was not renamed, so the second
@@ -155,7 +148,6 @@ LINK-80 3.44 under cpmemu, and each has a regression test that fails on
   read the local `LL`, not the `LL` outside (M80 and MAC: 33H there, um80
   the local's address). And `'&L'` in a string is now the unique name, as
   in M80 (`..0000`) and MAC (`??0001`); um80's is `L?0001`.
-
 - um80 assembler: an `EXITM` inside a true `IF` now ends that `IF` with the
   expansion, as MACRO-80, MAC and RMAC end it. The `IF`'s `ENDIF` is never
   read, so um80 left it open to the end of the file and warned
@@ -163,7 +155,6 @@ LINK-80 3.44 under cpmemu, and each has a regression test that fails on
   DRI's `CONTROL/INTER.LIB` `SETLITE` with `DEBUG` true, or `IF NUL P /
   EXITM / ENDIF` inside another `IF`. The same holds for an `EXITM` in a
   `REPT`, `IRP` or `IRPC` body.
-
 - um80 assembler: with `--dri`, an `IF` that a macro expansion, or one
   repetition of a `REPT`, `IRP` or `IRPC`, leaves open now ends with it, as
   in MAC and RMAC. DRI's `CONTROL/COMPARE.LIB` ends its `TEST?` macro inside
@@ -171,13 +162,11 @@ LINK-80 3.44 under cpmemu, and each has a regression test that fails on
   an `IRPC`; um80 carried them on, so after a false one nothing more was
   assembled, and it warned "Unterminated conditional". Without `--dri` um80
   still carries them on, as M80 does.
-
 - um80 assembler: a `;` inside `<...>` in the arguments of a macro call, or
   in the list of an `IRP` or `IRPC`, is now text, not the start of a
   comment, as in MACRO-80, MAC and RMAC. DRI's `CONTROL/DISKDEF.LIB` passes
   `<;sec per track>` to a macro whose body is `dw data comment`; um80 cut the
   line at the `;`, so the argument was `<` ("Cannot parse expression").
-
 - um80 assembler: an `IRPC` with an empty string (`IRPC C,`) is no longer
   an error. um80 stopped with "IRPC requires parameter and string", and the
   body's `ENDM` was then "ENDM without MACRO". MAC and RMAC go round once
@@ -186,7 +175,6 @@ LINK-80 3.44 under cpmemu, and each has a regression test that fails on
   empty type. MACRO-80 goes round once only where a macro's empty argument
   made the string empty (`IRPC C,P` with P empty), and not for `IRPC C,` or
   `IRPC C,<>` as written; without `--dri` um80 does the same.
-
 - um80 assembler: with `--dri`, a label on the `ENDM` that ends a macro,
   `REPT`, `IRP` or `IRPC` body is defined where the body ends, each time it
   is expanded, as in MAC and RMAC. DRI's `CONTROL/STACK.LIB` ends `SIZ` with
