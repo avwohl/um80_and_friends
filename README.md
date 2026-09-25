@@ -434,7 +434,7 @@ For more details on these extensions and compatibility notes, see [docs/EXTENSIO
 
 ## Testing
 
-The test suite (693 tests) runs under `pytest`:
+The test suite (699 tests) runs under `pytest`:
 
 ```bash
 pip install -e ".[dev]"

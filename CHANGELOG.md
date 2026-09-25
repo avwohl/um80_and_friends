@@ -222,14 +222,18 @@ on 0.3.50.
   and `@`, and a `$`, `_` or `.` ends it (`X$1` is the parameter X, then
   `$1`).
 - um80 assembler: in a quoted string in a macro body, the `&` next to a
-  parameter now goes as it goes in MACRO-80, and with `--dri` as in RMAC.
-  M80 drops the `&` of the first `&X` in a string, and one right after it
-  (`'&X&Z'` is `KZ`; um80 gave `K&Z`), but a later `&X` in the same string
-  keeps its `&`: `'&X &X'` is `K &K`, where um80 gave `K K`. MAC and RMAC
-  drop every `&` next to a parameter, and read a name before an `&` as one
-  too: `'X&B'` is `KB` (M80: `X&B`). MAC 2.0 also matches a string's text
-  as written, so `'&abc'` is not its parameter `ABC`; RMAC 1.1, M80 and um80
-  fold case.
+  parameter now goes as it goes in MACRO-80, and with `--dri` as in RMAC. M80
+  3.44 reads only `&X` in a string, and drops its `&` and one right after it
+  (`'&X&Z'` is `KZ`; um80 gave `K&Z`). It then reads the rest of the line as
+  if outside a string - its string loop keeps the quote in a register that
+  reading the parameter's name overwrites - until a quote starts what it takes
+  for another string. So `'&X''&Y'` is `K'L` and `'&X','&Y'` `K` and `L`, as
+  written, but `'&X &X'` is `K &K` (um80: `K K`), `'&X ','&Y'` `K` and `&L`,
+  `'&X"&Y'` `K"&L`, `'&X(X'` `K(K`, and in `'&X(',Z` the `Z` is inside a
+  string to M80, so the symbol, not the argument. MAC and RMAC drop every `&`
+  next to a parameter, and read a name before an `&` as one too: `'X&B'` is
+  `KB` (M80: `X&B`). MAC 2.0 also matches a string's text as written, so
+  `'&abc'` is not its parameter `ABC`; RMAC 1.1, M80 and um80 fold case.
 - um80 assembler: the parameter of an `IRP` or `IRPC` is now replaced in its
   body as a macro's parameter is, as in MACRO-80, MAC and RMAC. um80 replaced
   it inside quoted strings without an `&` (`IRP X,<K>` with `DB 'X'` gave

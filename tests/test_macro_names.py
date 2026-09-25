@@ -116,9 +116,10 @@ STRINGS = ("MM\tMACRO\tX,Y\n"
 def test_m80_drops_the_ampersand_of_the_first_parameter_in_a_string():
     # M80 3.44: 'K &K', 'KK', 'KZ', '&Q K', 'AK B&K', 'K &K&L', 'XL',
     # 'K','K', 'K &K', 'X&','X&B','AX&','&K', 'K','K'.  Only `&X' is a
-    # parameter, and M80 drops the `&' of the first one in a string (and
-    # of `&X&Y' after it); the later ones keep theirs.  um80 dropped every
-    # `&' before a parameter and none after one ('K&Z').
+    # parameter, and M80 drops its `&' (and one right after it, `&X&Y');
+    # after a blank it reads on as if outside a string, and keeps the `&'
+    # of the next (see QUOTES below).  um80 dropped every `&' before a
+    # parameter and none after one ('K&Z').
     assert _code(STRINGS) == ('4b20264b' '4b4b' '4b5a' '2651204b' '414b2042264b'
                               '4b20264b264c' '584c' '4b4b' '4b20264b'
                               '5826' '582642' '415826' '264b' '4b4b')
@@ -155,6 +156,62 @@ def test_an_irp_body_string_follows_m80_or_rmac():
            "\tIRPC\tX,K\n\tDB\t'X&'\n\tENDM\n")
     assert _code(src) == '4b20264b' '5826'
     assert _code(src, dri=True) == '4b204b' '4b'
+
+
+# M80 reads a body line once, when it stores the macro, and the character
+# after an `&X' in a string decides how it reads the rest of the line.  Its
+# string loop compares that character with the string's quote, which it
+# holds in register B - and reading the name has just loaded B with that
+# same character.  So M80 always leaves the string there, and reads on as
+# if outside one: a parameter is replaced without an `&', an `&' is kept,
+# and a quote starts what M80 takes for a string.  Only a doubled quote, or
+# the closing one, keeps it in step with the text.
+QUOTES = ("MM\tMACRO\tX,Y\n"
+          "\tDB\t'&X''&Y'\n\tDB\t'&X''&X'\n\tDB\t'&X''B&Y'\n"
+          "\tDB\t'&X''&Y''&X'\n\tDB\t'&X'' &Y'\n\tDB\t'A''&X&Y'\n"
+          "\tENDM\n\tMM\tK,L\n")
+
+
+@BOTH
+def test_a_doubled_quote_after_a_parameter(dri):
+    # M80 3.44, MAC 2.0 and RMAC 1.1 alike: K'L, K'K, K'BL, K'L'K, K' L,
+    # A'KL, as um80 0.3.50 had them.  um80 then kept the `&' of the second
+    # parameter without --dri: K'&L, K'&K, ...
+    assert _code(QUOTES, dri=dri) == ('4b274c' '4b274b' '4b27424c' '4b274c274b'
+                                      '4b27204c' '41274b4c')
+
+
+def test_m80_a_doubled_double_quote_after_a_parameter():
+    # M80 3.44: K"L (MAC and RMAC have no "..." string).
+    assert _code("MM\tMACRO\tX,Y\n\tDB\t\"&X\"\"&Y\"\n\tENDM\n\tMM\tK,L\n") == '4b224c'
+
+
+def test_m80_reads_the_line_after_a_parameter_as_outside_a_string():
+    # M80 3.44, one character after `&X' at a time: K &L (the blank, then
+    # `,' - M80 takes the second `'' to open a string and the third to
+    # close it, so `&Y' is outside); K-L (the `'' after `-' opens one, so
+    # "&Y" is outside, then `"' opens one); K"&L (a `"' is no `''); K(K"&B
+    # (the X after `(' is outside, `"' opens one); KB'&L and KL'&K (an `&'
+    # after the parameter goes, and the name after it takes the quote);
+    # K-&L; K&L (the `&' of `'&X&'' goes, and `','' is a string to M80);
+    # K( 07 - the Z after the string is inside one to M80, so it is the
+    # symbol Z, not the argument 5.  um80 0.3.50 and the last commits
+    # followed the strings as written: 0.3.50 gave K L, K"L and B&L, then
+    # um80 K L, XB, ... and 05.
+    src = ("Z\tEQU\t7\nMA\tMACRO\tX,Y,Z\n"
+           "\tDB\t'&X ','&Y'\n\tDB\t'&X-',\"&Y\"\n\tDB\t'&X\"&Y'\n"
+           "\tDB\t'&X(X\"&B'\n\tDB\t'&X&B''&Y'\n\tDB\t'&X&Y''&X'\n"
+           "\tDB\t'&X&-&Y'\n\tDB\t'&X&','&Y'\n\tDB\t'&X(',Z\n"
+           "\tENDM\n\tMA\tK,L,5\n")
+    assert _code(src) == ('4b20264c' '4b2d4c' '4b22264c' '4b284b222642'
+                          '4b4227264c' '4b4c27264b' '4b2d264c' '4b264c' '4b2807')
+
+
+@BOTH
+def test_an_irp_body_with_a_doubled_quote(dri):
+    # `IRP X,<K,L>' with `DB '&X''&X'': M80, MAC and RMAC K'K L'L.
+    src = "\tIRP\tX,<K,L>\n\tDB\t'&X''&X'\n\tENDM\n"
+    assert _code(src, dri=dri) == '4b274b' '4c274c'
 
 
 @BOTH

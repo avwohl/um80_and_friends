@@ -4499,12 +4499,12 @@ class Assembler:
         `X&B'.  Names fold case.
 
         Inside a string only a name next to an `&' is a parameter.  In M80
-        that is one after the `&' (`'&X'', `'A&X''), and M80 drops the `&'
-        only in the first one, and in a chain `&X&Y' right after it: `'&X
-        &X'' is 'K &K', `'&X&Y'' KL.  In MAC a name before an `&' is one
-        too (`'X&B'' is KB), and every such `&' goes.  Names fold case here
-        too, as in M80 and RMAC 1.1; MAC 2.0 matches a string as written,
-        so `'&abc'' is not its parameter ABC.
+        that is one after the `&' (`'&X'', `'A&X''), and what follows it
+        decides how M80 reads the rest of the line (_substitute_m80()):
+        `'&X&Y'' is KL, `'&X''&Y'' K'L, but `'&X &X'' is `K &K'.  In MAC a
+        name before an `&' is one too (`'X&B'' is KB), and every such `&'
+        goes.  Names fold case here too, as in M80 and RMAC 1.1; MAC 2.0
+        matches a string as written, so `'&abc'' is not its parameter ABC.
 
         A LOCAL name is in subst too, with its unique name: M80 and MAC read
         it as a parameter, so `'&L'' is the unique name, `L?:' with LOCAL
@@ -4514,6 +4514,8 @@ class Assembler:
         table = {name.upper(): text for name, text in subst.items() if name}
         if not table:
             return line
+        if not self.dri:
+            return self._substitute_m80(line, table)
         out = []
         pos = 0
         for (s, e) in self._string_spans(line):
@@ -4521,6 +4523,125 @@ class Assembler:
             out.append(self._substitute_in_string(line[s:e], table))
             pos = e
         out.append(self._substitute_names(line[pos:], table))
+        return ''.join(out)
+
+    def _substitute_m80(self, line, table):
+        """substitute_macro_params() as MACRO-80 3.44 reads a body line.
+
+        M80 reads a body line once, as it stores the macro (l3687 and
+        l36a2 in Cirsovius's disassembly of M80 3.44), in items: a name
+        with the character after it, or one other character.  Outside a
+        string a name that is a parameter is one, `&' or not.  In a string
+        only an `&' and then a parameter is; that `&' goes, and the item
+        takes the character after the name with it.  An `&' there is left
+        for the next item, which drops it (`'&X&Y'' is KL, `'&X&B'' KB).
+        The string loop then compares that character with the string's
+        quote, which it holds in register B - and reading the name has
+        loaded B with that very character.  So M80 leaves the string after
+        every such parameter, and reads on as if outside one: a parameter
+        is replaced without its `&', an `&' is kept, and a quote starts
+        what M80 takes for a string.  `'&X''&Y'' is K'L and `'&X','&X''
+        K and K, as the text says, but `'&X &X'' is `K &K', `'&X ','&Y'' K
+        and &L, `'&X"&Y'' K"&L, `'&X(X'' K(K, and in `'&X(',Z' M80 reads
+        Z as inside a string: it is the symbol Z, not the argument.  A
+        `;' where M80 is outside a string starts a comment, and the rest
+        of the line is kept as it is.
+
+        What M80 reads as outside a string and is outside one is replaced
+        by _substitute_names(); the rest as M80 reads it.  1160 random body
+        lines of strings, `&', names and quotes assembled to M80 3.44's
+        bytes, but for a `;;' where M80 has left a string, which it drops
+        with the rest of the line (M80: O), and um80 keeps.
+        """
+        n = len(line)
+        inside = [False] * n    # in a quoted string as written
+        for (s, e) in self._string_spans(line):
+            inside[s:e] = [True] * (e - s)
+        mode = [None] * n   # 'O' read as outside a string, 'I' inside
+        drop = set()        # an `&' M80 leaves out
+        names = {}          # start -> (end, text) of a parameter M80 replaces
+        state = {'amp': False}   # l3ffc: an `&' after this parameter goes
+
+        def item(i, how):
+            # l313e: blanks, then a name and the character after it, or
+            # one character.  Returns (next index, that character or None).
+            while i < n and line[i] in ' \t':
+                mode[i] = how
+                state['amp'] = False
+                i += 1
+            if i >= n:
+                return i, None
+            j = self._name_end(line, i)
+            if j is not None:
+                for k in range(i, j):
+                    mode[k] = how
+                value = table.get(line[i:j].upper())
+                if value is None:
+                    state['amp'] = False
+                else:
+                    names[i] = (j, value)
+                if j >= n:
+                    return j, None
+                if line[j] == '&':
+                    return j, '&'
+                mode[j] = how
+                state['amp'] = False
+                return j + 1, line[j]
+            mode[i] = how
+            if line[i] == '&' and state['amp']:
+                drop.add(i)
+            state['amp'] = False
+            return i + 1, line[i]
+
+        i, ch = item(0, 'O')
+        while ch is not None:
+            if ch == ';':
+                # A comment, or to M80 one: a `;' in a string it has left.
+                how = 'I' if inside[i - 1] else 'O'
+                for k in range(i, n):
+                    mode[k] = how
+                break
+            if ch not in '\'"':
+                i, ch = item(i, 'O')
+                continue
+            quote = ch
+            while True:
+                if i >= n:
+                    ch = None
+                    break
+                j = (self._name_end(line, i + 1)
+                     if line[i] == '&' and i + 1 < n else None)
+                if j is not None and line[i + 1:j].upper() in table:
+                    mode[i] = 'I'
+                    drop.add(i)
+                    state['amp'] = True
+                    i, ch = item(i + 1, 'I')
+                    if ch is not None:
+                        i, ch = item(i, 'O')
+                    break
+                mode[i] = 'I'
+                state['amp'] = False
+                i += 1
+                if line[i - 1] == quote:
+                    i, ch = item(i, 'O')
+                    break
+
+        out = []
+        i = 0
+        while i < n:
+            if mode[i] == 'O' and not inside[i]:
+                j = i
+                while j < n and mode[j] == 'O' and not inside[j]:
+                    j += 1
+                out.append(self._substitute_names(line[i:j], table))
+                i = j
+            elif i in names:
+                out.append(names[i][1])
+                i = names[i][0]
+            else:
+                if i not in drop:
+                    out.append(line[i])
+                i += 1
         return ''.join(out)
 
     def _name_end(self, text, i):
@@ -4560,17 +4681,16 @@ class Assembler:
         return ''.join(res)
 
     def _substitute_in_string(self, text, table):
-        """substitute_macro_params() in a quoted string, quotes and all."""
+        """substitute_macro_params() in a quoted string, quotes and all,
+        as RMAC reads one (--dri): a name next to an `&', before or after
+        it, is a parameter, and every such `&' goes."""
         res = []
         amp = False   # the last thing copied is an `&'
         chain = -1    # where a name's dropped `&' after it leads
-        first = True  # M80: no `&' dropped yet
         i, n = 0, len(text)
         while i < n:
             j = self._name_end(text, i)
             if j is None:
-                if chain == i:
-                    first = False
                 amp = text[i] == '&'
                 res.append(text[i])
                 i += 1
@@ -4578,23 +4698,16 @@ class Assembler:
             word = text[i:j]
             value = table.get(word.upper())
             before, amp = amp, False
-            chained = chain == i
             after = j < n and text[j] == '&'
-            if value is None or not (before or chained or (self.dri and after)):
-                if chained:
-                    first = False
+            if value is None or not (before or chain == i or after):
                 res.append(word)
-            elif self.dri or first:
+            else:
                 if before:
                     res.pop()
                 res.append(value)
                 if after:
                     j += 1
                     chain = j
-                else:
-                    first = False
-            else:
-                res.append(value)
             i = j
         return ''.join(res)
 

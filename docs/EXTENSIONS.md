@@ -173,9 +173,11 @@ not the formal `P$1` (MAC reports it undefined), and `LOCAL L$1` declares
 where in M80 it is also `$`, `.` and `_`, so with the formal `X` MAC reads
 `'&X_'` as the argument and `_`, and M80 as the text `&X_`. In a quoted
 string MAC and RMAC drop every `&` next to a parameter, and a name before an
-`&` is one too (`'X&B'` is the argument and `B`); M80 reads only `&X`, and
-drops the `&` of the first one in a string alone (`'&X &X'` is `K &K` there,
-`K K` in RMAC). RMAC folds case in a string, as um80 does; MAC 2.0 does not.
+`&` is one too (`'X&B'` is the argument and `B`); M80 reads only `&X`,
+drops its `&`, and reads the rest of the line as if outside a string, until
+a quote starts another (`'&X &X'` is `K &K` there, `K K` in RMAC; `'&X''&Y'`
+is `K'L` in both). RMAC folds case in a string, as um80 does; MAC 2.0 does
+not.
 Only an argument that starts with `%` is a value, as in MAC; M80 also reads
 `A%E` as `A` and E's value, and evaluates a `%` in an `IRP` list, which MAC
 reads as text. An `IRPC` with an empty string goes round once, with its
