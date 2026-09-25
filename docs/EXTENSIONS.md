@@ -183,8 +183,10 @@ Other differences between MAC/RMAC and M80 that `--dri` does not cover (none of
 MP/M II's sources needs them): MAC takes `=` as `EQ` (`IF @Y = 1`, in
 `CONTROL/DEBLOCK.ASM`), where M80 reports a syntax error; MAC takes an indented
 word with no colon that is not an instruction, directive or macro as a label
-(`<TAB>LAB<TAB>NOP`), where M80 reports it undefined; and MAC stops reading at a
-9AH byte (1AH with bit 7), where M80 reads on.
+(`<TAB>LAB<TAB>NOP`), where M80 reports it undefined; MAC stops reading at a
+9AH byte (1AH with bit 7), where M80 reads on; and an 8AH that does not follow
+a CR, which ends no line in any of them, is a 0AH in a MAC string, where M80
+and um80 leave it out (`DB 'A<8AH>B'` is 41 42).
 
 ### Register Names as Values (EQU of a register)
 

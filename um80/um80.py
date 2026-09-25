@@ -39,6 +39,8 @@ IDENT_CHARS = frozenset('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
 
 # Every byte of a source file with its bit 7 cleared (see source_lines()).
 STRIP_PARITY = bytes(b & 0x7F for b in range(256))
+# An 8AH that does not follow a CR or an 8DH (see source_lines()).
+LONE_8AH = re.compile(rb'(?<![\r\x8d])\x8a')
 
 
 def source_lines(data):
@@ -49,17 +51,25 @@ def source_lines(data):
     them.  Each line ends at a CR, a LF or a CR LF.
 
     Every byte loses bit 7, the parity bit some CP/M editors and serial
-    links left set: MACRO-80 3.44, and DRI's MAC and RMAC, all read 8AH as
-    a line feed, E9H as `i' and C1H in a string as `A'.  um80 read such a
-    byte as a character no name or operator starts with, so a line ending
-    CR 8AH made the next line one it dropped without a word.  Six lines of
-    MP/M II's NUCLEUS/MEMMGR.ASM end so - one of those dropped was an
-    INX B.  A 9AH byte (1AH with bit 7) does not end the file, as in M80;
-    MAC and RMAC stop at it.
+    links left set: MACRO-80 3.44, and DRI's MAC and RMAC, all read 8DH as
+    a CR, E9H as `i' and C1H in a string as `A', and CR 8AH as CR LF.  um80
+    read such a byte as a character no name or operator starts with, so a
+    line ending CR 8AH made the next line one it dropped without a word.
+    Six lines of MP/M II's NUCLEUS/MEMMGR.ASM end so - one of those dropped
+    was an INX B.  A 9AH byte (1AH with bit 7) does not end the file, as in
+    M80; MAC and RMAC stop at it.
+
+    An 8AH that does not follow a CR or an 8DH is left out, as M80 leaves
+    out every LF: it does not end the line in M80, MAC or RMAC, and um80
+    ends one only at a lone LF, which a file from Unix ends its lines
+    with.  `NOP ; ABC', 8AH, `INX B' is 00 in all three - the INX B is
+    comment - and UTF-8 text in a comment has 8AH bytes (U+4E0A is E4 B8
+    8A).  In a string M80 gives `A', 8AH, `B' as 61 62.
     """
     eof = data.find(0x1A)
     if eof >= 0:
         data = data[:eof]
+    data = LONE_8AH.sub(b'', data)
     text = data.translate(STRIP_PARITY).decode('ascii')
     text = text.replace('\r\n', '\n').replace('\r', '\n')
     text = text.rstrip('\x00')  # padding nulls

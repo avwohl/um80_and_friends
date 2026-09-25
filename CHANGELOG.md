@@ -52,8 +52,13 @@ LINK-80 3.44 under cpmemu, and each has a regression test that fails on
   `NUCLEUS/MEMMGR.ASM` ends six lines with CR and 8AH, a line feed with its
   parity bit set: the line after each was lost, one of them an `INX B`.
   A string of the bytes `a`, C1H and `b` is now 41H in the middle, as in
-  M80, not FDH. This applies to the source, to `INCLUDE`/`MACLIB` files and
-  to `--pre` files.
+  M80, not FDH. CR 8AH and 8DH 8AH are a CR LF, and an 8DH is a CR, as in
+  M80. An 8AH that does not follow a CR is left out, as M80 leaves it out:
+  it ends no line in M80, MAC or RMAC, so `NOP ; ABC`, 8AH, `INX B` is still
+  00 (the `INX B` is comment), as is a UTF-8 comment with an 8AH byte in it,
+  and a string of `a`, 8AH and `b` is 61 62, as in M80 (0.3.50: 61 FD 62).
+  A lone LF still ends a line, for files from Unix. This applies to the
+  source, to `INCLUDE`/`MACLIB` files and to `--pre` files.
 - um80 assembler: the name of an `EQU`, `SET`, `DEFL`, `ASET` or `MACRO` no
   longer has to be in column 1. M80, MAC and RMAC all take
   `<TAB>FOO<TAB>EQU 5`, even when FOO is also an instruction or a macro;
