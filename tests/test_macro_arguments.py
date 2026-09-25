@@ -289,6 +289,129 @@ def test_an_argument_in_parentheses_is_as_before(dri, call, expect):
     assert code == expect and warnings == []
 
 
+# A blank or a tab ends a macro argument outside a string and a <...>
+# group.  MACRO-80 3.44 reads the arguments one after another, and the
+# blanks after one separate it from the next, as a comma does: `MM A B'
+# passes A and B, and `MM A ,B' A, an empty argument and B.  um80 kept the
+# blanks in the argument (`A B'; `A' and B), without a word.
+FOUR_TEXT = ("MM\tMACRO\tP,Q,R,S\n\tDB\t0EEH\n\tDB\t'Z&P'\n\tDB\t0EEH\n"
+             "\tDB\t'Y&Q'\n\tDB\t0EEH\n\tDB\t'X&R'\n\tDB\t0EEH\n\tDB\t'W&S'\n"
+             "\tENDM\n")
+MACROS["4'"] = FOUR_TEXT
+
+
+@pytest.mark.parametrize('macro, call, m80', [
+    ("3'", 'A B', 'ee5a41ee5942ee5800'),                   # A, B
+    ("3'", 'A  B', 'ee5a41ee5942ee5800'),
+    ("3'", 'A\tB', 'ee5a41ee5942ee5800'),
+    ("3'", 'A\t\tB', 'ee5a41ee5942ee5800'),
+    ("3'", 'A B;C', 'ee5a41ee5942ee5800'),
+    ("3'", 'A,B C', 'ee5a41ee5942ee5843'),
+    ("3'", ',A B', 'ee5a00ee5941ee5842'),
+    ("3'", '1 + 1,5', 'ee5a31ee592bee5831'),               # 1, +, 1
+    ("3'", 'A !B', 'ee5a41ee5942ee5800'),
+    # A comma after the blanks separates another argument.
+    ("3'", 'A ,B', 'ee5a41ee5900ee5842'),                   # A, empty, B
+    ("3'", 'A\t,B', 'ee5a41ee5900ee5842'),
+    ("3'", 'A , B', 'ee5a41ee5900ee5842'),
+    ("4'", 'A , ,B', 'ee5a41ee5900ee5800ee5742'),
+    ("4'", 'A B ,C', 'ee5a41ee5942ee5800ee5743'),
+    # In a <...> group or a string a blank is text; after one it ends it.
+    ("3'", '<A> <B>,C', 'ee5a41ee5942ee5843'),
+    ("3'", 'A<B C>D E', 'ee5a4142204344ee5945ee5800'),     # AB CD, E
+    ("3'", '<A,B> C', 'ee5a412c42ee5943ee5800'),
+    ("4'", '<A B> C D', 'ee5a412042ee5943ee5844ee5700'),
+    ("4'", 'A<B> C', 'ee5a4142ee5943ee5800ee5700'),
+    ("3'", 'A"B C",D', 'ee5a412242204322ee5944ee5800'),
+    ("3'", '"A B" C,D', 'ee5a2241204222ee5943ee5844'),
+    ("3'", '(A B),C', 'ee5a2841ee594229ee5843'),           # (A, B), C
+    # A '!'-quoted blank is text; M80 steps back to it and skips the
+    # blanks from there, so after one it drops a character.
+    ("4'", 'A! B C', 'ee5a412042ee5943ee5800ee5700'),      # A B, C
+    ("4'", 'A!\tB C', 'ee5a410942ee5943ee5800ee5700'),
+    ("3'", 'A! ,B', 'ee5a4120ee5942ee5800'),               # `A ', B
+    ("3'", 'A!, B', 'ee5a412cee5942ee5800'),               # `A,', B
+    ("3'", 'A!  B,C', 'ee5a4120ee5900ee5843'),             # `A ', empty, C
+    ("3'", 'A!\t\tB,C', 'ee5a4109ee5900ee5843'),
+    ("3'", 'A!  ,B', 'ee5a4120ee5942ee5800'),              # `A ', B
+])
+def test_m80_ends_a_macro_argument_at_a_blank(macro, call, m80):
+    ok, code, errors, warnings = _assemble(MACROS[macro] + "\tMM\t" + call + "\n")
+    assert ok, errors
+    assert code == m80 and warnings == []
+
+
+@pytest.mark.parametrize('call, m80', [
+    ('A >B', 'ee5a41ee5900ee5842ee5700'),       # A, empty, B
+    ('A >,B', 'ee5a41ee5900ee5800ee5742'),      # A, empty, empty, B
+    ('A> B', 'ee5a41ee5942ee5800ee5700'),       # A, B
+])
+def test_m80_a_blank_and_a_close_bracket_with_no_open(call, m80):
+    ok, code, errors, warnings = _assemble(FOUR_TEXT + "\tMM\t" + call + "\n")
+    assert ok, errors
+    assert code == m80
+    assert any("has no '<'" in w for w in warnings), warnings
+
+
+# A `%' expression runs to its comma, blanks and all, in M80, MAC and RMAC.
+# M80 evaluates one wherever its `%' is outside a <...> group, after one too
+# (um80 took a `%' after a `<' for text): `MM <A>%1+1' passes A2.
+@BOTH
+@pytest.mark.parametrize('macro, call, expect', [
+    ('2', '%1 + 1,5', 'ee02ee05'),
+    ('2', '%1 ,5', 'ee01ee05'),
+    ('3', '%1 + 1 ,5,6', 'ee02ee05ee06'),
+    ('3', '1,%2 * 3 ,4', 'ee01ee06ee04'),
+])
+def test_a_percent_expression_runs_to_its_comma(dri, macro, call, expect):
+    ok, code, errors, warnings = _assemble(MACROS[macro] + "\tMM\t" + call + "\n",
+                                           dri=dri)
+    assert ok, errors
+    assert code == expect and warnings == []
+
+
+@pytest.mark.parametrize('call, m80', [
+    ('A%1 + 1,C', 'ee5a4132ee5943ee5800'),        # A2, C
+    ('<A>%1+1,B', 'ee5a4132ee5942ee5800'),        # A2, B
+    ('<A>%1 + 1,B', 'ee5a4132ee5942ee5800'),
+    ('A<B>%2,C', 'ee5a414232ee5943ee5800'),       # AB2, C
+])
+def test_m80_a_percent_after_other_text(call, m80):
+    ok, code, errors, warnings = _assemble(THREE_TEXT + "\tMM\t" + call + "\n")
+    assert ok, errors
+    assert code == m80 and warnings == []
+
+
+# MAC 2.0 and RMAC 1.1 end the arguments at the blanks after one: a comma
+# there starts the next - `MM A ,B' passes A and B - and anything else they
+# flag S and leave out (`MM A B' passes A).  With --dri um80 does the same,
+# and the S is an error; it passed `A B', without a word.
+@pytest.mark.parametrize('macro, call, mac', [
+    ("3'", 'A ,B', 'ee5a41ee5942ee58'),
+    ("3'", 'A\t,B', 'ee5a41ee5942ee58'),
+    ("3'", 'A , B', 'ee5a41ee5942ee58'),
+    ("4'", 'A , ,B', 'ee5a41ee59ee5842ee57'),
+    ("3'", '<A B>,C', 'ee5a412042ee5943ee58'),
+    ("3'", 'A, B', 'ee5a41ee5942ee58'),
+])
+def test_mac_a_comma_after_the_blanks(macro, call, mac):
+    ok, code, errors, warnings = _assemble(MACROS[macro] + "\tMM\t" + call + "\n",
+                                           dri=True)
+    assert ok, errors
+    assert code == mac and warnings == []
+
+
+@pytest.mark.parametrize('call', [
+    'A B', 'A\tB', 'A  B', 'A B;C', 'A,B C', ',A B', '1 + 1,5', '(A B),C',
+    '<A> <B>,C', 'A<B C>D E', '<A,B> C', 'A >B', 'A> B', 'A >,B', 'A%1 + 1,C',
+    '<A>%1 + 1,B',
+])
+def test_mac_flags_text_after_the_blanks_s(call):
+    ok, _, errors, _ = _assemble(THREE_TEXT + "\tMM\t" + call + "\n", dri=True)
+    assert not ok
+    assert any('flag it S' in e for e in errors), errors
+
+
 # The items of an IRP list.  MACRO-80 3.44 ends an item at a `,', a `;', a
 # blank or a tab, and skips the blanks in front of one.  4558825 made a `;'
 # inside the list's <...> text, so `IRP P,<A;B;C>' went round once, with

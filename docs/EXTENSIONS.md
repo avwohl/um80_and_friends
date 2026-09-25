@@ -182,18 +182,26 @@ M80 passes it as a 00 byte (5A 00). A `>` with no `<` before it in a macro
 call's arguments is text, as in MAC, and a later comma still ends the
 argument: `MM 1>2,3` passes `1>2` and 3. M80 ends the argument at such a `>`,
 as at a comma, and flags it `Q` (there `MM 1>2,3` passes 1, 2 and 3); without
-`--dri` um80 does the same, and warns.
+`--dri` um80 does the same, and warns. A blank or a tab ends a macro
+argument outside a quoted string and a `<...>` group, in MAC, RMAC and M80,
+and MAC and RMAC end the arguments there: a comma after the blanks starts the
+next argument (`MM A ,B` passes A and B), and anything else is an error, as
+MAC and RMAC flag it `S` and leave it out (`MM A B` passes A there). M80
+reads the blanks after an argument as a separator, as a comma, so without
+`--dri` `MM A B` passes A and B, `MM 5 GT 2,4` 5, GT, 2 and 4, and `MM A ,B`
+A, an empty argument and B.
 Only an argument that starts with `%` is a value, as in MAC; M80 also reads
-`A%E` as `A` and E's value, and evaluates a `%` in an `IRP` list, which MAC
-reads as text. An item of an `IRP` list ends at a comma only, as in MAC
-(`<A ,B>` is A and B), and a `;` in the list, outside a nested `<...>`, is an
-error, as MAC and RMAC flag it `B`; M80 ends an item at a `,`, a `;`, a blank
-or a tab, so there `<A;B>` and `<A B>` are A and B, and `<A ,B>` is A, an
-empty item and B. An `IRPC` with an empty string goes round once, with its
-parameter empty, as in MAC; M80 does so only where a macro's empty argument
-made the string empty. A label on the `ENDM` that ends a body is defined where
-the body ends, each time, as in MAC (DRI's `STACK.LIB` ends `SIZ` with `STACK:
-ENDM`); M80 ignores it.
+`A%E` as `A` and E's value, and `<A>%E` as `A` and the value, and evaluates a
+`%` in an `IRP` list, which MAC reads as text. A `%` expression runs to its
+comma, blanks and all, in all three (`MM %1 + 1,5` passes 2 and 5). An item of
+an `IRP` list ends at a comma only, as in MAC (`<A ,B>` is A and B), and a `;`
+in the list, outside a nested `<...>`, is an error, as MAC and RMAC flag it
+`B`; M80 ends an item at a `,`, a `;`, a blank or a tab, so there `<A;B>` and
+`<A B>` are A and B, and `<A ,B>` is A, an empty item and B. An `IRPC` with an
+empty string goes round once, with its parameter empty, as in MAC; M80 does so
+only where a macro's empty argument made the string empty. A label on the
+`ENDM` that ends a body is defined where the body ends, each time, as in MAC
+(DRI's `STACK.LIB` ends `SIZ` with `STACK: ENDM`); M80 ignores it.
 
 **An `IF` a macro body leaves open ends with it.** MAC and RMAC end the `IF`s
 that a macro expansion, or one repetition of a `REPT`, `IRP` or `IRPC`, opened

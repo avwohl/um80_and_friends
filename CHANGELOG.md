@@ -348,6 +348,20 @@ on 0.3.50.
   the one argument `A),B,C`, and `MM A(B,C` `A(B,C`, where the three tools
   pass `A)`, B and C, and `A(B` and C - with or without `--dri`, without a
   word. The operands of every other statement keep their parentheses.
+- um80 assembler: a blank or a tab now ends a macro argument outside a
+  quoted string and a `<...>` group, as in MACRO-80, MAC and RMAC. um80 kept
+  it in the argument: `MM A B` passed `A B`, and `MM 1 + 1,5` `1 + 1` and 5,
+  without a word. MACRO-80 reads the blanks after an argument as a
+  separator, as a comma: `MM A B` passes A and B, `MM 5 GT 2,4` 5, GT, 2 and
+  4, and `MM 1 + 1,5` 1, +, 1 and 5; a comma after the blanks is one more, so
+  `MM A ,B` passes A, an empty argument and B (um80: A and B). Without
+  `--dri` um80 now does the same. MAC and RMAC end the arguments at the
+  blanks: a comma after them starts the next argument (`MM A ,B` is A and B,
+  as before), and anything else they flag `S` and leave out (`MM A B` passes
+  A); with `--dri` that is now an error. A `%` expression still runs to its
+  comma, blanks and all (`MM %1 + 1,5` passes 2 and 5), and without `--dri`
+  a `%` after a `<...>` group is now a value, as in M80: `MM <A>%1+1` passes
+  A2, where um80 passed `A%1+1`.
 
 ## [0.3.50] - 2026-09-25
 

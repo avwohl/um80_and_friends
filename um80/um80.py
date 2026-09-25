@@ -1914,29 +1914,13 @@ class Assembler:
         With `angles' false a < or > is not a bracket but an operator, as
         MAC's relational ones are with --dri: `DW 1<2,3' is two values.
 
-        When escape_bang is True (macro argument lists), '!' quotes the
-        following character so an escaped comma/bracket is not treated as a
-        delimiter (M80 macro syntax). The '!' is retained in the returned
-        argument for process_macro_argument() to consume (issue #3).
-
-        A parenthesis is text in a macro call's arguments (escape_bang), as
-        in MACRO-80, MAC and RMAC: a comma inside one ends the argument, so
-        `MM (A,B),C' passes `(A', `B)' and C.  um80 kept the comma in the
-        argument - `(A,B)' and C - and a `)' with no `(' (`MM A),B,C') took
-        the depth below 0, and a `(' with no `)' (`MM A(B,C') kept it above,
-        so no later comma ended an argument, without a word.
-
-        In a macro call's arguments (escape_bang) a '>' with no '<' open
-        before it closes nothing.  MAC and RMAC (--dri) read it as text:
-        `MM 1>2,3' passes `1>2' and 3.  MACRO-80 ends the argument there,
-        as at a comma, and flags the line Q: `MM A>B,C' passes A, B and C,
-        `MM A>,B' A, an empty argument and B, and um80 warns.  um80 took it
-        for a closing bracket, so the depth went below 0 and no later comma
-        split: `MM 1>2,3' passed the one argument `1>2,3' - with --dri
-        `DB P' was 00 03, without a word, and without it an error.
+        With escape_bang the operands are a macro call's arguments, which
+        macro_call_arguments() reads.
         """
         if not operands:
             return []
+        if escape_bang:
+            return self.macro_call_arguments(operands)
 
         result = []
         current = ''
@@ -1944,17 +1928,8 @@ class Assembler:
         angle_depth = 0
         in_string = False
         string_char = None
-        stray_gt = False
 
-        i = 0
-        n = len(operands)
-        while i < n:
-            ch = operands[i]
-            if escape_bang and ch == '!' and not in_string and i + 1 < n:
-                # '!' quotes the next character in a macro argument list
-                current += ch + operands[i + 1]
-                i += 2
-                continue
+        for ch in operands:
             if in_string:
                 current += ch
                 if ch == string_char:
@@ -1968,41 +1943,129 @@ class Assembler:
                     in_string = True
                     string_char = ch
                     current += ch
-            elif ch == '(' and not escape_bang:
+            elif ch == '(':
                 paren_depth += 1
                 current += ch
-            elif ch == ')' and not escape_bang:
+            elif ch == ')':
                 paren_depth -= 1
                 current += ch
             elif ch == '<' and angles:
                 angle_depth += 1
                 current += ch
-            elif ch == '>' and angles and (angle_depth or not escape_bang):
+            elif ch == '>' and angles:
                 angle_depth -= 1
                 current += ch
-            elif ch == '>' and angles and not self.dri:
-                # A '>' with no '<' in a macro call: M80 ends the argument
-                # here, inside parentheses too (`MM (A>B),C' is `(A', `B)'
-                # and C).
-                stray_gt = True
-                result.append(current.strip())
-                current = ''
             elif ch == ',' and paren_depth == 0 and angle_depth == 0:
                 result.append(current.strip())
                 current = ''
             else:
                 current += ch
-            i += 1
 
         if current.strip():
             result.append(current.strip())
+        return result
+
+    def macro_call_arguments(self, operands):
+        """The arguments of a macro call, as MACRO-80 - or with --dri, MAC
+        and RMAC - read them.
+
+        An argument ends at a comma, a blank or a tab outside a quoted
+        string and a <...> group, and the blanks in front of one are
+        skipped.  '!' quotes the next character, which is kept, with its
+        '!', for process_macro_argument() to read (M80's `head FOO,!!CF',
+        issue #3).  A parenthesis is text, as in all three: `MM (A,B),C'
+        passes `(A', `B)' and C.  A `%' expression runs to its comma,
+        blanks and all (`MM %1 + 1,5' passes 2 and 5): M80 evaluates one
+        wherever its `%' is outside a <...> group (`MM A%1 + 1' is A2),
+        MAC and RMAC only one that starts the argument (percent_argument()).
+
+        MACRO-80 3.44 reads the arguments one after another, and the blanks
+        that end one separate it from the next, as a comma does: `MM A B'
+        passes A and B, and `MM 5 GT 2,4' 5, GT, 2 and 4.  A comma after
+        them separates another, so `MM A ,B' passes A, an empty argument
+        and B.  M80 steps back to the last character of the argument, skips
+        the blanks from there and takes the character it comes to, so after
+        a '!'-quoted blank it drops one: `MM A!  B,C' passes `A ', an empty
+        argument and C.  A '>' with no '<' open before it ends an argument
+        too, inside parentheses as well, and M80 flags the line Q (um80
+        warns): `MM A>B,C' passes A, B and C, and `MM A >B' A, an empty
+        argument and B.
+
+        MAC and RMAC (--dri) end the arguments at the blanks after one: a
+        comma there starts the next (`MM A ,B' passes A and B), and anything
+        else they flag S and leave out, and um80 reports an error (`MM A B'
+        passes A in MAC).  A '>' with no '<' is text: `MM 1>2,3' passes
+        `1>2' and 3.
+
+        um80 kept a blank in an argument: `MM A B' passed `A B', and `MM 1
+        + 1,5' `1 + 1' and 5, where M80 passes 1, +, 1 and 5, without a
+        word, with or without --dri.
+        """
+        args = []
+        n = len(operands)
+        i = 0
+        stray_gt = False
+        while True:
+            while i < n and operands[i] in ' \t':
+                i += 1
+            start, depth, value, end = i, 0, False, None
+            while i < n:
+                ch = operands[i]
+                if ch == '!' and i + 1 < n:
+                    i += 2
+                    continue
+                if self._starts_string(operands, i):
+                    i = self._string_end(operands, i)
+                    continue
+                if ch == '<':
+                    depth += 1
+                elif ch == '>' and depth:
+                    depth -= 1
+                elif ch == '>' and not self.dri:
+                    end = ch
+                    break
+                elif depth:
+                    pass
+                elif ch == '%' and (not self.dri or i == start):
+                    value = True
+                elif ch == ',' or (ch in ' \t' and not value):
+                    end = ch
+                    break
+                i += 1
+            args.append(operands[start:i].rstrip() if value else operands[start:i])
+            if end is None:
+                break
+            if end in ',>':
+                stray_gt = stray_gt or end == '>'
+                i += 1
+                continue
+            if self.dri:
+                k = i
+                while k < n and operands[k] in ' \t':
+                    k += 1
+                if k < n and operands[k] == ',':
+                    i = k + 1
+                    continue
+                if k < n:
+                    self.error(f"'{operands[k:]}' after the blank that ends the"
+                               f" arguments of a macro call, '{operands}': MAC"
+                               " and RMAC flag it S and leave it out (M80 reads"
+                               " a blank as a ','; a '!' there ends a statement"
+                               " in MAC, where um80 reads M80's quote)")
+                break
+            k = i - 1
+            while k < n and operands[k] in ' \t':
+                k += 1
+            if k >= n or operands[k] == ';':
+                break
+            i = max(i, k + 1)
 
         if stray_gt and self.pass_num == 2:
             self.warning(f"'>' in the arguments '{operands}' has no '<': it"
                          " ends the argument, as a ',' does (M80 flags it Q;"
                          " MAC and RMAC, and um80 with --dri, read it as"
                          " text)")
-        return result
+        return args
 
     def split_on_exclamation(self, line):
         """
@@ -4960,8 +5023,9 @@ class Assembler:
         `DB '&N'' is '10'.  In M80 the `%' may follow other text (`A%E' is
         A7); in MAC and RMAC (--dri) only an argument that starts with `%'
         is a value, and --dri reads a name in the expression without its
-        `$', so `%N$C' is the value of NC.  An argument in <...> is text,
-        as is a `%' after `!' or in a quoted string.
+        `$', so `%N$C' is the value of NC.  A `%' inside a <...> group is
+        text, as is one after `!' or in a quoted string; in M80 one after
+        a group is a value (`<A>%1+1' is A2).
         """
         i = self._percent_position(arg)
         if i is None or not arg[i + 1:].strip():
@@ -4985,21 +5049,29 @@ class Assembler:
         return arg[:i] + text
 
     def _percent_position(self, arg):
-        """Where the `%' that makes `arg' a value is, or None."""
+        """Where the `%' that makes `arg' a value is, or None.
+
+        In M80 the first `%' outside a quoted string and a <...> group, and
+        not after a '!': `<A>%1+1' is A2 and `A<B>%2' AB2 in M80 3.44 (um80
+        took a `%' after any `<' for text).  A `%' inside <...> is text, as
+        before (M80 flags it O and passes 0).
+        """
         if self.dri:
             return 0 if arg.startswith('%') else None
-        i = 0
+        i = depth = 0
         while i < len(arg):
             ch = arg[i]
-            if ch == '<':
-                return None
             if ch == '!':
                 i += 2
                 continue
             if self._starts_string(arg, i):
                 i = self._string_end(arg, i)
                 continue
-            if ch == '%':
+            if ch == '<':
+                depth += 1
+            elif ch == '>' and depth:
+                depth -= 1
+            elif ch == '%' and not depth:
                 return i
             i += 1
         return None
