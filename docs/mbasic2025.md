@@ -97,6 +97,13 @@ python3 tools/fourway_mbasic.py --m80 path/M80.COM --l80 path/L80.COM \
     --cpmemu path/cpmemu [--mbasic2025 DIR] [--variant NAME] [--um80-flag=-t]
 ```
 
+The exit status is 1 if any image built with um80 or ul80 differs from the
+M80 + L80 build, 2 on a setup error, and 0 otherwise. Without
+`--um80-flag=-t`, the 8 `mbasic_521` links that mix `BINTRP.REL` and `F4.REL`
+from different assemblers fail (see "`FBUFP27`" below), so the status is 1;
+the tool then prints the cause and says to use `-t`. Use `-t` when the exit
+status is a pass/fail check.
+
 The M80 and L80 used are MACRO-80 3.44 and LINK-80 3.44 (09-Dec-81), run
 under [cpmemu](https://github.com/avwohl/cpmemu). cpmemu must use
 `default_mode = binary` and `eol_convert = false`, because otherwise it

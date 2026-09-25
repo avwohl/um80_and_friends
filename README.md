@@ -490,6 +490,10 @@ python3 tools/fourway_mbasic.py --m80 path/M80.COM --l80 path/L80.COM \
     --cpmemu path/cpmemu [--variant mbasic_521] [--um80-flag=-t]
 ```
 
+The exit status is 1 if any mix differs from the M80 + L80 build. Without
+`--um80-flag=-t`, 8 of the 60 `mbasic_521` links fail because of a 7-character
+name, which the tool names; use `-t` when the exit status is a pass/fail check.
+
 [docs/mbasic2025.md](docs/mbasic2025.md) has the results and the changes that
 mbasic2025's sources need.
 

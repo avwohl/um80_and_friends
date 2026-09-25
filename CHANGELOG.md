@@ -32,7 +32,9 @@ results.
   genuine M80.COM/L80.COM (supplied by path; they are not in this
   repository) and this checkout's um80/ul80. It compares each module's two
   .REL files and each image with the all-Microsoft build and the historic
-  binary. The exit status is 1 when a tool mix differs from M80 + L80.
+  binary. The exit status is 1 when a tool mix differs from M80 + L80. Without
+  `--um80-flag=-t`, that includes 8 links of `mbasic_521` that a 7-character
+  name breaks (see Changed); the tool names the symbol and says to use `-t`.
 
 ### Changed
 - um80 assembler: `-t` cuts every PUBLIC, EXTRN and module name to 6

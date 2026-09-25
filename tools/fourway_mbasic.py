@@ -48,6 +48,10 @@ What is compared, and why:
 
 The exit status is 1 when any image built with um80 or ul80 differs from the
 all-Microsoft one (an interchangeability failure), 2 on a setup error, else 0.
+Without --um80-flag=-t that includes the mixes a name longer than six
+characters breaks - mbasic_521's FBUFP27, which M80 writes as FBUFP2: 8 of
+its 60 links.  The tool names such a symbol and says to use -t; as a
+pass/fail check, run it with --um80-flag=-t.
 A difference from the historic binary that the all-Microsoft build shares is
 reported, not failed: it is the source, not the tools.  A module M80 cannot
 assemble is reported, and the mixes that need its M80 .REL are left out.
@@ -126,8 +130,12 @@ class Tools:
     def um(self, module, d, *args):
         """Run um80.<module> (um80 or ul80); return (status, output)."""
         env = dict(os.environ, PYTHONPATH=self.um80_root, PYTHONDONTWRITEBYTECODE='1')
-        r = subprocess.run([self.python, '-m', 'um80.' + module, *args], cwd=d,
-                           capture_output=True, text=True, env=env, check=False)
+        try:
+            r = subprocess.run([self.python, '-m', 'um80.' + module, *args], cwd=d,
+                               capture_output=True, text=True, env=env, timeout=600,
+                               check=False)
+        except subprocess.TimeoutExpired as e:
+            raise SetupError(f'{module} {" ".join(args)} timed out in {d}') from e
         return r.returncode, r.stdout + r.stderr
 
 
@@ -219,6 +227,22 @@ def compare_rels(m, u):
     return out
 
 
+def long_names(m, u):
+    """{um80 name: M80 name} for the names um80 keeps longer than M80's 6.
+
+    M80 cuts a PUBLIC or EXTRN name to 6 characters; um80 keeps it whole
+    unless -t is given.  Such a module's .REL from one assembler does not
+    link with the modules from the other that define or use the name.
+    """
+    out = {}
+    for key in ('publics', 'externs'):
+        only_m = set(m[key]) - set(u[key])
+        for name in set(u[key]) - set(m[key]):
+            if len(name) > 6 and name[:6] in only_m:
+                out[name] = name[:6]
+    return out
+
+
 def ranges(addrs):
     """'0C44-0C45 5E99' from a sorted address list."""
     out, start, prev = [], None, None
@@ -251,6 +275,7 @@ class Variant:
         self.summaries = {}
         self.notes = []
         self.m80_failed = set()   # modules M80 has fatal errors in
+        self.long_names = {}      # um80 name: the 6 characters M80 keeps
         self.bad = False
 
     def assemble(self):
@@ -363,8 +388,9 @@ class Variant:
         self.assemble()
         n_same = 0
         for stem, cpm in self.mods:
-            diffs = compare_rels(rel_summary(self.rel_path('m80', cpm), 0),
-                                 rel_summary(self.rel_path('um80', cpm), 0))
+            m, u = (rel_summary(self.rel_path(tag, cpm), 0) for tag in ('m80', 'um80'))
+            diffs = compare_rels(m, u)
+            self.long_names.update(long_names(m, u))
             if diffs:
                 print(f'   {stem}.rel M80 vs um80: ' + '; '.join(diffs))
             else:
@@ -410,6 +436,13 @@ class Variant:
                     print(f'   {"":{width}s}    {linker} said: ' + ' | '.join(msgs[:4]))
         if self.ref is not None and ms is not None:
             self.explain(ms, self.loaded(['m80'] * len(self.mods))[0], length)
+        if self.long_names and self.bad:
+            print('   cause: ' + ', '.join(f'{u} (M80: {m})' for u, m in
+                                         sorted(self.long_names.items()))
+                  + ': M80 keeps 6 characters of a name and um80 all of them, so a'
+                  ' module that defines it and one that uses it do not link when'
+                  ' they come from different assemblers; um80 -t keeps 6'
+                  ' (--um80-flag=-t)')
 
     def verdict(self, img, loaded, length, ms, linker):
         """One cell of the matrix, e.g. '= historic (5 hole bytes as L80 left them)'."""
@@ -489,12 +522,13 @@ def main(argv=None):
                   os.path.abspath(args.cpmemu), args.python, os.path.abspath(args.um80),
                   args.um80_flag)
     work = args.work or tempfile.mkdtemp(prefix='fourway_')
-    bad = False
+    bad = too_long = False
     try:
         for name in args.variant or list(VARIANTS):
             v = Variant(name, VARIANTS[name], args.mbasic2025, tools, os.path.abspath(work))
             v.run()
             bad = bad or v.bad
+            too_long = too_long or (v.bad and bool(v.long_names))
     except SetupError as e:
         print(f'fourway_mbasic: {e}', file=sys.stderr)
         return 2
@@ -504,6 +538,9 @@ def main(argv=None):
     print('RESULT:', 'some image built with um80 or ul80 differs from M80 + L80' if bad
           else 'every mix of M80/um80 and L80/ul80 that M80 can assemble'
           ' builds the M80 + L80 image')
+    if too_long:
+        print('        names longer than 6 characters (see "cause:" above) break some'
+              ' mixes; rerun with --um80-flag=-t to check the rest')
     return 1 if bad else 0
 
 
