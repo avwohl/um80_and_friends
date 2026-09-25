@@ -176,6 +176,13 @@ class Linker:
         # set (--allow-overlap): then it is a warning, and the byte loaded
         # last is the one in the image.
         self.allow_overlap = False
+        # A global that a second module defines (LINK-80's "%Mult. Def.
+        # Global") is a warning, and the first definition is the one used,
+        # as in LINK-80; with this set (--fatal-mult-def) it is an error and
+        # link() fails.  mult_defs: (name, first module, other module) of
+        # each.
+        self.fatal_mult_def = False
+        self.mult_defs = []
         self.overlaps = []  # the messages check_absolute_overlaps() gave
         # For each byte of the image, the index of the module whose byte it
         # is and the offset in that module's buffer (-1: none), set by
@@ -188,6 +195,24 @@ class Linker:
 
     def warning(self, msg):
         self.warnings.append(f"Warning: {msg}")
+
+    def multiply_defined(self, name, module):
+        """`module' defines the global `name' that an earlier one defined.
+
+        LINK-80 3.44 prints "%Mult. Def. Global NAME", binds every reference
+        to the first definition and writes the program; ul80 does the same,
+        unless fatal_mult_def is set.  Either way the message names both
+        modules: the link order decides which one is used, and it once
+        hid a mis-link in MP/M II's CLI.
+        """
+        first = ('the linker' if name in self.LINKER_SYMBOLS
+                 else self.modules[self.globals[name][0]].name)
+        self.mult_defs.append((name, first, module.name))
+        msg = f"%Mult. Def. Global {name}: defined in {first} and in {module.name}"
+        if self.fatal_mult_def:
+            self.error(msg)
+        else:
+            self.warning(f"{msg}; {first}'s definition is used")
 
     def load_rel(self, filename):
         """Load a REL file and add to modules list."""
@@ -622,7 +647,7 @@ class Linker:
         mod_idx = len(self.modules) - 1
         for sym_name, (value, seg_type) in module.publics.items():
             if sym_name in self.globals and self.globals[sym_name][3]:
-                self.error(f"Multiply defined global '{sym_name}'")
+                self.multiply_defined(sym_name, module)
             else:
                 self.globals[sym_name] = (mod_idx, value, seg_type, True)
                 if seg_type == ADDR_COMMON_REL:
@@ -716,7 +741,7 @@ class Linker:
                 new_value = base_value + offset
                 # Register the aliased symbol in globals
                 if new_name in self.globals and self.globals[new_name][3] and not refresh:
-                    self.error(f"Multiply defined global '{new_name}'")
+                    self.multiply_defined(new_name, module)
                 else:
                     # Use the same module index as the base external
                     self.globals[new_name] = (base_mod_idx, new_value, base_seg_type, True)
@@ -976,6 +1001,8 @@ class Linker:
         # Resolve aliased public symbols first (EQU external+offset made PUBLIC)
         # These need to be in globals before resolve_externals() checks references
         self.resolve_aliased_publics()
+        if self.mult_defs and self.fatal_mult_def:
+            return False
 
         if not self.resolve_externals():
             return False
@@ -1688,6 +1715,11 @@ def main():
                             'patch or overlay module), with a warning, as '
                             'LINK-80 does: the byte loaded last is the one in '
                             'the image (default: an error)')
+    parser.add_argument('--fatal-mult-def', action='store_true',
+                       help='A global that more than one module defines is an '
+                            'error: no output, exit status 1 (default: '
+                            'LINK-80\'s %%Mult. Def. Global warning; the first '
+                            'definition is used and the output written)')
     parser.add_argument('--no-ds-zeros', action='store_true',
                        help='Do not emit zeros for DS (reserve space) directives (default: emit zeros)')
     parser.add_argument('-s', '--sym', action='store_true', help='Generate .SYM symbol file')
@@ -1715,6 +1747,7 @@ def main():
     linker.page_zero_relative = prl_output
     linker.prl_extra = args.extra
     linker.allow_overlap = args.allow_overlap
+    linker.fatal_mult_def = args.fatal_mult_def
 
     # Emit zeros for DS directives (default: True)
     if args.no_ds_zeros:
@@ -1773,13 +1806,7 @@ def main():
                     loaded_any = True
 
     # Link.  Report anything the linker recorded, not only the errors that
-    # made link() give up: L80 keeps going after a multiply-defined global
-    # (it takes the first definition) and so do we, and reporting only on
-    # failure meant that error was recorded and then silently dropped --
-    # exit 0, output written, nothing said.  Two objects each defining the
-    # same PUBLIC linked quietly, which is exactly the case
-    # tests/test_linker_dupglobal.py was written to catch and could not,
-    # because it drives the Linker API rather than this entry point.
+    # made link() give up.
     ok = linker.link()
     for err in linker.errors:
         print(err, file=sys.stderr)
@@ -1826,18 +1853,20 @@ def main():
     # Report warnings
     for warn in linker.warnings:
         print(warn, file=sys.stderr)
+    if linker.mult_defs:
+        print("(--fatal-mult-def makes a global defined more than once an "
+              "error)", file=sys.stderr)
 
     print(f"Linked -> {output_path}")
     print(f"  Modules: {len(linker.modules)}")
     print(f"  Global symbols: {len(linker.globals)}")
 
-    # A recorded-but-recoverable error leaves the exit status at 0 for now.
-    # L80 keeps the first definition of a multiply-defined global and
-    # produces output, and so do we; making the status non-zero as well is
-    # a policy change that would reject link lines L80 accepts -- including
-    # uc80's own documented one, which passes runtime.lib alongside a module
-    # that has already embedded the runtime, so __sret_buf can arrive twice.
-    # Printing it is the part that was plainly wrong and is fixed above.
+    # A global defined twice is LINK-80's warning, and the status stays 0:
+    # LINK-80 keeps the first definition and writes the program, and link
+    # lines rely on that - uc80's documented one passes runtime.lib beside
+    # a module that has the runtime in it, so __sret_buf arrives twice, and
+    # MP/M II's GENSYS link overrides ten runtime names with X0100.ASM's.
+    # A script that must not link such a program passes --fatal-mult-def.
     sys.exit(0)
 
 

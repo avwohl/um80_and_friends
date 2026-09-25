@@ -642,6 +642,25 @@ later, whether absolute or not. That is what L80 writes when given `/D`
 something is loaded over keeps the relocated byte nothing replaced, as in
 L80, which relocates a word as it loads it.
 
+### A global defined twice (`--fatal-mult-def`)
+
+When a second module defines a global that one loaded before it defines,
+LINK-80 3.44 prints `%Mult. Def. Global FOO`, binds every reference to the
+first definition and writes the program. ul80 does the same, and says which
+modules and which definition:
+
+```
+Warning: %Mult. Def. Global FOO: defined in A and in B; A's definition is used
+```
+
+The exit status is 0, as the program is linked: link lines depend on it (MP/M
+II's GENSYS link overrides ten names of its runtime with `X0100.ASM`'s, linked
+first). For a link where that is a mistake - it once sent four calls to
+`PRINTB` in MP/M II's CLI and ATTACH to the wrong routine - `ul80
+--fatal-mult-def` makes it an error: ul80
+writes no output and exits 1. Up to 0.3.50 ul80 printed "Error: Multiply
+defined global" but wrote the output and exited 0.
+
 ---
 
 ## Compatibility Matrix
@@ -666,7 +685,7 @@ L80, which relocates a word as it loads it.
 
 ## Version History
 
-- **Unreleased** — `--dri` (a `$` inside a name is ignored, as in MAC and RMAC); in 8080 code a register name is its number, as in M80 and MAC
+- **Unreleased** — `--dri` (a `$` inside a name is ignored, as in MAC and RMAC); in 8080 code a register name is its number, as in M80 and MAC; ul80 `--fatal-mult-def`
 - **0.3.50** — MACRO-80 IRP/IRPC lists, 6-character `-t`, mbasic2025 in the test suite
 - **0.3.49** — link-time expressions (REL extension link items), LINK-80 interchange, absolute code in a link
 - **0.3.48** — `--spr`, `--extra` and `--aseg`; `--prl` links a transient at 100H

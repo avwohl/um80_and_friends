@@ -28,6 +28,21 @@ LINK-80 3.44 under cpmemu, and each has a regression test that fails on
   --aseg` assembles `MPMLDR/LDRBDOS.ASM` to the bytes at 0D00H-164CH of
   MPMLDR.COM (V2.0 and V2.1). `--dri` does not imply `--aseg` or `-t`;
   `docs/EXTENSIONS.md` says exactly what it changes.
+- ul80 linker: `--fatal-mult-def` makes a global that more than one module
+  defines an error: ul80 writes no output and exits 1 (see Changed).
+
+### Changed
+- ul80 linker: a global that a second module defines is now LINK-80's
+  warning, with its message, `%Mult. Def. Global FOO`, and ul80 says which
+  modules define it and whose definition every reference uses: the first one
+  loaded, as in LINK-80. ul80 0.3.50 printed "Error: Multiply defined global"
+  but wrote the output and exited 0, so a build script could not tell; that
+  is how, once mpm2 cut names to six characters, four calls to `PRINTB` in
+  MP/M II's CLI and ATTACH went to the wrong routine (a patch-area
+  `PRINTBrlsfile` had become a second `PRINTB`). The exit status is still 0,
+  as in LINK-80, which links the program, and link lines rely on it (MP/M
+  II's GENSYS link overrides ten runtime names with `X0100.ASM`'s); a script
+  that must not link such a program passes `--fatal-mult-def`.
 
 ### Fixed
 - um80 assembler: a source byte with bit 7 set is now read with bit 7

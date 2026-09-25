@@ -55,6 +55,7 @@ ul80 --prl program.rel              # MP/M .PRL transient (linked at 100H)
 ul80 --prl --extra 1000 program.rel # ...asking MP/M for 1000H more memory
 ul80 --spr program.rel              # MP/M .SPR/.RSP system page (linked at 0)
 ul80 --allow-overlap a.rel patch.rel # Absolute code over other code: a warning
+ul80 --fatal-mult-def a.rel b.rel   # A global defined twice fails the link
 ```
 
 ### Disassemble a COM file
@@ -440,7 +441,7 @@ to documented M80 behavior:
 | `test_z80_and_charconst.py` | `LD A,I`/`LD A,R` encoding, two-character constant byte order |
 | `test_linker_segments.py` | Absolute ASEG placement, mixed CSEG+ASEG, COMMON-only modules |
 | `test_linker_absolute_code.py` | A module's code placed above the absolute code loaded before it; absolute code overlapping anything is an error, or with `--allow-overlap` a warning and the byte loaded last in the image |
-| `test_linker_dupglobal.py` | Multiply-defined PUBLIC global is a link error |
+| `test_linker_dupglobal.py` | A global two modules define is L80's `%Mult. Def. Global` warning and the first definition is used; with `--fatal-mult-def` an error |
 | `test_linker_loaded_over.py` | A byte loaded over a relocatable word or an item-12 chain word (an ORG back, a COMMON block declared again or shared) replaces that byte, as L80 relocates on loading |
 | `test_irp_list_brackets.py` | An `IRP`/`IRPC` `<...>` list ends at its matching `>` (`IRPC C,<>>` is empty); `!` in an `IRP`/`IRPC` line |
 | `test_module_name.py` | The module name from `NAME('X')` and, without it, from the last `TITLE` |

@@ -8,6 +8,7 @@ ul80 \- Microsoft LINK-80 compatible linker for 8080/Z80
 [\fB\-x\fR]
 [\fB\-\-prl\fR]
 [\fB\-\-allow\-overlap\fR]
+[\fB\-\-fatal\-mult\-def\fR]
 [\fB\-s\fR]
 [\fB\-S\fR \fIfile.sym\fR]
 [\fB\-p\fR \fIorigin\fR]
@@ -46,6 +47,17 @@ Link absolute code that loads over other code \- a patch or overlay module \-
 with a warning, as LINK-80 does, instead of failing. The image has the byte
 loaded last: a later module's over an earlier one's, and in one module the
 byte it loaded later, as LINK-80 writes it when given /D.
+.TP
+.B \-\-fatal\-mult\-def
+Make a global that more than one module defines an error: ul80 writes no
+output and exits 1. Without it such a global is a warning, as in LINK-80
+("%Mult. Def. Global"): every reference uses the first definition loaded, and
+the output is written. Either way ul80 names both modules:
+.RS
+.nf
+Warning: %Mult. Def. Global FOO: defined in A and in B; A's definition is used
+.fi
+.RE
 .TP
 .B \-s
 Generate a symbol file (.SYM) with an auto-generated name based on the output file.
@@ -131,7 +143,8 @@ Linking successful.
 .TP
 .B 1
 Linking failed due to errors (undefined symbols, absolute code overlapping
-other code, etc.).
+other code, a global defined twice with \fB\-\-fatal\-mult\-def\fR, etc.).
+No output is written.
 .SH FILES
 .TP
 .I input.rel
