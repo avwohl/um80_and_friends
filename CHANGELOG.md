@@ -2,6 +2,25 @@
 
 All notable changes to the um80 toolchain are documented here.
 
+## [Unreleased]
+
+Building MP/M II (https://github.com/avwohl/mpm2) from Digital Research's
+unmodified sources found the defects below. Each expected result was
+confirmed with the genuine MACRO-80 3.44, DRI's MAC 2.0 and RMAC 1.1, and
+LINK-80 3.44 under cpmemu, and each has a regression test that fails on
+0.3.50.
+
+### Fixed
+- um80 assembler: a source byte with bit 7 set is now read with bit 7
+  clear, as MACRO-80, MAC and RMAC all read it. um80 read it as a character
+  that no name or operator starts with, so a line that began with one was
+  dropped without a word, and in a string it became FDH. MP/M II's
+  `NUCLEUS/MEMMGR.ASM` ends six lines with CR and 8AH, a line feed with its
+  parity bit set: the line after each was lost, one of them an `INX B`.
+  A string of the bytes `a`, C1H and `b` is now 41H in the middle, as in
+  M80, not FDH. This applies to the source, to `INCLUDE`/`MACLIB` files and
+  to `--pre` files.
+
 ## [0.3.50] - 2026-09-25
 
 mbasic2025 (https://github.com/avwohl/mbasic2025) rebuilds historic Microsoft

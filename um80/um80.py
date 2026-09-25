@@ -37,6 +37,34 @@ class AssemblerError(Exception):
 IDENT_CHARS = frozenset('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
                         '0123456789_@?$.')
 
+# Every byte of a source file with its bit 7 cleared (see source_lines()).
+STRIP_PARITY = bytes(b & 0x7F for b in range(256))
+
+
+def source_lines(data):
+    """The lines of a source file, read from its bytes as CP/M's assemblers
+    read them.
+
+    A 1AH (^Z) ends the file: CP/M pads a file's last 128-byte record with
+    them.  Each line ends at a CR, a LF or a CR LF.
+
+    Every byte loses bit 7, the parity bit some CP/M editors and serial
+    links left set: MACRO-80 3.44, and DRI's MAC and RMAC, all read 8AH as
+    a line feed, E9H as `i' and C1H in a string as `A'.  um80 read such a
+    byte as a character no name or operator starts with, so a line ending
+    CR 8AH made the next line one it dropped without a word.  Six lines of
+    MP/M II's NUCLEUS/MEMMGR.ASM end so - one of those dropped was an
+    INX B.  A 9AH byte (1AH with bit 7) does not end the file, as in M80;
+    MAC and RMAC stop at it.
+    """
+    eof = data.find(0x1A)
+    if eof >= 0:
+        data = data[:eof]
+    text = data.translate(STRIP_PARITY).decode('ascii')
+    text = text.replace('\r\n', '\n').replace('\r', '\n')
+    text = text.rstrip('\x00')  # padding nulls
+    return text.split('\n')
+
 
 def is_string_literal(text):
     """True if `text' is one quoted string, like 'it''s' - not 'A'+'B'.
@@ -4227,19 +4255,7 @@ class Assembler:
         try:
             # Read the include file
             with open(filepath, 'rb') as f:
-                data = f.read()
-
-            # Strip ^Z (0x1A) and everything after it (CP/M EOF marker)
-            eof_pos = data.find(0x1A)
-            if eof_pos >= 0:
-                data = data[:eof_pos]
-
-            # Decode to text
-            text = data.decode('ascii', errors='replace')
-            text = text.replace('\r\n', '\n').replace('\r', '\n')
-            text = text.rstrip('\x00')
-
-            lines = text.split('\n')
+                lines = source_lines(f.read())
 
             # Reset line number for include file
             self.line_num = 0
@@ -4378,34 +4394,14 @@ class Assembler:
                         return False
                     try:
                         with open(filepath, 'rb') as f:
-                            data = f.read()
-                        # Handle CP/M format
-                        eof_pos = data.find(0x1A)
-                        if eof_pos >= 0:
-                            data = data[:eof_pos]
-                        text = data.decode('ascii', errors='replace')
-                        text = text.replace('\r\n', '\n').replace('\r', '\n')
-                        text = text.rstrip('\x00')
-                        pre_lines.extend(text.split('\n'))
+                            pre_lines.extend(source_lines(f.read()))
                     except IOError as e:
                         self.error(f"Cannot read pre-include file {filepath}: {e}")
                         return False
 
         # Read source - handle CP/M format (CR/LF, ^Z EOF, 128-byte records)
         with open(source_file, 'rb') as f:
-            data = f.read()
-
-        # Strip ^Z (0x1A) and everything after it (CP/M EOF marker)
-        eof_pos = data.find(0x1A)
-        if eof_pos >= 0:
-            data = data[:eof_pos]
-
-        # Decode to text, handling CR/LF and stripping trailing nulls
-        text = data.decode('ascii', errors='replace')
-        text = text.replace('\r\n', '\n').replace('\r', '\n')  # Normalize line endings
-        text = text.rstrip('\x00')  # Strip padding nulls
-
-        lines = pre_lines + text.split('\n')
+            lines = pre_lines + source_lines(f.read())
         self.source_lines = lines
 
         # Pass 1: Build symbol table (iterate until JR/DJNZ promotions stabilize)
