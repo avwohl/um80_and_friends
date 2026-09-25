@@ -27,6 +27,18 @@ LINK-80 3.44 under cpmemu, and each has a regression test that fails on
   `MPMLDR/LDRBDOS.ASM` has `<TAB>arech  equ b! arecl  equ c`. A macro
   defined inside a macro with its name indented was not seen as nested, so
   its `ENDM` ended the outer macro; it is now nested, as in M80.
+- um80 assembler: `RD EQU D` then `DAD RD` assembled `DAD H` (29H), and
+  `PUSH RD` `PUSH H`. In 8080 code M80, MAC and RMAC give each register name
+  a number - B 0, C 1, D 2, E 3, H 4, L 5, M 6, A 7, SP and PSW 6 - and read
+  a register operand as an expression. um80 took the 2 of `RD EQU D` for a
+  register pair's encoding, which is H. A register pair operand is now the
+  number of its first register (0 B, 2 D, 4 H, 6 SP or PSW), so `DAD RD` is
+  19H and `PUSH RD` D5H, as in M80. `X EQU SP` and `X EQU PSW` are 6 (they
+  were 3). A register operand may be any expression, as in M80 and MAC:
+  `DAD 2`, `MOV A,2`, `PUSH PSW+0` and a register name defined further down
+  now assemble. An odd number for a register pair (`DAD E`, `PUSH 3`), which
+  um80 took for the pair of the register below it, and an address (`DAD
+  LABEL`, which was `DAD B`) are errors, as in M80 and MAC.
 
 ## [0.3.50] - 2026-09-25
 

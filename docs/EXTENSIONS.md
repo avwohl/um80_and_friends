@@ -125,51 +125,39 @@ The `$` character can be used as a visual separator within numeric literals for 
 
 The `$` characters are stripped during parsing and do not affect the numeric value. This is particularly useful for binary constants where grouping bits improves readability.
 
-### Register Aliases via EQU
+### Register Names as Values (EQU of a register)
 
-Symbols can be defined with EQU to represent registers, then used in place of register names:
+In 8080 code, MACRO-80 and DRI's MAC and RMAC give each register name a
+number and read a register operand as an expression, and so does um80:
 
-```asm
-; Define register aliases using register names
-UR      EQU     B                   ; UR is an alias for register B
-LR      EQU     C                   ; LR is an alias for register C
-MR      EQU     E                   ; MR is an alias for register E
-KR      EQU     H                   ; KR maps to H (or HL for pairs)
+| Name | B | C | D | E | H | L | M | A | SP | PSW |
+|------|---|---|---|---|---|---|---|---|----|-----|
+| Value | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 6 | 6 |
 
-; Use aliases in instructions
-        MVI MR,0                    ; Same as MVI E,0
-        MOV A,UR                    ; Same as MOV A,B
-        INR LR                      ; Same as INR C
-        DCR MR                      ; Same as DCR E
-```
-
-**Register pair promotion:**
-
-For instructions that require register pairs (LXI, PUSH, POP, INX, DCX, DAD, etc.), single-register aliases are automatically promoted to their corresponding pair:
-
-| Single Register | Promoted To |
-|-----------------|-------------|
-| B or C (0,1) | BC |
-| D or E (2,3) | DE |
-| H or L (4,5) | HL |
+A symbol equated to a register name then names that register:
 
 ```asm
-KR      EQU     H                   ; KR = 4 (H register)
-        LXI KR,0                    ; Assembles as LXI H,0
-        INX KR                      ; Assembles as INX H
-        DAD KR                      ; Assembles as DAD H
+UR      EQU     B                   ; 0
+MR      EQU     E                   ; 3
+RD      EQU     D                   ; 2
+        MVI MR,0                    ; MVI E,0
+        MOV A,UR                    ; MOV A,B
+        DAD RD                      ; DAD D   (19H)
+        PUSH RD                     ; PUSH D  (D5H)
 ```
 
-**Numeric register values:**
+A register pair operand is the number of the pair's first register: 0 is B
+(BC), 2 D (DE), 4 H (HL), and 6 SP or PSW, whichever the instruction takes.
+So `DAD 2` is `DAD D`, `PUSH 6` is `PUSH PSW`, `LXI SP-2,0` is `LXI H,0`,
+and `MOV A,2` is `MOV A,D` - any expression with an absolute value will do,
+including a name defined further down. An odd number for a pair (`DAD E`,
+`DAD 1`), `LDAX`/`STAX` of anything but B or D, a number above 7 for a
+register, and an address (`DAD LABEL`) are errors, as in M80 (`A`) and MAC
+(`R` or `V`). um80 also takes `BC`, `DE` and `HL` for B, D and H.
 
-EQU can also use numeric values (0-7 for registers, 0-3 for pairs):
-
-```asm
-REG_A   EQU     7                   ; A register
-REG_BC  EQU     0                   ; BC pair
-        MOV A,REG_A                 ; MOV A,A (unusual but valid)
-        LXI REG_BC,100H             ; LXI B,100H
-```
+Up to 0.3.50 um80 took a value for a pair's own encoding (0 BC, 1 DE, 2 HL,
+3 SP), so `RD EQU D` then `DAD RD` was `DAD H`, and an odd value was quietly
+taken for the pair of the register below it.
 
 ### PUSH A / POP A
 
@@ -605,7 +593,7 @@ L80, which relocates a word as it loads it.
 | `HIGH(expr)` syntax | ✗ | ✓ | ✓ | ✓ |
 | `HIGH expr` syntax | ✓ | ✓ | ✓ | ✓ |
 | `$` digit separator | ✗ | ✓ | ✓ | ✗ |
-| Register EQU aliases | ✗ | ✓ | ✓ | ✗ |
+| Register EQU aliases | ✓ | ✓ | ✓ | ✗ |
 | PUSH A / POP A | ✗ | ✓ | ✓ | ✗ |
 | EQU external+offset | ✗ | ✓ | ✗ | ✓ |
 | `__END__` symbol | ✗ | ✓ | ✗ | ✗ |

@@ -332,28 +332,26 @@ The `$` character can be used as a visual separator within numeric literals for 
 
 The `$` characters are ignored during parsing and do not affect the numeric value.
 
-### Register Aliases via EQU
+### Register Names as Values
 
-Symbols can be defined with EQU to represent registers, then used in place of register names:
+In 8080 code um80 gives each register name a number and reads a register
+operand as an expression, as MACRO-80 and DRI's MAC and RMAC do: B 0, C 1,
+D 2, E 3, H 4, L 5, M 6, A 7, SP and PSW 6. A symbol equated to a register
+name names that register:
 
 ```asm
-; Define register aliases using register names
-UR      EQU     B                   ; UR is an alias for register B
-LR      EQU     C                   ; LR is an alias for register C
-MR      EQU     E                   ; MR is an alias for register E
-KR      EQU     H                   ; KR is an alias for register H (or HL for pairs)
-
-; Use aliases in instructions
+UR      EQU     B                   ; 0: register B
+MR      EQU     E                   ; 3: register E
+RD      EQU     D                   ; 2: register D, or the pair DE
         MVI MR,0                    ; Same as MVI E,0
         MOV A,UR                    ; Same as MOV A,B
-        INR LR                      ; Same as INR C
-        LXI KR,0                    ; Same as LXI H,0 (H maps to HL for pairs)
+        DAD RD                      ; Same as DAD D
+        PUSH RD                     ; Same as PUSH D
 ```
 
-For register pair instructions, single register aliases are automatically promoted:
-- B or C → BC
-- D or E → DE
-- H or L → HL
+A register pair operand is the number of its first register: 0 B, 2 D, 4 H,
+6 SP or PSW. An odd number (`DAD E`) is an error, as in M80 and MAC. See
+[docs/EXTENSIONS.md](docs/EXTENSIONS.md#register-names-as-values-equ-of-a-register).
 
 ### PUSH A / POP A
 
@@ -363,18 +361,6 @@ DRI assemblers allowed `PUSH A` and `POP A` as synonyms for `PUSH PSW` and `POP 
         PUSH A                      ; Same as PUSH PSW (push A and flags)
         POP A                       ; Same as POP PSW (pop A and flags)
 ```
-
-Register number assignments (when using numeric values):
-| Number | 8-bit Register | 16-bit Pair |
-|--------|----------------|-------------|
-| 0 | B | BC |
-| 1 | C | DE |
-| 2 | D | HL |
-| 3 | E | SP |
-| 4 | H | - |
-| 5 | L | - |
-| 6 | M (memory) | - |
-| 7 | A | - |
 
 ### External Symbol Aliases (EQU external+offset)
 

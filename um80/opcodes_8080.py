@@ -22,6 +22,16 @@ REGPAIRS_LDAX = {
     'B': 0, 'BC': 0, 'D': 1, 'DE': 1
 }
 
+# The value of each register name, as MACRO-80 and DRI's MAC give it in
+# 8080 code: `RD EQU D' is 2, and a register or register pair operand is an
+# expression - DAD 2 is DAD D, PUSH 6 is PUSH PSW.  A register pair is its
+# first register: B 0, D 2, H 4, SP and PSW 6.  BC, DE and HL are um80's
+# spellings of B, D and H.
+REG_VALUES = {
+    'B': 0, 'C': 1, 'D': 2, 'E': 3, 'H': 4, 'L': 5, 'M': 6, 'A': 7,
+    'SP': 6, 'PSW': 6, 'BC': 0, 'DE': 2, 'HL': 4,
+}
+
 # Condition codes for jumps/calls/returns
 CONDITIONS = {
     'NZ': 0, 'Z': 1, 'NC': 2, 'C': 3, 'PO': 4, 'PE': 5, 'P': 6, 'M': 7

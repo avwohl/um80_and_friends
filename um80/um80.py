@@ -318,6 +318,9 @@ class Assembler:
         self.def_replay = {}
         self.def_value = {}
         self.reading_pure = True
+        # While an 8080 register operand is read (register_value()), a
+        # register name in it is its number.
+        self.register_operand = False
         self.phase = None  # (run address, location counter) after .PHASE
         self.rel_common = None  # COMMON block last selected in the .REL
         self.reported_unlinkable = set()  # symbols report_unlinkable() named
@@ -1225,6 +1228,8 @@ class Assembler:
             upper = expr.upper()
 
             # Check if it's a register (not a symbol)
+            if self.register_operand and upper in REG_VALUES:
+                return ExprValue(REG_VALUES[upper])
             if upper in REGS or upper in REGPAIRS or upper in REGPAIRS_PUSHPOP:
                 self.error(f"Register '{expr}' used as value")
                 return ExprValue(0)
@@ -1888,56 +1893,65 @@ class Assembler:
                 (self.seg_type, self.loc, self.current_common))
         self.emit_word(0, mark=self.LIST_MARK_EXTERNAL)
 
+    def register_value(self, text):
+        """The value of a register operand of an 8080 instruction, or None.
+
+        MACRO-80 and DRI's MAC read a register operand as an expression in
+        which each register name stands for its number (REG_VALUES): `RD EQU
+        D' makes RD 2, and `MOV A,2', `DAD RD' and `PUSH PSW+0' are MOV A,D,
+        DAD D and PUSH PSW.  None if the operand is not an absolute value,
+        or is a symbol the pass cannot read yet (the caller reports it).
+        """
+        name = text.strip().upper()
+        if name in REG_VALUES:
+            return REG_VALUES[name]
+        errors = len(self.errors)
+        self.register_operand = True
+        try:
+            ev = self.eval_operand(text)
+        finally:
+            self.register_operand = False
+        if len(self.errors) > errors:
+            del self.errors[errors:]
+            return None
+        if ev.kind != 'abs':
+            return None
+        return ev.value
+
     def resolve_register_alias(self, name):
+        """The register (B, C, D, E, H, L, M or A) an operand names, or None.
+
+        The operand is a register name or an expression whose value is the
+        register's number, 0 to 7 (register_value()).
         """
-        DRI extension: Resolve a register name or alias.
-        If name is a direct register (B, C, D, E, H, L, M, A), return it.
-        If name is a symbol with EQU value 0-7, return the corresponding register.
-        Returns the register name or None if not a valid register/alias.
-        """
-        name = name.upper()
-        if name in REGS:
-            return name
-        # Check if it's a symbol with a register value
-        sym = self.symbols.get(name)
-        if sym and sym.defined and 0 <= sym.value <= 7:
-            # Map value to register name
-            for reg, val in REGS.items():
-                if val == sym.value:
-                    return reg
+        if name.strip().upper() in REGS:
+            return name.strip().upper()
+        val = self.register_value(name)
+        for reg, num in REGS.items():
+            if num == val:
+                return reg
         return None
 
     def resolve_regpair_alias(self, name, regpair_dict):
+        """The register pair in `regpair_dict' an operand names, or None.
+
+        A pair name in the table stands for itself.  Anything else is an
+        expression whose value is the number of the pair's first register
+        (register_value()): 0 B, 2 D, 4 H, and 6 SP or PSW, whichever the
+        instruction takes.  `RD EQU D' then `DAD RD' is DAD D (19H); um80
+        took the 2 for the pair encoding, H, and assembled DAD H (29H).
+        An odd number is not a pair: M80 flags `DAD 1' or `DAD E' A, and
+        MAC flags it R.
         """
-        DRI extension: Resolve a register pair name or alias.
-        If name is a direct register pair in regpair_dict, return it.
-        If name is a symbol with EQU value matching a pair encoding, return the pair.
-        Also handles single register -> register pair mapping for DRI compatibility:
-        - B(0)/C(1) -> BC, D(2)/E(3) -> DE, H(4)/L(5) -> HL
-        Returns the register pair name or None if not valid.
-        """
-        name = name.upper()
-        if name in regpair_dict:
-            return name
-        # Check if it's a symbol with a register pair value
-        sym = self.symbols.get(name)
-        if sym and sym.defined:
-            val = sym.value
-            # First, try direct match with register pair encoding (0-3)
-            for rp, rpval in regpair_dict.items():
-                if rpval == val:
-                    return rp
-            # DRI extension: single register value -> register pair
-            # B(0)/C(1) -> BC(0), D(2)/E(3) -> DE(1), H(4)/L(5) -> HL(2)
-            if val in (0, 1):  # B or C -> BC
-                if 'B' in regpair_dict or 'BC' in regpair_dict:
-                    return 'B' if 'B' in regpair_dict else 'BC'
-            elif val in (2, 3):  # D or E -> DE
-                if 'D' in regpair_dict or 'DE' in regpair_dict:
-                    return 'D' if 'D' in regpair_dict else 'DE'
-            elif val in (4, 5):  # H or L -> HL
-                if 'H' in regpair_dict or 'HL' in regpair_dict:
-                    return 'H' if 'H' in regpair_dict else 'HL'
+        upper = name.strip().upper()
+        if upper in regpair_dict:
+            return upper
+        val = self.register_value(name)
+        if val is None or val & 1 or not 0 <= val <= 6:
+            return None
+        for rp in ({0: ('B',), 2: ('D',), 4: ('H',), 6: ('SP', 'PSW')}[val]):
+            if rp in regpair_dict:
+                return rp
         return None
 
     def assemble_instruction(self, operator, operands):
@@ -3068,18 +3082,12 @@ class Assembler:
             if len(ops) != 1:
                 self.error("EQU requires one operand")
                 return True
-            # DRI extension: allow register names as EQU values
-            # e.g., "MR EQU B" means MR is an alias for register B (value 0)
+            # A register name is its number, as in M80 and MAC: `MR EQU B'
+            # is 0, and MR then names register B (register_value()); `X EQU
+            # SP' and `X EQU PSW' are 6.
             op_upper = ops[0].strip().upper()
-            if op_upper in REGS:
-                self.define_symbol(label, REGS[op_upper], ADDR_ABSOLUTE)
-                return True
-            # Also support register pairs
-            if op_upper in REGPAIRS:
-                self.define_symbol(label, REGPAIRS[op_upper], ADDR_ABSOLUTE)
-                return True
-            if op_upper in REGPAIRS_PUSHPOP:
-                self.define_symbol(label, REGPAIRS_PUSHPOP[op_upper], ADDR_ABSOLUTE)
+            if op_upper in REG_VALUES:
+                self.define_symbol(label, REG_VALUES[op_upper], ADDR_ABSOLUTE)
                 return True
             reads = {} if self.pass_num == 1 else None
             self.reading = reads
@@ -3112,17 +3120,13 @@ class Assembler:
             if len(ops) != 1:
                 self.error(f"{operator} requires one operand")
                 return True
-            # DRI extension: allow register names as values
+            # A register name is its number (see EQU)
             op_upper = ops[0].strip().upper()
             link_expr = None
             name = label.upper()
             k = self.set_count.get(name, 0) + 1  # this SET's node: (name, k)
-            if op_upper in REGS:
-                val, seg = REGS[op_upper], ADDR_ABSOLUTE
-            elif op_upper in REGPAIRS:
-                val, seg = REGPAIRS[op_upper], ADDR_ABSOLUTE
-            elif op_upper in REGPAIRS_PUSHPOP:
-                val, seg = REGPAIRS_PUSHPOP[op_upper], ADDR_ABSOLUTE
+            if op_upper in REG_VALUES:
+                val, seg = REG_VALUES[op_upper], ADDR_ABSOLUTE
             else:
                 # `X SET X+1' reads the X of the line before, not the one
                 # this line makes: in pass 1 an X not yet SET reads 0, as it
