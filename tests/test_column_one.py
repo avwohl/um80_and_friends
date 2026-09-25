@@ -106,6 +106,7 @@ def test_a_statement_of_values_is_a_db_as_m80():
     ('* a comment', "'*' comment lines"),           # M80: U
     ('10\tnop', 'line numbers'),                    # M80: O
     ('foo\tbar', 'Unknown instruction or directive: FOO'),
+    ('lab:\t5,foo', "Undefined symbol 'foo'"),     # M80: U
 ])
 def test_m80_has_no_label_without_a_colon(line, why):
     ok, _, errors, _ = _assemble(f"{line}\n\tdb\t1\n\tend\n")

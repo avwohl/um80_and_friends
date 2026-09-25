@@ -4317,9 +4317,13 @@ class Assembler:
                     self.warning(f"'{shown}' is no instruction, directive or "
                                  f"macro: it is assembled as DB {shown}, as in M80")
                 return
+            cause = self.errors[errors].message
             del self.errors[errors:]
+        else:
+            cause = ''
         if word is None:
-            hint = ''
+            # `LAB: 5,FOO' with no FOO: say so.
+            hint = f" ({cause})" if cause.startswith('Undefined symbol') else ''
             if not self.dri and text.startswith('*'):
                 hint = (" (a comment starts with ';': MAC's '*' comment lines"
                         " are read with --dri)")
