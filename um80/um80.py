@@ -83,9 +83,11 @@ def drop_name_dollars(line):
     to read: NMB$LST, NMBLST and NMB$L$ST are one symbol, and `public
     a$bc' writes ABC.  MACRO-80 keeps it: there they are three.  um80
     already ignores one in a number (`0001$1111B'), which M80 does not
-    accept.  With --dri (Assembler(dri=True)) each line is read through
-    this first.  A `$' that starts a word - the location counter, `$+3' -
-    is kept, and so is everything in a quoted string and after a `;'.
+    accept.  With --dri (Assembler(dri=True)) each statement is read
+    through this first, except where MAC reads text and not a name
+    (Assembler._dri_statement()).  A `$' that starts a word - the location
+    counter, `$+3' - is kept, and so is everything in a quoted string and
+    after a `;'.
     """
     if '$' not in line:
         return line
@@ -262,7 +264,7 @@ class Assembler:
                  strict_jr=False, dri=False):
         self.symbols = {}  # Symbol table
         # --dri: read the source as DRI's MAC and RMAC do where they differ
-        # from MACRO-80 - a `$' inside a name is left out (drop_name_dollars()).
+        # from MACRO-80 - a `$' inside a name is left out (_dri_statement()).
         self.dri = dri
         self.export_all_symbols = export_all_symbols  # -g flag: export all as PUBLIC
         self.truncate_symbols = truncate_symbols  # -t flag: names cut to 6 chars, as M80
@@ -3858,12 +3860,51 @@ class Assembler:
         # is an ordinary character in an IRPC list (`IRPC C,<A!B>').
         return operator in self.macros or operator.upper() in ('IRP', 'IRPC')
 
+    def _dri_statement(self, line):
+        """One statement as --dri reads it: without the `$' inside a name.
+
+        MAC and RMAC drop a `$' where they read a name: a label, an
+        operator, an instruction's or a directive's operands, a macro's
+        formal parameters, the parameter of an IRP or IRPC.  The arguments
+        of a macro call and the list of an IRP or IRPC are text to them, and
+        keep every `$': `PRINT HELLO$' passes HELLO$ - its BDOS terminator
+        intact - and `IRPC C,12$3' iterates four times.  The expanded lines
+        come back through here, so an argument that becomes a name there
+        loses its `$' then (`MM NMB$LST' with a body of `LDA P' loads
+        NMBLST).
+
+        A line of a MACRO, REPT, IRP or IRPC body is kept as written, and
+        read when it is expanded: MAC matches a formal parameter in the body
+        as written, and a `$' ends the name it looks for.  With the formal
+        A, `DB A$B' is `DB X$B' after `MM X', and `DB P$1' is not the formal
+        P1 (U in MAC).
+        """
+        if ('$' not in line or self.collecting_macro is not None
+                or self.repeat_stack):
+            return line
+        dropped = drop_name_dollars(line)
+        label, operator, operands, _ = self.parse_line(dropped)
+        if not operands or (operator not in self.macros
+                            and operator not in ('IRP', 'IRPC')):
+            return dropped
+        # The label and the operator, as parse_line() finds them.
+        head = re.match(r'\s*' + (r'[$A-Za-z_@?][A-Za-z0-9_@?$.]*(?:::?)?\s*'
+                                  if label else '')
+                        + r'([$A-Za-z_@?.][A-Za-z0-9_@?$.]*)\s*', line)
+        if not head or drop_name_dollars(head.group(1)).upper() != operator:
+            return dropped
+        rest = line[head.end():]
+        if operator in ('IRP', 'IRPC'):
+            param, comma, items = rest.partition(',')
+            rest = drop_name_dollars(param) + comma + items
+        return drop_name_dollars(head.group()) + rest
+
     def process_line(self, line):
         """Process a single source line."""
         self.line_num += 1
         self._start_listing_line()
-        if self.dri:
-            line = drop_name_dollars(line)
+        read = self._dri_statement if self.dri else (lambda stmt: stmt)
+        statement = read(line)
 
         # DRI extension: split on '!' separator for multi-statement lines.
         # Only do this when not collecting macro or repeat bodies, and not on a
@@ -3871,26 +3912,26 @@ class Assembler:
         # operator (e.g. head FOO,!!CF) rather than a DRI statement separator;
         # splitting here would shred the arguments (issue #3).
         if (self.collecting_macro is None and not self.repeat_stack
-                and not self._line_invokes_macro(line)):
+                and not self._line_invokes_macro(statement)):
             statements = self.split_on_exclamation(line)
             if len(statements) > 1:
                 # Process first statement normally (with label if any)
-                self._process_single_statement(statements[0])
+                self._process_single_statement(read(statements[0]))
                 # Process subsequent statements (they can't have labels from original line)
                 for stmt in statements[1:]:
                     # Add leading space to prevent treating first word as label
                     if stmt and not stmt[0].isspace():
                         stmt = '        ' + stmt.strip()
-                    self._process_single_statement(stmt)
+                    self._process_single_statement(read(stmt))
                 return
         # Fall through to normal processing (single statement or macro/repeat body)
-        self._process_single_statement(line)
+        self._process_single_statement(statement)
         # DRI statements after an IRP or IRPC list: `IRPC C,AB ! DB '&C' ! ENDM'.
         tail, self.repeat_line_tail = self.repeat_line_tail, None
         if tail is not None:
             for stmt in self.split_on_exclamation(tail):
                 if stmt.strip():
-                    self._process_single_statement('        ' + stmt.strip())
+                    self._process_single_statement(read('        ' + stmt.strip()))
 
     def _process_single_statement(self, line):
         """Process a single statement (internal helper for ! separator support)."""
@@ -4232,6 +4273,9 @@ class Assembler:
                 # Add these symbols to local set
                 if opnds:
                     for sym in opnds.split(','):
+                        # --dri: MAC reads a LOCAL name as a name, and the
+                        # body line is still as written (_dri_statement()).
+                        sym = drop_name_dollars(sym) if self.dri else sym
                         local_syms.add(sym.strip().upper())
                 continue
             if (op and op.upper() == 'EXITM' and self.cond_false_depth == 0

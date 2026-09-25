@@ -101,6 +101,81 @@ def test_public_and_extrn_names():
                      'CHAIN_EXTERNAL': 'CD'}
 
 
+
+# A macro call's arguments and an IRP or IRPC list are text to MAC and RMAC,
+# not names: they keep every `$', as M80 does.  The uppercase style of DRI's
+# own libraries (CONTROL/SIMPIO.LIB `DB '&MSG'', SEQIO.LIB `DB 'NO &FID
+# FILE'').  --dri used to drop the `$' before the line was read, which lost
+# the BDOS terminator of `PRINT HELLO$'.
+
+PRINT = "\taseg\nPRINT\tMACRO\tMSG\n\tDB\t'&MSG'\n\tENDM\n"
+
+
+def _dri_code(src):
+    ok, items, errors = _assemble(src, dri=True)
+    assert ok, errors
+    return _code(items).hex()
+
+
+def test_a_macro_argument_keeps_its_dollar():
+    # MAC 2.0, RMAC 1.1, M80 3.44 and um80 without --dri: 48 45 4C 4C 4F 24
+    # 4F 50 45 4E 24 46 49 4C 45, then 4E 4F 24 46 49 4C 45.
+    src = PRINT + "\tPRINT\tHELLO$\n\tPRINT\tOPEN$FILE\n\tPRINT\t<NO$FILE>\n\tEND\n"
+    assert _dri_code(src) == ('48454c4c4f24' '4f50454e2446494c45'
+                              '4e4f2446494c45')
+
+
+def test_an_irp_or_irpc_list_keeps_its_dollar():
+    # All four tools: 41 42 24 43 and 41 24 42 43 44 24.  `IRPC C,12$3'
+    # iterates four times in MAC: 01 02 02 03 (the third is `DB $').
+    assert _dri_code("\taseg\n\tIRPC\tC,AB$C\n\tDB\t'&C'\n\tENDM\n\tEND\n") \
+        == '41422443'
+    assert _dri_code("\taseg\n\tIRP\tX,<A$B,CD$>\n\tDB\t'&X'\n\tENDM\n\tEND\n") \
+        == '412442434424'
+    assert _dri_code("\taseg\n\tIRPC\tC,12$3\n\tDB\tC\n\tENDM\n\tEND\n") \
+        == '01020203'
+
+
+def test_inside_a_macro_body_too():
+    # MAC and RMAC: a call and an IRPC in a macro body, and an argument
+    # passed on to another macro, keep the `$': 48 45 4C 4C 4F 24,
+    # 41 42 24 43, 48 49 24.
+    assert _dri_code(PRINT + "PM\tMACRO\n\tPRINT\tHELLO$\n\tENDM\n\tPM\n\tEND\n") \
+        == '48454c4c4f24'
+    assert _dri_code("\taseg\nPM\tMACRO\n\tIRPC\tC,AB$C\n\tDB\t'&C'\n\tENDM\n"
+                     "\tENDM\n\tPM\n\tEND\n") == '41422443'
+    assert _dri_code(PRINT + "PM\tMACRO\tX\n\tPRINT\tX\n\tENDM\n\tPM\tHI$\n\tEND\n") \
+        == '484924'
+    # After a `!', where the statement is a call.  MAC: 00 48 45 4C 4C 4F 24.
+    assert _dri_code(PRINT + "\tNOP ! PRINT HELLO$\n\tEND\n") == '0048454c4c4f24'
+
+
+def test_the_names_around_a_call_still_lose_it():
+    # MAC: the macro's name, the label and the IRP parameter are names;
+    # an argument that becomes a name in the body is read as one there.
+    # 48 45 4C 4C 4F 24; 58 24 59 00 00; 3A 05 00; 01 02.
+    assert _dri_code(PRINT + "\tPRI$NT\tHELLO$\n\tEND\n") == '48454c4c4f24'
+    assert _dri_code(PRINT + "LA$B:\tPRINT\tX$Y\n\tDW\tLAB\n\tEND\n") == '5824590000'
+    assert _dri_code("\taseg\nNMBLST\tEQU\t5\nMM\tMACRO\tP\n\tLDA\tP\n\tENDM\n"
+                     "\tMM\tNMB$LST\n\tEND\n") == '3a0500'
+    assert _dri_code("\taseg\n\tIRP\tX$Y,<1,2>\n\tDB\tXY\n\tENDM\n\tEND\n") == '0102'
+
+
+def test_a_body_is_matched_to_its_parameters_as_written():
+    # MAC finds a formal parameter in the body as written, and a `$' ends
+    # the name it looks for: with the formal A, `DB A$B' is `DB X$B' - XB,
+    # 07 - after `MM X'; `DB P$1' is not the formal P$1 (U); `LOCAL L$1'
+    # declares L1.
+    assert _dri_code("\taseg\nAB\tEQU\t1\nXB\tEQU\t7\nMM\tMACRO\tA\n\tDB\tA$B\n"
+                     "\tENDM\n\tMM\tX\n\tEND\n") == '07'
+    assert _dri_code("\taseg\nXB\tEQU\t7\nYB\tEQU\t8\nAB\tEQU\t1\n"
+                     "\tIRP\tA,<X,Y>\n\tDB\tA$B\n\tENDM\n\tEND\n") == '0708'
+    ok, _, errors = _assemble("MM\tMACRO\tP$1\n\tDB\tP$1\n\tENDM\n\tMM\t3\n\tEND\n",
+                              dri=True)
+    assert not ok and any("'P1'" in e for e in errors), errors
+    assert _dri_code("\taseg\nMM\tMACRO\n\tLOCAL\tL$1\nL1:\tJMP\tL1\n\tENDM\n"
+                     "\tMM\n\tMM\n\tEND\n") == 'c30000c30300'
+
 def test_drop_name_dollars():
     from um80.um80 import drop_name_dollars  # pylint: disable=import-outside-toplevel
     assert drop_name_dollars("\tlda\tnmb$lst") == "\tlda\tnmblst"

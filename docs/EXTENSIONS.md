@@ -141,11 +141,24 @@ A$BC` writes `ABC`, as RMAC does. Kept as they are:
 - a `$` that starts a word: `$` alone is the location counter (`JMP $+3`),
   and a name may start with `$`;
 - everything inside a quoted string (`DB 'Hello$'`, `NAME('M$OD')`) and after
-  a `;`.
+  a `;`;
+- the arguments of a macro call and the list of an `IRP` or `IRPC`, which MAC
+  and RMAC read as text, not as names. `PRINT HELLO$` passes `HELLO$`, so a
+  body of `DB '&MSG'` keeps its BDOS terminator, and `IRPC C,12$3` iterates
+  four times. Where an argument becomes a name in the body it loses the `$`
+  there: `MM NMB$LST`, with a body of `LDA P`, loads `NMBLST`. The macro's
+  name, a label, and the parameter of an `IRP` or `IRPC` are names and lose
+  theirs.
 
-um80 drops each such `$` from a line as it reads it, so the listing shows the
-line without them. A `$` in a number (`0001$1111B`) is ignored with or without
-`--dri`.
+A line of a `MACRO`, `REPT`, `IRP` or `IRPC` body is kept as written, and read
+when it is expanded, because MAC finds a formal parameter in the body as
+written, and a `$` ends the name it looks for. With the formal `A`, `DB A$B`
+is `DB X$B` after `MM X`; `DB P$1` is not the formal `P$1` (MAC reports it
+undefined), and `LOCAL L$1` declares `L1`.
+
+um80 drops each such `$` from a statement as it reads it, so the listing shows
+the statement without them. A `$` in a number (`0001$1111B`) is ignored with
+or without `--dri`.
 
 Without `--dri`, a `$` is part of the name, as in MACRO-80 3.44: there
 `NMBLST EQU 5` then `LDA NMB$LST` is an undefined symbol, and `AB EQU 1` with

@@ -13,13 +13,17 @@ LINK-80 3.44 under cpmemu, and each has a regression test that fails on
 ### Added
 - um80 assembler: `--dri` reads a source as DRI's MAC and RMAC read it where
   they differ from MACRO-80. It ignores a `$` inside a name, as MAC and RMAC
-  do: `NMB$LST` and `NMBLST` are one symbol, and `PUBLIC A$BC` writes `ABC`.
-  A `$` that starts a word (the location counter), and one in a quoted string
-  or a comment, are kept. Without `--dri` a `$` is part of the name, as in
-  M80, where `LDA NMB$LST` after `NMBLST EQU 5` is an undefined symbol and
-  `AB EQU 1` with `A$B EQU 2` defines two symbols. MP/M II's sources spell
-  names both ways (`MPM.ASM` stores to `nmb$lst`, which `DATAPG.ASM` defines
-  as `nmblst`). With `--dri -t`, DRI's unmodified `MPM.ASM`, `CLI.ASM`,
+  do: `NMB$LST` and `NMBLST` are one symbol, and `PUBLIC A$BC` writes `ABC`. A
+  `$` that starts a word (the location counter), and one in a quoted string or
+  a comment, are kept, and so is one in the arguments of a macro call or the
+  list of an `IRP` or `IRPC`, which MAC and RMAC read as text: `PRINT HELLO$`
+  passes `HELLO$`, so `DB '&MSG'` keeps its BDOS terminator, and `IRPC C,12$3`
+  iterates four times. A macro body is matched to its formal parameters as
+  written, as in MAC. Without `--dri` a `$` is part of the name, as in M80,
+  where `LDA NMB$LST` after `NMBLST EQU 5` is an undefined symbol and `AB EQU
+  1` with `A$B EQU 2` defines two symbols. MP/M II's sources spell names both
+  ways (`MPM.ASM` stores to `nmb$lst`, which `DATAPG.ASM` defines as
+  `nmblst`). With `--dri -t`, DRI's unmodified `MPM.ASM`, `CLI.ASM`,
   `MEMMGR.ASM`, `RESBDOS1.ASM` and `BNKBDOS.ASM` assemble to the objects the
   copies mpm2 edits to one spelling give. The V2.0 nucleus - XDOS, BNKXDOS,
   RESBDOS and TMP - built with `--dri -t` from DRI's `NUCLEUS` sources,

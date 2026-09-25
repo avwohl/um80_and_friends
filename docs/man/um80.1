@@ -57,7 +57,9 @@ Digital Research's MAC, which has no relocatable segments.
 Read the source as Digital Research's MAC and RMAC read it where they differ
 from MACRO-80: a \fB$\fR inside a name is ignored, so NMB$LST and NMBLST are
 one symbol, and \fBPUBLIC A$BC\fR writes ABC.  A \fB$\fR that starts a word
-(the location counter) and one in a quoted string or a comment are kept.
+(the location counter), one in a quoted string or a comment, and one in the
+arguments of a macro call or the list of an IRP or IRPC, which MAC reads as
+text, are kept.
 Without \fB\-\-dri\fR a \fB$\fR is part of the name, as in MACRO-80.
 \fB\-\-dri\fR does not imply \fB\-\-aseg\fR (MAC's absolute sources) or
 \fB\-t\fR (RMAC's six-character names).
