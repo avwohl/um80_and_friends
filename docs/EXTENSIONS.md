@@ -128,7 +128,7 @@ The `$` characters are stripped during parsing and do not affect the numeric val
 ### DRI sources (`--dri`)
 
 `um80 --dri` reads a source the way DRI's MAC and RMAC read it where they
-differ from MACRO-80. It changes one thing:
+differ from MACRO-80, in three ways.
 
 **A `$` inside a name is ignored.** DRI's manuals: "All characters are
 significant in an identifier, except for the embedded dollar sign ($) which
@@ -148,27 +148,37 @@ A$BC` writes `ABC`, as RMAC does. Kept as they are:
   four times. Where an argument becomes a name in the body it loses the `$`
   there: `MM NMB$LST`, with a body of `LDA P`, loads `NMBLST`. The macro's
   name, a label, and the parameter of an `IRP` or `IRPC` are names and lose
-  theirs. An argument that starts with `%` is a value, taken at the call, and
-  a name in its expression loses the `$`: `GEN %N$C` passes the value of
-  `NC`. Only an argument that starts with `%` is one, as in MAC; M80 also
-  reads `A%E` as `A` and E's value.
-
-A line of a `MACRO`, `REPT`, `IRP` or `IRPC` body is kept as written, and read
-when it is expanded, because MAC finds a formal parameter in the body as
-written, and a `$` ends the name it looks for. With the formal `A`, `DB A$B`
-is `DB X$B` after `MM X`; `DB P$1` is not the formal `P$1` (MAC reports it
-undefined), and `LOCAL L$1` declares `L1`. So do a `_` and a `.`: in MAC a
-name is letters, digits, `?` and `@`, where in M80 it is also `$`, `.` and
-`_`, so with the formal `X` MAC reads `'&X_'` as the argument and `_`, and
-M80 as the text `&X_`. In a quoted string MAC and RMAC drop every `&` next to
-a parameter, and a name before an `&` is one too (`'X&B'` is the argument and
-`B`); M80 reads only `&X`, and drops the `&` of the first one in a string
-alone (`'&X &X'` is `K &K` there, `K K` in RMAC). RMAC folds case in a string,
-as um80 does; MAC 2.0 does not.
+  theirs. A `%` argument's expression is read as names: `GEN %N$C` passes
+  the value of `NC`.
 
 um80 drops each such `$` from a statement as it reads it, so the listing shows
 the statement without them. A `$` in a number (`0001$1111B`) is ignored with
 or without `--dri`.
+
+**A macro body is read as MAC reads it.** A line of a `MACRO`, `REPT`, `IRP`
+or `IRPC` body is kept as written, and read when it is expanded, because MAC
+finds a formal parameter in the body as written, and a `$` ends the name it
+looks for. With the formal `A`, `DB A$B` is `DB X$B` after `MM X`; `DB P$1` is
+not the formal `P$1` (MAC reports it undefined), and `LOCAL L$1` declares
+`L1`. So do a `_` and a `.`: in MAC a name is letters, digits, `?` and `@`,
+where in M80 it is also `$`, `.` and `_`, so with the formal `X` MAC reads
+`'&X_'` as the argument and `_`, and M80 as the text `&X_`. In a quoted
+string MAC and RMAC drop every `&` next to a parameter, and a name before an
+`&` is one too (`'X&B'` is the argument and `B`); M80 reads only `&X`, and
+drops the `&` of the first one in a string alone (`'&X &X'` is `K &K` there,
+`K K` in RMAC). RMAC folds case in a string, as um80 does; MAC 2.0 does not.
+Only an argument that starts with `%` is a value, as in MAC; M80 also reads
+`A%E` as `A` and E's value, and evaluates a `%` in an `IRP` list, which MAC
+reads as text.
+
+**An `IF` a macro body leaves open ends with it.** MAC and RMAC end the `IF`s
+that a macro expansion, or one repetition of a `REPT`, `IRP` or `IRPC`, opened
+and did not end, true or false, when it ends. DRI's own libraries rely on it:
+`CONTROL/COMPARE.LIB`'s `TEST?` ends inside an `ELSE`, and `SEQIO.LIB`'s
+`FILLFCB` opens an `IF` in each repetition of an `IRPC`. M80 carries them on
+past the `ENDM` - a false one skips the rest of the file - and reports
+"Unterminated Conditional", and so does um80 without `--dri`. (An `EXITM`
+ends the `IF`s it is in with or without `--dri`, as all three do.)
 
 Without `--dri`, a `$` is part of the name, as in MACRO-80 3.44: there
 `NMBLST EQU 5` then `LDA NMB$LST` is an undefined symbol, and `AB EQU 1` with

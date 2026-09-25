@@ -164,6 +164,14 @@ LINK-80 3.44 under cpmemu, and each has a regression test that fails on
   EXITM / ENDIF` inside another `IF`. The same holds for an `EXITM` in a
   `REPT`, `IRP` or `IRPC` body.
 
+- um80 assembler: with `--dri`, an `IF` that a macro expansion, or one
+  repetition of a `REPT`, `IRP` or `IRPC`, leaves open now ends with it, as
+  in MAC and RMAC. DRI's `CONTROL/COMPARE.LIB` ends its `TEST?` macro inside
+  an `ELSE`, and `SEQIO.LIB`'s `FILLFCB` opens an `IF` in each repetition of
+  an `IRPC`; um80 carried them on, so after a false one nothing more was
+  assembled, and it warned "Unterminated conditional". Without `--dri` um80
+  still carries them on, as M80 does.
+
 ## [0.3.50] - 2026-09-25
 
 mbasic2025 (https://github.com/avwohl/mbasic2025) rebuilds historic Microsoft

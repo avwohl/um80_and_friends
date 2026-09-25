@@ -50,3 +50,28 @@ def test_exitm_ends_the_ifs_it_is_in(dri):
     code, warnings = _assemble(EXITM, dri=dri)
     assert code == '01' '0102' '41' '04' '03'
     assert warnings == []
+
+
+# A body that leaves an IF open: MAC and RMAC end it with the expansion, or
+# with the repetition; M80 carries it on.
+OPEN = ("MM\tMACRO\tP\n\tIF\tP\n\tDB\t1\n\tELSE\n\tDB\t2\n\tENDM\n"
+        "INNR\tMACRO\n\tIF\t0\n\tENDM\nMO\tMACRO\n\tINNR\n\tDB\t5\n\tENDM\n"
+        "\tMM\t0\n\tMM\t1\n\tMO\n"
+        "\tIRPC\tC,0123\n\tIF\tC AND 1\n\tDB\tC\n\tENDM\n"
+        "\tDB\t9\n")
+
+
+def test_dri_an_if_a_body_leaves_open_ends_with_it():
+    # MAC and RMAC: 02 01 05 01 03 09 - COMPARE.LIB's TEST? and SEQIO.LIB's
+    # FILLFCB leave IFs open so.  um80 --dri gave 02 01 and warned.
+    code, warnings = _assemble(OPEN, dri=True)
+    assert code == '0201' '05' '0103' '09'
+    assert warnings == []
+
+
+def test_m80_carries_an_open_if_on():
+    # M80: 02 01, then MM 1's ELSE is false to the end of the file
+    # ("Unterminated Conditional", and no END seen).
+    code, warnings = _assemble(OPEN)
+    assert code == '0201'
+    assert warnings == ['Warning at line 33: Unterminated conditional (missing ENDIF)']

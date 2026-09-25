@@ -277,7 +277,10 @@ class Assembler:
                  strict_jr=False, dri=False):
         self.symbols = {}  # Symbol table
         # --dri: read the source as DRI's MAC and RMAC do where they differ
-        # from MACRO-80 - a `$' inside a name is left out (_dri_statement()).
+        # from MACRO-80 - a `$' inside a name is left out (_dri_statement()),
+        # a macro body is read with MAC's names (substitute_macro_params(),
+        # percent_argument()), and an IF a body leaves open ends with it
+        # (end_conditionals()).
         self.dri = dri
         self.export_all_symbols = export_all_symbols  # -g flag: export all as PUBLIC
         self.truncate_symbols = truncate_symbols  # -t flag: names cut to 6 chars, as M80
@@ -4388,6 +4391,10 @@ class Assembler:
 
             # Process the expanded line
             self.process_line(expanded)
+        if self.dri:
+            # MAC and RMAC end the IFs a body leaves open at its ENDM (M80
+            # carries them on).
+            self.end_conditionals(cond_depth)
 
         self.macro_level -= 1
 
@@ -4432,6 +4439,8 @@ class Assembler:
                     self.end_conditionals(cond_depth)
                     return True
             self.process_line(expanded)
+        if self.dri:
+            self.end_conditionals(cond_depth)
         return False
 
     def end_conditionals(self, depth):
@@ -4443,6 +4452,15 @@ class Assembler:
         where MACRO-80 3.44, MAC 2.0 and RMAC 1.1 close it without a word.
         The expansion began in a true state, so every IF above `depth' is
         true, or the EXITM would have been skipped.
+
+        MAC and RMAC also end the IFs a body leaves open at its end, true
+        or false, and with --dri so does um80, after each expansion and
+        each repetition.  DRI's libraries leave them so: COMPARE.LIB's
+        TEST? ends `IF ... / ELSE / LXI H,Y / SUB M' with its ENDM, and
+        SEQIO.LIB's `IRPC ?C,FN / IF NOT (...) / @C SET 0 / ENDM' opens one
+        IF each time round.  M80 carries them on past the ENDM (a false
+        one skips the rest of the file) and says "Unterminated
+        Conditional"; without --dri um80 does the same.
         """
         if len(self.cond_stack) > depth:
             del self.cond_stack[depth:]
