@@ -222,7 +222,8 @@ class Assembler:
         self.repeat_nest_depth = 0  # Nesting depth while collecting a repeat body
 
         self.entry_point = None  # END address if specified
-        self.module_name = None
+        self.module_name = None   # from NAME('...')
+        self.title_name = None    # from TITLE, which NAME overrides
 
         # Save predefined symbols for pass iterations
         self.predefined = predefined or {}
@@ -3244,19 +3245,27 @@ class Assembler:
                 sym.external = True
             return True
 
-        # NAME - module name
+        # NAME('modname') - the module name, the first six characters, as
+        # MACRO-80 3.44 keeps them.  NAME('XYZ') went into the .REL as 'XYZ'
+        # with its quotes.  (M80 wants the parentheses and the quotes; um80
+        # also takes NAME 'XYZ' and NAME XYZ.)
         if operator == 'NAME':
             if ops:
                 name = ops[0].strip()
-                if name.startswith("'") or name.startswith('"'):
+                if name.startswith('(') and name.endswith(')'):
+                    name = name[1:-1].strip()
+                if len(name) >= 2 and name[0] in "'\"" and name[-1] == name[0]:
                     name = name[1:-1]
-                elif name.startswith('(') and name.endswith(')'):
-                    name = name[1:-1]
-                self.module_name = name
+                self.module_name = name.upper()[:6]
             return True
 
-        # TITLE/SUBTTL - listing titles (ignore for now)
+        # TITLE/SUBTTL - listing titles.  Without a NAME, MACRO-80 names the
+        # module after the last TITLE: the first six characters of its text
+        # up to a blank, whatever they are (TITLE 'BASIC' is the module
+        # 'BASIC).
         if operator in ('TITLE', 'SUBTTL'):
+            if operator == 'TITLE' and operands and operands.strip():
+                self.title_name = operands.split()[0].upper()[:6]
             return True
 
         # PAGE/*EJECT - new page in listing (ignore for now)
@@ -4468,7 +4477,7 @@ class Assembler:
 
         body = self.output
         self.output = RELWriter(truncate_symbols=self.truncate_symbols)
-        name = self.module_name or Path(source_file).stem.upper()[:6]
+        name = self.module_name or self.title_name or Path(source_file).stem.upper()[:6]
         self.output.write_program_name(name)
         for entry_name in entry_names:
             self.output.write_entry_symbol(entry_name)
