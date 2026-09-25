@@ -4226,7 +4226,13 @@ class Assembler:
         text = f"{word} {rest}".strip() if word else rest
         shown = text if len(text) <= 40 else text[:37] + '...'
         errors = len(self.errors)
-        if not self.dri and not text.startswith('*'):
+        # An instruction of the other processor (`OR A' before .Z80) is not
+        # a value, but for a symbol of that name: say so now, not in pass 2
+        # (the operator OR with nothing in front of it is only reported
+        # there).
+        other = word in (INSTRUCTIONS_8080 if self.z80_mode else INSTRUCTIONS_Z80) \
+            and not self.names_symbol(word)
+        if not self.dri and not text.startswith('*') and not other:
             self.assemble_pseudo_op('DB', text, None)
             if len(self.errors) == errors:
                 if self.pass_num == 2:

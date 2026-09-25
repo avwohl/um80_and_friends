@@ -430,7 +430,7 @@ For more details on these extensions and compatibility notes, see [docs/EXTENSIO
 
 ## Testing
 
-The test suite (613 tests) runs under `pytest`:
+The test suite (614 tests) runs under `pytest`:
 
 ```bash
 pip install -e ".[dev]"

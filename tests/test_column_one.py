@@ -143,3 +143,16 @@ def test_name_of_an_equ_is_still_a_name():
     ok, items, errors, _ = _assemble("nop\tequ\t5\n\tdb\tnop\nx\tset\t3\n\tdb\tx\n\tend\n")
     assert ok, errors
     assert bytes(b for _, b in _loaded(items)) == b'\x05\x03'
+
+
+def test_an_instruction_of_the_other_processor_is_reported_at_once():
+    # Every one of them, from the first time through, not only in pass 2
+    # (where a value that does not assemble is reported): OR A, XOR A, HALT
+    # and JR $ before .Z80, and MVI A,1 after it.  M80: U or O for each.
+    ok, _, errors, _ = _assemble("\tor\ta\n\txor\ta\n\thalt\n\tjr\t$\n"
+                                 "\t.z80\n\tmvi\ta,1\n\tend\n")
+    assert not ok
+    assert [e.split(': ', 1)[0] for e in errors] == [
+        f'Error at line {n}' for n in (1, 2, 3, 4, 6)], errors
+    assert all('Z80 instruction' in e for e in errors[:4])
+    assert '8080 instruction' in errors[4]
