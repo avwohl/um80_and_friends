@@ -1205,6 +1205,17 @@ class Assembler:
                             # Parens close before end, not fully wrapped
                             break
 
+        # --dri: HIGH and LOW bind loosest of all, as MAC's manual has them
+        # and MAC and RMAC read them: `HIGH 1234H OR 0F00H' is HIGH(1F34H),
+        # 1FH, `HIGH(100H)+1' is HIGH(101H), 1, and `LOW 1234H SHR 4' is
+        # 23H.  M80 applies them to the term that follows (12H OR 0F00H;
+        # 2; 03H), and so does um80 without --dri (further down).
+        if self.dri:
+            for word, code in (('HIGH', EXT_OP_HIGH), ('LOW', EXT_OP_LOW)):
+                inner = self.prefix_word(expr, word)
+                if inner is not None:
+                    return self._high_low(code, inner, allow_undefined)
+
         # Lowest precedence: OR and XOR, one level, left to right (M80 and
         # DRI's MAC both: `1 OR 1 XOR 1' is 0), then AND.  LINK-80 has no
         # operator for any of the three, so on a relocatable or external
@@ -1229,10 +1240,15 @@ class Assembler:
             return self._link_unary(EXT_OP_NOT, operand,
                                     (~operand.value) & 0xFFFF)
 
-        # Comparison operators: EQ, NE, LT, LE, GT, GE
-        idx, oplen = self.find_op_at_level0(expr, ['EQ', 'NE', 'LT', 'LE', 'GT', 'GE'])
+        # Comparison operators: EQ, NE, LT, LE, GT, GE, and with --dri MAC's
+        # =, <>, <, <=, >, >= for them (M80 has no such operator: `IF @Y =
+        # 1', in DRI's CONTROL/DEBLOCK.ASM, is O there).
+        idx, oplen = self.find_op_at_level0(
+            expr, ['EQ', 'NE', 'LT', 'LE', 'GT', 'GE']
+            + (list(self._DRI_RELATIONS) if self.dri else []))
         if idx >= 0:
             op = expr[idx:idx+oplen].strip().upper()
+            op = self._DRI_RELATIONS.get(op, op)
             if self.missing_operand(expr, expr[:idx], expr[idx+oplen:], op):
                 return ExprValue(0)
             left = self.eval_operand(expr[:idx], allow_undefined)
@@ -1335,11 +1351,7 @@ class Assembler:
             if inner is not None:
                 # HIGH X, HIGH(X), HIGH<TAB>X.  A binary operator after the
                 # operand - HIGH(1234H)+1 - has already been split above.
-                operand = self.eval_operand(inner, allow_undefined)
-                value = (operand.value >> 8) & 0xFF if code == EXT_OP_HIGH \
-                    else operand.value & 0xFF
-                return self._link_unary(code, operand, value,
-                                        ext=operand.ext, name=operand.name)
+                return self._high_low(code, inner, allow_undefined)
 
         # NUL operator - true (0FFFFh) if its argument is null/empty. The empty
         # case (a macro arg omitted, leaving a bare 'NUL') is its primary use.
@@ -1451,6 +1463,19 @@ class Assembler:
 
         self.error(f"Cannot parse expression: '{expr}'")
         return ExprValue(0)
+
+    # MAC's relational operators (--dri), longest first: at the end of `<=',
+    # `<=' is found before `='.
+    _DRI_RELATIONS = {'<=': 'LE', '>=': 'GE', '<>': 'NE', '=': 'EQ', '<': 'LT',
+                      '>': 'GT'}
+
+    def _high_low(self, code, inner, allow_undefined):
+        """HIGH or LOW (`code') of the expression `inner'."""
+        operand = self.eval_operand(inner, allow_undefined)
+        value = (operand.value >> 8) & 0xFF if code == EXT_OP_HIGH \
+            else operand.value & 0xFF
+        return self._link_unary(code, operand, value,
+                                ext=operand.ext, name=operand.name)
 
     def type_of(self, text):
         """TYPE of an expression that is not a name: 20H (defined) with its
@@ -1744,8 +1769,11 @@ class Assembler:
 
         return (label, operator, operands, comment)
 
-    def split_operands(self, operands, escape_bang=False):
+    def split_operands(self, operands, escape_bang=False, angles=True):
         """Split operands by comma, respecting strings, parentheses, and angle brackets.
+
+        With `angles' false a < or > is not a bracket but an operator, as
+        MAC's relational ones are with --dri: `DW 1<2,3' is two values.
 
         When escape_bang is True (macro argument lists), '!' quotes the
         following character so an escaped comma/bracket is not treated as a
@@ -1790,10 +1818,10 @@ class Assembler:
             elif ch == ')':
                 paren_depth -= 1
                 current += ch
-            elif ch == '<':
+            elif ch == '<' and angles:
                 angle_depth += 1
                 current += ch
-            elif ch == '>':
+            elif ch == '>' and angles:
                 angle_depth -= 1
                 current += ch
             elif ch == ',' and paren_depth == 0 and angle_depth == 0:
@@ -2195,7 +2223,7 @@ class Assembler:
     def assemble_instruction(self, operator, operands):
         """Assemble a CPU instruction."""
         operator = operator.upper()
-        ops = self.split_operands(operands) if operands else []
+        ops = self.split_operands(operands, angles=not self.dri) if operands else []
 
         # No-operand instructions
         if operator in NO_OPERAND:
@@ -2518,7 +2546,7 @@ class Assembler:
     def assemble_z80_instruction(self, operator, operands):
         """Assemble a Z80 CPU instruction."""
         operator = operator.upper()
-        ops = self.split_operands(operands) if operands else []
+        ops = self.split_operands(operands, angles=not self.dri) if operands else []
 
         # No-operand instructions
         if operator in Z80_NO_OPERAND:
@@ -3283,10 +3311,17 @@ class Assembler:
 
         return False  # Not a Z80 instruction
 
+    # Directives whose operands are values: with --dri a < or > in them is an
+    # operator, not a bracket (split_operands()).
+    _VALUE_DIRECTIVES = frozenset({
+        'DB', 'DEFB', 'DEFM', 'DC', 'DW', 'DEFW', 'DS', 'DEFS', 'ORG', 'EQU',
+        'SET', 'DEFL', 'ASET', 'IF', 'IFT', 'IFE', 'IFF', 'COND', 'END'})
+
     def assemble_pseudo_op(self, operator, operands, label):
         """Assemble a pseudo-operation (directive)."""
         operator = operator.upper()
-        ops = self.split_operands(operands) if operands else []
+        ops = self.split_operands(operands, angles=not (
+            self.dri and operator in self._VALUE_DIRECTIVES)) if operands else []
 
         # ORG - set location counter
         if operator == 'ORG':

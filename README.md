@@ -323,6 +323,9 @@ Extract the low or high byte of a 16-bit value using function-call syntax:
 ```
 
 Both `LOW(expr)` and `HIGH(expr)` syntax (with parentheses) and `LOW expr` / `HIGH expr` syntax (with space) are supported.
+M80 applies them to the term after them (`HIGH(X)+1` is `HIGH(X)` plus 1), and
+so does um80; MAC and RMAC to all that follows (`HIGH(X+1)`), and so does
+`um80 --dri`, which also takes MAC's `=`, `<`, `<=`, `>`, `>=` and `<>`.
 
 When the operand is relocatable or external (`LOW(BUFFER)` above, with BUFFER
 in CSEG or DSEG), the byte depends on where the linker puts the segment, so
@@ -431,7 +434,7 @@ For more details on these extensions and compatibility notes, see [docs/EXTENSIO
 
 ## Testing
 
-The test suite (630 tests) runs under `pytest`:
+The test suite (637 tests) runs under `pytest`:
 
 ```bash
 pip install -e ".[dev]"
@@ -470,6 +473,7 @@ Digital Research's MAC 2.0 and RMAC 1.1:
 | `test_operator_names.py` | A name that ends in an operator's letters (`X1EQ+2`) is read whole; a symbol named like an operator (`EQ:`, `TYPE EQU 5`) is that symbol, as in M80; an operator with nothing on one side is an error; `TYPE` of an expression |
 | `test_condition_names.py` | In Z80 code a label named like a condition (`P:`, `NZ:`) is `JP`'s address, as in M80 |
 | `test_register_expressions.py` | (DRI) A register name is its number in any 8080 expression (`DB B`, `X EQU D+1`); M80 flags two in one expression and `PUSH A`, MAC takes them (`--dri`); a symbol named like a register is that symbol, as in M80 |
+| `test_dri_relations.py` | (DRI) `--dri` takes MAC's `=`, `<`, `<=`, `>`, `>=`, `<>`, and applies `HIGH`/`LOW` to all that follows, as MAC and RMAC do; without it, as M80 does |
 | `test_end_directive.py` | (DRI) Nothing after `END` is assembled - the rest of the file, a macro, a `REPT`, an `INCLUDE` file - as in M80, MAC and RMAC |
 | `test_column_one.py` | (DRI) An instruction, directive or macro in column 1 is one; a statement of values is a `DB` and a label needs a colon, as in M80; with `--dri` a word with no colon is a label and a line number or a `*` line is ignored, as in MAC |
 

@@ -69,6 +69,10 @@ label needs its colon, as in MACRO-80.
 \fBPUSH A\fR and \fBPOP A\fR are PUSH PSW and POP PSW, and an expression may
 have two register names in it; MACRO-80 flags both, and so does um80 without
 \fB\-\-dri\fR.
+MAC's relational operators \fB=\fR, \fB<\fR, \fB<=\fR, \fB>\fR, \fB>=\fR and
+\fB<>\fR are EQ, LT, LE, GT, GE and NE, and HIGH and LOW apply to all that
+follows them (\fBHIGH(X)+1\fR is HIGH(X+1)), as in MAC; MACRO-80 has no such
+operator, and applies HIGH and LOW to the term after them.
 \fB\-\-dri\fR does not imply \fB\-\-aseg\fR (MAC's absolute sources) or
 \fB\-t\fR (RMAC's six-character names).
 .TP

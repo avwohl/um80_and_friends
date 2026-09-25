@@ -41,6 +41,15 @@ LINK-80 3.44 under cpmemu, and each has a regression test that fails on
 - um80 assembler: with `--dri`, `PUSH A`, `POP A` and `PUSH 7` are `PUSH PSW`
   and `POP PSW`, and an expression may have two register names in it
   (`A*256+B`), as in MAC and RMAC (see Changed).
+- um80 assembler: with `--dri`, MAC's relational operators `=`, `<`, `<=`,
+  `>`, `>=` and `<>` are `EQ`, `LT`, `LE`, `GT`, `GE` and `NE`, as in MAC's
+  manual and RMAC (`IF @Y = 1`, in DRI's `CONTROL/DEBLOCK.ASM`), and a `<` or
+  `>` in a list of values is an operator, not a bracket (`DW 1<2,3` is two
+  words). And `HIGH` and `LOW` apply to all that follows them, as MAC's
+  manual has them and MAC and RMAC read them: `HIGH(100H)+1` is `HIGH(101H)`,
+  1, and `HIGH 1234H OR 0F00H` 1FH. M80 has no such operators (`O`), and
+  applies `HIGH` and `LOW` to the term after them (2 and 0F12H), and so does
+  um80 without `--dri`.
 - um80 assembler: M80's `$TITLE('text')` (a subtitle) and `$EJECT`. um80 took
   `$TITLE` in column 1 for a label.
 - ul80 linker: `--fatal-mult-def` makes a global that more than one module

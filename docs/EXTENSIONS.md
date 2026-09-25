@@ -107,6 +107,11 @@ Both syntaxes are supported:
 - `LOW(expr)` and `HIGH(expr)` — DRI function-call style
 - `LOW expr` and `HIGH expr` — Original M80 style with space
 
+What follows the operand differs between the two assemblers: M80 applies
+`HIGH` to the term after it, so `HIGH(BUF)+1` is `HIGH(BUF)` plus 1, and MAC
+and RMAC to all that follows, `HIGH(BUF+1)`. um80 reads it as M80 does, and
+as MAC does with `--dri` ([DRI sources](#dri-sources---dri)).
+
 Of an absolute value the result is a constant. Of a relocatable or external
 value it depends on where the linker puts things, so um80 passes the expression
 to the linker — see [Link-time expressions](#link-time-expressions-rel-extension-link-items).
@@ -193,7 +198,12 @@ RESBDOS.SPR and TMP.SPR are DRI's byte for byte, and BNKBDOS.SPR from the
 unmodified `BNKBDOS.ASM` is DRI's V2.1 file. `um80 --dri --aseg` assembles
 `MPMLDR/LDRBDOS.ASM` to exactly the bytes at 0D00H-164CH of MPMLDR.COM (V2.0
 and V2.1) that it loads. Every other assembler source in DRI's MP/M II release
-that um80 assembles without `--dri` assembles to the same object with it.
+that um80 assembles without `--dri` assembles to the same object with it -
+but for `UTIL1/DDT2MON.ASM` assembled relocatable, whose `LOW(DEMON)-1` is
+`LOW(DEMON-1)` for the linker with `--dri`, as MAC reads it (the same byte);
+with `--aseg`, as a MAC source, its object is the same too. Since `PUSH A`,
+a label with no colon and a `*` comment line need `--dri`, `BNKBDOS.ASM`,
+`BDOS30.ASM`, `RESBDOS1.ASM` and `UTIL3/GENHEX.ASM` assemble only with it.
 
 `--dri` does not imply the other options a DRI source may need:
 
@@ -214,9 +224,21 @@ of an `EQU`, `SET` or `MACRO` may be indented, and in 8080 code a register name
 is a number in any expression (`RD EQU D` then `DAD RD` is `DAD D`, `DB B` is
 00).
 
+**MAC's relational operators, and its precedence for `HIGH` and `LOW`.** `=`,
+`<`, `<=`, `>`, `>=` and `<>` are `EQ`, `LT`, `LE`, `GT`, `GE` and `NE`, at
+their level, unsigned, true 0FFFFH, as in MAC's manual and in RMAC 1.1 (MAC
+2.0 itself flags `<>`): `IF @Y = 1` (`CONTROL/DEBLOCK.ASM`), `DW 1<2,3` (a `<`
+or `>` in a list of values is an operator, not a bracket). M80 has none of
+them (`O`), and without `--dri` they are an error. MAC's manual puts `HIGH`
+and `LOW` below every other operator, and MAC and RMAC apply them to all that
+follows: `HIGH 1234H OR 0F00H` is `HIGH(1F34H)`, 1FH; `HIGH(100H)+1` is
+`HIGH(101H)`, 1; `LOW 1234H SHR 4` is 23H. M80 applies them to the term after
+them (12H OR 0F00H, 2, 03H), and so does um80 without `--dri`. MAC's order,
+highest first: `* / MOD SHL SHR`, `+ -`, `EQ LT LE GT GE NE` (and `= < <= >
+>= <>`), `NOT`, `AND`, `OR XOR`, `HIGH LOW`.
+
 Other differences between MAC/RMAC and M80 that `--dri` does not cover (none of
-MP/M II's sources needs them): MAC takes `=` as `EQ` (`IF @Y = 1`, in
-`CONTROL/DEBLOCK.ASM`), where M80 reports a syntax error; MAC stops reading at a
+MP/M II's sources needs them): MAC stops reading at a
 9AH byte (1AH with bit 7), where M80 reads on; and an 8AH that does not follow
 a CR, which ends no line in any of them, is a 0AH in a MAC string, where M80
 and um80 leave it out (`DB 'A<8AH>B'` is 41 42).
@@ -773,6 +795,8 @@ defined global" but wrote the output and exited 0.
 | Register name in any expression (`DB B`) | ✓ | ✓ | ✓ | ✗ |
 | PUSH A / POP A | ✗ | `--dri` | ✓ | ✗ |
 | Label with no colon | ✗ | `--dri` | ✓ | ✗ |
+| `=` `<` `<=` `>` `>=` `<>` relational operators | ✗ | `--dri` | ✓ | ✗ |
+| `HIGH`/`LOW` of all that follows (`HIGH(X)+1` is `HIGH(X+1)`) | ✗ | `--dri` | ✓ | ✗ |
 | Statement of values (`LAB: 5,6` is `DB`) | ✓ | ✓ | ✗ | ✗ |
 | EQU external+offset | ✗ | ✓ | ✗ | ✓ |
 | `__END__` symbol | ✗ | ✓ | ✗ | ✗ |
@@ -783,7 +807,7 @@ defined global" but wrote the output and exited 0.
 
 ## Version History
 
-- **Unreleased** — `--dri` (a `$` inside a name is ignored, a word with no colon may be a label, `PUSH A` is `PUSH PSW`, as in MAC and RMAC); an instruction or directive in column 1 is one, and a statement of values is a `DB`, as in M80; in 8080 code a register name is its number in any expression, as in M80 and MAC; ul80 `--fatal-mult-def`
+- **Unreleased** — `--dri` (a `$` inside a name is ignored, a word with no colon may be a label, `PUSH A` is `PUSH PSW`, `=` is `EQ` and `HIGH` binds loosest, as in MAC and RMAC); an instruction or directive in column 1 is one, and a statement of values is a `DB`, as in M80; in 8080 code a register name is its number in any expression, as in M80 and MAC; ul80 `--fatal-mult-def`
 - **0.3.50** — MACRO-80 IRP/IRPC lists, 6-character `-t`, mbasic2025 in the test suite
 - **0.3.49** — link-time expressions (REL extension link items), LINK-80 interchange, absolute code in a link
 - **0.3.48** — `--spr`, `--extra` and `--aseg`; `--prl` links a transient at 100H
