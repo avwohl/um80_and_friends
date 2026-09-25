@@ -57,11 +57,15 @@ results.
   but the genuine M80 left out the `>` keyword byte, so every address after
   it moved (6645 bytes of 8192). um80 now assembles what M80 assembles, and
   warns about the `>` it ignores. The sources need `db '>'+80h`, as the 8K
-  source already has for `<`. A list with no closing `>` runs to the end of
-  the line, with a warning (M80 flags it `Q`). `IRPC C,<A>B` is `A`;
-  `IRP X,<1,2>,3` is 1 and 2. In an `IRP` list, a `>`, `<`, `,` or `!` inside
-  a quoted string is text, as in M80 (`IRP X,<'A>B','<',2>` is `'A>B'`, `'<'`
-  and 2); in an `IRPC` list a quote is an ordinary character.
+  source already has for `<`. **Until mbasic2025 makes that change,
+  mbasic2025's `4k8k/8k/build_8k.sh` fails with this um80** (6645 bytes
+  differ; it passes with 0.3.49), so release the two together.
+  `tests/test_mbasic2025.py` makes the change in its copy and warns. A list
+  with no closing `>` runs to the end of the line, with a warning (M80 flags
+  it `Q`). `IRPC C,<A>B` is `A`; `IRP X,<1,2>,3` is 1 and 2. In an `IRP`
+  list, a `>`, `<`, `,` or `!` inside a quoted string is text, as in M80
+  (`IRP X,<'A>B','<',2>` is `'A>B'`, `'<'` and 2); in an `IRPC` list a quote
+  is an ordinary character.
 - um80 assembler: a `!` in an `IRP` or `IRPC` list was taken as DRI's
   statement separator, so `IRPC C,<!>` became `IRPC C,<` and a stray `>`
   line. In an `IRPC` list a `!` is an ordinary character. In an `IRP` list it

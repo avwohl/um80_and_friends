@@ -75,11 +75,18 @@ Each variant was built with the commands of its own build script:
   file with `cmp`, so it has reported a failure since then.
 - `4k-annotated` and `8k` on this branch: see "`rdc <!>>`" below. On this
   branch um80 assembles these lines as the genuine M80 does, which is not
-  the historic binary.
+  the historic binary. **So this um80 breaks mbasic2025's own
+  `4k8k/8k/build_8k.sh`** ("ERROR: Output differs from original!"), which
+  passes with 0.3.49, until mbasic2025 changes the line (item 2 under
+  "Changes that mbasic2025 could make"). The test here passes because it
+  makes that change in its copy and warns. Release this um80 and that
+  mbasic2025 change together.
 - `mbasic_52` in 0.3.48: `DCPM.MAC` has `lxi h,filnam+9-0-0-2*0`, where
   `FILNAM` is external. 0.3.48 kept only the last constant, so the result
   was `FILNAM`. 0.3.49 fixed this (see its CHANGELOG), and the result is
-  `FILNAM+9`, as M80 assembles it (at 3BF4H: 2AH, not 21H).
+  `FILNAM+9`, as M80 assembles it: the instruction is at 3BF2H, and the low
+  byte of its operand, at 3BF3H, is 2AH from M80 and 0.3.49 and 21H from
+  0.3.48.
 
 ## Every mix with the genuine MACRO-80 and LINK-80
 
@@ -125,8 +132,10 @@ Results on this branch:
 | `8k` | 6645 bytes differ, both linkers | the same as M80 | (one module) | `rdc <!>>`; all four historic with the change |
 
 "Historic, both linkers" for an L80 link means all the bytes that the .REL
-files load. Five bytes are not loaded (see "LINK-80 does not clear DS
-space").
+files load. The bytes that no .REL item loads (DS space: 1234 bytes of
+`mbasic_521`) are left out, because L80 does not clear them. In every L80
+link of `mbasic_521`, 5 of them were not zero (see "LINK-80 does not clear
+DS space").
 
 ### What the mismatches were, and whose they were
 
@@ -163,12 +172,14 @@ does (before, `-t` cut to 8 characters). With `-t`, all 60 links of
 were renamed for the same reason (its commit 6cbfb25), and `fbufp27` could be
 renamed too.
 
-**LINK-80 does not clear DS space (L80 limitation).** `INIT.MAC` ends with
-`ds 7`. No .REL item loads those bytes. The historic binary and ul80 have
-zeros there. L80 writes whatever was in its memory. In a link of M80's
-objects, the bytes at 5FFBH-5FFFH were `21 FF FF 22 98`. In a link of um80's
-objects, other bytes had other values. In `mbasic_52`, 64 such bytes differ. The tool leaves out these "hole" bytes
-when it compares an L80 image, and it counts them.
+**LINK-80 does not clear DS space (L80 limitation).** No .REL item loads
+the bytes that `DS` reserves: 1234 bytes of `mbasic_521`, in 14 ranges, the
+last of them the `ds 7` at the end of `INIT.MAC` (5FF9H-5FFFH). The historic
+binary and ul80 have zeros in all of them. L80 writes whatever was in its
+memory. In every L80 link of `mbasic_521`, 5 of the 1234 bytes were not zero;
+in the all-M80 link, they were 5FFBH-5FFFH, `21 FF FF 22 98`. In `mbasic_52`,
+64 such bytes were not zero. The tool leaves out these "hole" bytes when it
+compares an L80 image, and it counts the ones that are not zero.
 
 **`mbasicz` is not M80 source (a source dialect; um80 accepts more).** M80
 stops with 1263 errors. In `.Z80` mode, `SET` is the Z80 bit instruction, so
@@ -219,6 +230,8 @@ mbasic2025 is not changed here. These are suggestions for its owner:
    0.3.7.
 2. `4k8k/4k/4kbas40.mac` lines 186 and 188, and `4k8k/8k/8kbas_src.mac` line
    198: change `rdc <!>>` to `db '>'+80h` and `rdc <!<>` to `db '<'+80h`.
+   **Needed before the next um80 release:** without it, `build_8k.sh`
+   fails with that um80 (it passes with 0.3.49 and with the change).
 3. `4k8k/4k/build_4k.sh` and `build_4k_hack.sh`: compare only the reference's
    length (`cmp -n 3833`), or accept zero padding. `build_8k.sh` works because
    8192 bytes is a whole number of records.
