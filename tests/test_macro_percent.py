@@ -164,3 +164,28 @@ def test_dri_a_dollar_in_the_expression_is_ignored():
            "\tIRP\tX,<1,2>\n\tGEN\t%N$C+X\n\tENDM\n"
            "\tREPT\t2\n\tGEN\t%N$C\n\tENDM\n")
     assert _code(src, dri=True) == '050a' '050a' '0607' '0505'
+
+
+@BOTH
+def test_an_undefined_name_is_an_error(dri):
+    # M80 3.44 flags `GEN %UNDF' U (a fatal error) and MAC U; both pass 0.
+    # um80 passed 0 without a word.
+    ok, _, errors = _assemble("GEN\tMACRO\tN\n\tDB\tN\n\tENDM\n\tGEN\t%UNDF\n"
+                              "\tDB\t1\n", dri=dri)
+    assert not ok
+    assert errors == ["Error at line 6: Undefined symbol 'UNDF'"], errors
+
+
+def test_without_dri_a_dollar_name_is_undefined_there_too():
+    # M80: N$C is not NC, and each `%N$C' is U.
+    ok, _, errors = _assemble("GEN\tMACRO\tN\n\tDB\tN\n\tENDM\nNC\tEQU\t5\n"
+                              "\tGEN\t%N$C\n\tGEN\t%NC+N$C\n")
+    assert not ok
+    assert len(errors) == 2 and all("'N$C'" in e for e in errors), errors
+
+
+def test_a_forward_reference_is_its_value():
+    # M80 (which flags it V in pass 1) and MAC: 09.
+    assert _code("GEN\tMACRO\tN\n\tDB\tN\n\tENDM\n\tGEN\t%F\nF\tEQU\t9\n") == '09'
+    assert _code("GEN\tMACRO\tN\n\tDB\tN\n\tENDM\n\tGEN\t%F\nF\tEQU\t9\n",
+                 dri=True) == '09'

@@ -4202,8 +4202,12 @@ class Assembler:
         expr = arg[i + 1:]
         if self.dri:
             expr = drop_name_dollars(expr)
+        # An undefined name is an error, as in M80 and MAC (U), where it
+        # was a silent 0; pass 1 reads a forward reference as 0 or as its
+        # predicted value (forward_value()).
         value = self.number_operand(expr, 'The % operator',
-                                    allow_undefined=True).value & 0xFFFF
+                                    allow_undefined=(self.pass_num == 1)
+                                    ).value & 0xFFFF
         if self.radix == 16:
             text = f'{value:X}'
             text = '0' + text if text[0] > '9' else text

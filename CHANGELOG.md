@@ -105,6 +105,12 @@ LINK-80 3.44 under cpmemu, and each has a regression test that fails on
   `%` is a value, as in MAC. A `%` in a body line that is not an argument is
   an error, as in M80 (O) and MAC (E); um80 evaluated it.
 
+- um80 assembler: an undefined name in the expression of a `%` macro
+  argument is now an error, as MACRO-80 (U, fatal) and MAC (U) report it.
+  um80 passed 0 without a word, so a misspelt name, or without `--dri` a
+  name written with a `$` that is defined without one, assembled wrong
+  bytes. A forward reference is still its value.
+
 ## [0.3.50] - 2026-09-25
 
 mbasic2025 (https://github.com/avwohl/mbasic2025) rebuilds historic Microsoft
