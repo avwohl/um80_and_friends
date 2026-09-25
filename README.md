@@ -471,7 +471,7 @@ Digital Research's MAC 2.0 and RMAC 1.1:
 | `test_module_name.py` | The module name from `NAME('X')` and, without it, from the last `TITLE` |
 | `test_extrn_declared.py` | An `EXTRN` never used is written as an empty chain, and it pulls a library module; ul80 warns if nothing defines it |
 | `test_truncate_m80.py` | `-t` cuts names to M80's 6 characters, so a um80 object links with an M80 object's `FBUFP2` |
-| `test_parity_bit.py` | (DRI) A source byte's bit 7 is cleared: a line ending CR 8AH ends the line, C1H in a string is `A`, and an 8AH not after a CR is left out, as in M80 |
+| `test_parity_bit.py` | (DRI) A source byte's bit 7 is cleared: a line ending CR 8AH ends the line, C1H in a string is `A`, and an 8AH not after a CR is left out, as in M80; with `--dri` it is a LF (0AH in a string) and an 8DH a CR whose LF is the next item, as MAC and RMAC read them |
 | `test_equ_name_column.py` | (DRI) The name of an `EQU`, `SET`, `DEFL`, `ASET` or `MACRO` may be indented |
 | `test_register_values.py` | (DRI) A register operand is an expression and a register name its number: `RD EQU D` / `DAD RD` is `DAD D`; an odd register pair is an error; an address is its offset, as in M80 |
 | `test_dri_names.py` | (DRI) `--dri` ignores a `$` inside a name, as MAC and RMAC do, but not in a macro call's arguments or an `IRP`/`IRPC` list; without it `$` is part of the name, as in M80 |

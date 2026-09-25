@@ -152,7 +152,8 @@ on 0.3.50.
   parity bit set: the line after each was lost, one of them an `INX B`.
   A string of the bytes `a`, C1H and `b` is now 41H in the middle, as in
   M80, not FDH. CR 8AH and 8DH 8AH are a CR LF, and an 8DH is a CR, as in
-  M80. An 8AH that does not follow a CR is left out, as M80 leaves it out:
+  M80. Without `--dri` (see below for MAC's reading), an 8AH that does not
+  follow a CR is left out, as M80 leaves it out:
   it ends no line in M80, MAC or RMAC, so `NOP ; ABC`, 8AH, `INX B` is still
   00 (the `INX B` is comment), as is a UTF-8 comment with an 8AH byte in it,
   and a string of `a`, 8AH and `b` is 61 62, as in M80 (0.3.50: 61 FD 62).
@@ -308,6 +309,20 @@ on 0.3.50.
   the list is an empty item, in M80, MAC and RMAC: `<A,>` is A and an
   empty item, and `<,>` two empty items; um80 dropped the last one. A `%`
   item is an expression to its `,` or `;` (`<%1 + 1,5>` is 2 and 5).
+- um80 assembler: with `--dri`, an 8AH or an 8DH inside a line is read as
+  MAC and RMAC read it, not as M80 does. An 8AH that does not follow a CR
+  is a line feed, a character of the line: in a string the byte 0AH (`DB
+  'A`, 8AH, `B'` is 41 0A 42; M80 and um80 gave 41 42), in a comment
+  nothing, and anywhere else an error, as MAC flags it (`E`). An 8DH ends
+  the statement, in a comment too, and MAC then takes the next word or
+  character, after any blanks, for the line feed that should follow a CR;
+  the rest of the line is the next statement. So `DB 1 ;X`, 8DH, TAB `DB
+  2` is 01 in MAC and RMAC, as in 0.3.50 - `DB` goes for the line feed,
+  and `2` is a line number - where um80 `--dri` ended the line at the 8DH
+  and assembled 01 02 without a word; `LAB: MVI A,1 ;LOAD`, 8DH, TAB `MVI
+  B,2` is an error (MAC: `S`, 3E 01), not 3E 01 06 02. Where MAC takes the
+  line's own CR for that line feed, the next line starts with a line feed,
+  which MAC flags `S`, and so does um80. Without `--dri` nothing changes.
 
 ## [0.3.50] - 2026-09-25
 

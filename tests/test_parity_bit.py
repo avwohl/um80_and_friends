@@ -20,7 +20,7 @@ from um80.relformat import RELReader
 from um80.um80 import Assembler
 
 
-def _assemble(data, include=None):
+def _assemble(data, include=None, dri=False):
     """Assemble the bytes `data'; returns (ok, bytes loaded, errors)."""
     with tempfile.TemporaryDirectory() as d:
         if include is not None:
@@ -29,7 +29,7 @@ def _assemble(data, include=None):
         p = os.path.join(d, 't.mac')
         with open(p, 'wb') as f:
             f.write(data)
-        asm = Assembler()
+        asm = Assembler(dri=dri)
         ok = asm.assemble(p)
         errors = [str(e) for e in asm.errors]
         if not ok:
@@ -116,3 +116,80 @@ def test_source_lines():
     assert source_lines(b'a\x8ab\r\n\x8ac\nd') == ['ab', 'c', 'd']
     # 9AH is not an end of file (M80); a 1AH is.
     assert source_lines(b'a\r\n\x9a\r\nb\x1ac') == ['a', '\x1a', 'b']
+
+
+# With --dri, an 8AH or 8DH inside a line is read as MAC and RMAC read it.
+# They clear bit 7 and then take the byte for a LF or a CR, where M80 leaves
+# out an 8AH and ends the line at an 8DH.  An 8AH that does not follow a CR
+# is a character: in a string the byte 0AH, in a comment nothing, anywhere
+# else an error (E).  An 8DH ends the statement, and MAC then reads the
+# next word or character, after any blanks, as the LF it expects after a
+# CR; the rest of the line is the next statement.  um80 --dri read both as
+# M80 does.  The bytes are what MAC 2.0 and RMAC 1.1 assemble.
+DRI_PARITY = [
+    # A 8AH in a string: MAC 41 0A 42 (M80 41 42).
+    (b"\tdb\t'A\x8aB'\r\n", '410a42'),
+    (b"mm\tmacro\r\n\tdb\t'A\x8aB'\r\n\tendm\r\n\tmm\r\n", '410a42'),
+    # In a comment it is nothing.
+    (b'\tdb\t1 ;x\x8a\tdb\t2\r\n\tdb\t3\r\n', '0103'),
+    # An 8DH in a comment: the word after it goes for the LF, and the rest
+    # of the line, `2', is a line number.  M80 01 02 03.
+    (b'\tdb\t1 ;x\x8d\tdb\t2\r\n\tdb\t3\r\n', '0103'),
+    (b'\tdb\t1 ;x\x8ddb 2\r\n\tdb\t3\r\n', '0103'),
+    (b'\tdb\t1\x8d\t\tdb\t2\r\n\tdb\t3\r\n', '0103'),
+    (b';x\x8d\tdb\t2\r\n\tdb\t3\r\n', '03'),
+    # Here the word is `x', and `<TAB>DB 2' is assembled.
+    (b'\tdb\t1 ;x\x8dx\tdb\t2\r\n\tdb\t3\r\n', '010203'),
+    # A second 8DH, or an 8AH, is the LF.
+    (b'\tdb\t1\x8d\x8d\tdb\t2\r\n\tdb\t3\r\n', '010203'),
+    (b'\tdb\t1 ;x\x8d\x8a\tdb\t2\r\n\tdb\t3\r\n', '010203'),
+    (b'\tdb\t1\x8d\ndb\t2\r\n', '0102'),
+    # A `,' is the LF, and `2' a line number.  M80 01 00 02 03 (Q).
+    (b'\tdb\t1\x8d,2\r\n\tdb\t3\r\n', '0103'),
+    # CR 8AH is a CR LF, as MP/M II's MEMMGR.ASM ends six lines.
+    (b'\tdb\t1\r\x8a\tdb\t2\r\n', '0102'),
+]
+
+
+def test_dri_reads_8ah_and_8dh_as_mac():
+    for src, want in DRI_PARITY:
+        ok, code, errors = _assemble(src + b'\tend\r\n', dri=True)
+        assert ok, (src, errors)
+        assert code.hex() == want, src
+
+
+def test_dri_flags_what_mac_flags():
+    # MAC and RMAC flag each (E or S) and assemble none, or not all, of it.
+    for src in [
+            b'\tdb\t1\x8a\r\n\tdb\t2\r\n',           # E: 00 02
+            b'\tdb\t1\x8a,2\r\n\tdb\t3\r\n',          # E: 00 00 03
+            b"\tdb\t'A\x8dB'\r\n",                    # O: 00
+            # The line end after an 8DH is the LF, so the next line
+            # starts with the real LF (S), and MAC drops it: 00 and 01.
+            b'\tnop\x8d\r\n\tinx\tb\r\n',
+            b'\tdb\t1 ;x\x8d\r\n\tdb\t3\r\n',
+            b'\tdb\t1\x8d;c\r\n\tdb\t3\r\n',
+            # The LF after it is the LF, so a line that starts with 8AH
+            # starts with a LF (M80 and um80 without --dri: 00 03).
+            b'\tnop\r\n\x8a\tinx\tb\r\n',
+            # `MVI' is the LF, and `B,2' no statement (MAC: 3E 01 03, S).
+            b'lab:\tmvi\ta,1 ;load\x8d\tmvi\tb,2\r\n\tdb\t3\r\n']:
+        ok, _, errors = _assemble(src + b'\tend\r\n', dri=True)
+        assert not ok, src
+        ok, _, errors = _assemble(src.replace(b'\x8d', b'').replace(b'\x8a', b'')
+                                  + b'\tend\r\n', dri=True)
+        assert ok, (src, errors)
+
+
+def test_dri_source_lines():
+    from um80.um80 import source_lines  # pylint: disable=import-outside-toplevel
+    # Without --dri, M80's reading.
+    assert source_lines(b'a ;x\x8dy b\r\nc\x8ad\r\n') == ['a ;x', 'y b', 'cd', '']
+    assert source_lines(b'a ;x\x8dy b\r\nc\x8ad\r\n', dri=True) == \
+        ['a ;x', ' b', 'c\nd', '']
+    # A CR LF, a CR 8AH, an 8DH 8AH and a LF alone end a line, as before.
+    assert source_lines(b'a\r\nb\r\x8ac\x8d\x8ad\ne\x1af', dri=True) == \
+        ['a', 'b', 'c', 'd', 'e']
+    # After an 8DH, the CR of the line end is the LF, and the next line
+    # starts with its LF.
+    assert source_lines(b'a\x8d\r\nb\r\nc', dri=True) == ['a', '\nb', 'c']

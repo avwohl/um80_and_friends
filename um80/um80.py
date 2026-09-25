@@ -91,37 +91,143 @@ STRIP_PARITY = bytes(b & 0x7F for b in range(256))
 LONE_8AH = re.compile(rb'(?<![\r\x8d])\x8a')
 
 
-def source_lines(data):
+def source_lines(data, dri=False):
     """The lines of a source file, read from its bytes as CP/M's assemblers
-    read them.
+    read them: as MACRO-80 reads them, or with `dri' as MAC and RMAC do
+    (mac_source_lines()).
 
     A 1AH (^Z) ends the file: CP/M pads a file's last 128-byte record with
     them.  Each line ends at a CR, a LF or a CR LF.
 
     Every byte loses bit 7, the parity bit some CP/M editors and serial
-    links left set: MACRO-80 3.44, and DRI's MAC and RMAC, all read 8DH as
-    a CR, E9H as `i' and C1H in a string as `A', and CR 8AH as CR LF.  um80
-    read such a byte as a character no name or operator starts with, so a
-    line ending CR 8AH made the next line one it dropped without a word.
-    Six lines of MP/M II's NUCLEUS/MEMMGR.ASM end so - one of those dropped
-    was an INX B.  A 9AH byte (1AH with bit 7) does not end the file, as in
-    M80; MAC and RMAC stop at it.
+    links left set: MACRO-80 3.44, and DRI's MAC and RMAC, all read E9H as
+    `i' and C1H in a string as `A', and CR 8AH as CR LF.  um80 read such a
+    byte as a character no name or operator starts with, so a line ending
+    CR 8AH made the next line one it dropped without a word.  Six lines of
+    MP/M II's NUCLEUS/MEMMGR.ASM end so - one of those dropped was an INX
+    B.  A 9AH byte (1AH with bit 7) does not end the file, as in M80; MAC
+    and RMAC stop at it.
 
-    An 8AH that does not follow a CR or an 8DH is left out, as M80 leaves
-    out every LF: it does not end the line in M80, MAC or RMAC, and um80
-    ends one only at a lone LF, which a file from Unix ends its lines
-    with.  `NOP ; ABC', 8AH, `INX B' is 00 in all three - the INX B is
-    comment - and UTF-8 text in a comment has 8AH bytes (U+4E0A is E4 B8
-    8A).  In a string M80 gives `A', 8AH, `B' as 61 62.
+    M80 reads an 8DH as a CR, and leaves out an 8AH that does not follow a
+    CR or an 8DH, as it leaves out every LF: it does not end the line in
+    M80, MAC or RMAC, and um80 ends one only at a lone LF, which a file
+    from Unix ends its lines with.  `NOP ; ABC', 8AH, `INX B' is 00 in all
+    three - the INX B is comment - and UTF-8 text in a comment has 8AH
+    bytes (U+4E0A is E4 B8 8A).  In a string M80 gives `A', 8AH, `B' as 61
+    62, where MAC and RMAC give 61 0A 62.
     """
     eof = data.find(0x1A)
     if eof >= 0:
         data = data[:eof]
+    if dri:
+        return mac_source_lines(data)
     data = LONE_8AH.sub(b'', data)
     text = data.translate(STRIP_PARITY).decode('ascii')
     text = text.replace('\r\n', '\n').replace('\r', '\n')
     text = text.rstrip('\x00')  # padding nulls
     return text.split('\n')
+
+
+# What MAC reads as a name or a number, and the blanks it skips before one,
+# with bit 7 clear (see mac_line_feed()).
+MAC_WORD = frozenset(b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
+                     b'0123456789?@$')
+MAC_BLANKS = frozenset(b' \t\x00')
+
+
+def mac_source_lines(data):
+    """The lines of a source file as DRI's MAC and RMAC read them (--dri).
+
+    Where the file has no 8AH or 8DH but after a CR, these are the lines
+    source_lines() gives without --dri.  MAC and RMAC clear bit 7 of a
+    byte and then read it; they do not read 8AH and 8DH as M80 does.
+
+    An 8AH that does not follow a CR is a LF, a character of the line: in
+    a string it is the byte 0AH (`DB 'A', 8AH, `B'' is 41 0A 42; M80 41
+    42), in a comment nothing, and anywhere else MAC flags it E (see
+    Assembler.process_line()).  A line that starts with one starts with a
+    LF: after CR LF, 8AH `INX B' is S in MAC, and 00 03 in M80.
+
+    An 8DH is a CR: it ends the statement, in a comment too.  MAC then
+    reads the next item, after any blanks, as the LF that should follow a
+    CR, whatever it is - a name or a number, a quoted string, one other
+    character, or a comment to the next CR - and the rest of the line is
+    the next statement (mac_line_feed()).  So `DB 1 ;X', 8DH, TAB `DB 2' is
+    01 in MAC and RMAC: `DB' goes for the LF, and `2' is a line number.
+    With `X' after the 8DH, `X' goes and `DB 2' is assembled; with an 8AH
+    or a second 8DH after it, that one.  um80 --dri read both bytes as M80
+    does, so it assembled `DB 2' (01 02), without a word.  Where the item
+    MAC takes for the LF is the CR that ends the line - an 8DH at the end
+    of a line, or before a comment - the LF after it starts the next line,
+    and MAC flags it S and drops that line; here it starts with a LF.
+    """
+    lines = []
+    line = bytearray()
+    i, n = 0, len(data)
+    while i < n:
+        b = data[i]
+        i += 1
+        if b == 0x0D:
+            lines.append(line)
+            line = bytearray()
+            if i < n and data[i] in (0x0A, 0x8A):
+                i += 1
+        elif b == 0x0A:
+            lines.append(line)
+            line = bytearray()
+        elif b == 0x8D:
+            lines.append(line)
+            line = bytearray()
+            i, lf = mac_line_feed(data, i)
+            if lf:
+                line.append(0x0A)
+        else:
+            line.append(b & 0x7F)
+    lines.append(line.rstrip(b'\x00'))  # padding nulls
+    return [ln.decode('ascii') for ln in lines]
+
+
+def mac_line_feed(data, i):
+    """Where MAC goes on after it has read an 8DH (a CR) at data[i - 1].
+
+    MAC reads the next item as the LF it expects after a CR (see
+    mac_source_lines()).  Returns (the index after that item, and whether
+    the item was the CR that ends the line - a CR or another 8DH - with a
+    LF after it, which then starts the next statement).
+    """
+    n = len(data)
+    while i < n and data[i] & 0x7F in MAC_BLANKS:
+        i += 1
+    if i >= n:
+        return i, False
+    c = data[i] & 0x7F
+    if c == ord(';'):
+        # A comment, to a CR, or a `!', which ends one in MAC.
+        while i < n and data[i] & 0x7F not in (0x0D, ord('!')):
+            i += 1
+        if i >= n:
+            return i, False
+        c = data[i] & 0x7F
+    if c == 0x0D:
+        i += 1
+        if i < n and data[i] & 0x7F == 0x0A:
+            return i + 1, True
+        return i, False
+    if c in MAC_WORD:
+        while i < n and data[i] & 0x7F in MAC_WORD:
+            i += 1
+        return i, False
+    if c == ord("'"):
+        i += 1
+        while i < n and data[i] & 0x7F != 0x0D:
+            if data[i] & 0x7F == ord("'"):
+                if i + 1 < n and data[i + 1] & 0x7F == ord("'"):
+                    i += 2
+                    continue
+                return i + 1, False
+            i += 1
+        return i, False
+    return i + 1, False
 
 
 def drop_name_dollars(line):
@@ -4216,6 +4322,11 @@ class Assembler:
         """Process a single source line."""
         self.line_num += 1
         self._start_listing_line()
+        if self.dri and '\n' in line and self._line_feed_in_statement(line):
+            # An 8AH that does not follow a CR (mac_source_lines()).
+            self.error("A line feed outside a string or a comment - an 8AH,"
+                       " or the LF of a line end MAC took for the LF of an"
+                       " 8DH before it: MAC and RMAC flag it (E or S)")
         read = self._dri_statement if self.dri else (lambda stmt: stmt)
         statement = read(line)
 
@@ -4247,6 +4358,24 @@ class Assembler:
             for stmt in self.split_on_exclamation(tail):
                 if stmt.strip() and not self.ended:
                     self._process_single_statement(read('        ' + stmt.strip()))
+
+    def _line_feed_in_statement(self, line):
+        """Whether `line' has a LF outside its strings and its comment.
+
+        With --dri a LF is a character of a line: in a string it is the
+        byte 0AH and in a comment nothing, as in MAC and RMAC.
+        """
+        i = 0
+        while i < len(line):
+            if line[i] == ';':
+                return False
+            if line[i] == '\n':
+                return True
+            if self._starts_string(line, i):
+                i = self._string_end(line, i)
+                continue
+            i += 1
+        return False
 
     def _body_statement(self, label, operator, line):
         """The label and operator of a line of a body being collected.
@@ -5053,7 +5182,7 @@ class Assembler:
         try:
             # Read the include file
             with open(filepath, 'rb') as f:
-                lines = source_lines(f.read())
+                lines = source_lines(f.read(), self.dri)
 
             # Reset line number for include file
             self.line_num = 0
@@ -5206,14 +5335,14 @@ class Assembler:
                         return False
                     try:
                         with open(filepath, 'rb') as f:
-                            pre_lines.extend(source_lines(f.read()))
+                            pre_lines.extend(source_lines(f.read(), self.dri))
                     except IOError as e:
                         self.error(f"Cannot read pre-include file {filepath}: {e}")
                         return False
 
         # Read source - handle CP/M format (CR/LF, ^Z EOF, 128-byte records)
         with open(source_file, 'rb') as f:
-            lines = pre_lines + source_lines(f.read())
+            lines = pre_lines + source_lines(f.read(), self.dri)
         self.source_lines = lines
 
         # Pass 1: Build symbol table (iterate until JR/DJNZ promotions stabilize)

@@ -75,6 +75,10 @@ macro is a label, colon or not, in any column (\fBOBP DS 1\fR); a line
 number in front of a statement, a line that starts with \fB*\fR and MAC's
 assembly controls (\fB$\-MACRO\fR) are ignored.  Without \fB\-\-dri\fR a
 label needs its colon, as in MACRO-80.
+An 8AH (a line feed with bit 7 set) inside a line is a line feed, the byte
+0AH in a string, and an 8DH a carriage return that ends the statement, after
+which the next item is taken for its line feed, as MAC reads them; MACRO-80
+leaves out an 8AH and ends the line at an 8DH.
 \fBPUSH A\fR and \fBPOP A\fR are PUSH PSW and POP PSW, and an expression may
 have two register names in it; MACRO-80 flags both, and so does um80 without
 \fB\-\-dri\fR.

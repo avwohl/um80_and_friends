@@ -233,6 +233,21 @@ them (12H OR 0F00H, 2, 03H), and so does um80 without `--dri`. MAC's order,
 highest first: `* / MOD SHL SHR`, `+ -`, `EQ LT LE GT GE NE` (and `= < <= >
 >= <>`), `NOT`, `AND`, `OR XOR`, `HIGH LOW`.
 
+**An 8AH or an 8DH inside a line is read as MAC reads it.** MAC and RMAC clear
+a byte's bit 7 and then read it, so an 8AH is a line feed and an 8DH a
+carriage return, where M80 leaves out an 8AH that does not follow a CR and
+reads an 8DH as the end of the line. An 8AH that does not follow a CR is a
+character of the line: in a string it is the byte 0AH (`DB 'A<8AH>B'` is 41
+0A 42; M80 41 42), in a comment nothing, and anywhere else an error (MAC:
+`E`). An 8DH ends the statement, in a comment too, and MAC then takes the next
+item, after any blanks - a word or a number, a string, one other character,
+or a comment to the next CR - for the line feed that should follow a CR; the
+rest of the line is the next statement. `DB 1 ;X<8DH><TAB>DB 2` is 01 (`DB`
+goes, and `2` is a line number), and with `X<TAB>DB 2` after the 8DH, 01 02;
+M80 gives 01 02 for both. An 8DH 8AH or CR 8AH is a line end in all three. A
+line whose CR MAC takes for that line feed makes the next line start with a
+line feed, which MAC flags (`S`), and so does um80.
+
 **An `END` in a `MACLIB` library ends the library.** MAC and RMAC stop
 reading a library at its `END` and go on with the source after the `MACLIB`,
 and the address on that `END` is not the start address. M80 reads a `MACLIB`
@@ -275,11 +290,9 @@ a label with no colon and a `*` comment line need `--dri`, `BNKBDOS.ASM`,
   a `PUBLIC` or `EXTRN` name. MP/M II's nucleus depends on it (`DSPTCH.ASM`'s
   `extrn userprocess` is `MEMMGR.ASM`'s `userpr`).
 
-Other differences between MAC/RMAC and M80 that `--dri` does not cover (none of
-MP/M II's sources needs them): MAC stops reading at a
-9AH byte (1AH with bit 7), where M80 reads on; and an 8AH that does not follow
-a CR, which ends no line in any of them, is a 0AH in a MAC string, where M80
-and um80 leave it out (`DB 'A<8AH>B'` is 41 42).
+Another difference between MAC/RMAC and M80 that `--dri` does not cover (none
+of MP/M II's sources needs it): MAC stops reading at a 9AH byte (1AH with bit
+7), where M80 reads on.
 
 ### Register Names as Values (EQU of a register)
 
