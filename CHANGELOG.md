@@ -187,6 +187,17 @@ LINK-80 3.44 under cpmemu, and each has a regression test that fails on
   made the string empty (`IRPC C,P` with P empty), and not for `IRPC C,` or
   `IRPC C,<>` as written; without `--dri` um80 does the same.
 
+- um80 assembler: with `--dri`, a label on the `ENDM` that ends a macro,
+  `REPT`, `IRP` or `IRPC` body is defined where the body ends, each time it
+  is expanded, as in MAC and RMAC. DRI's `CONTROL/STACK.LIB` ends `SIZ` with
+  `STACK: ENDM` (a `LOCAL` name, the top of the stack it reserves),
+  `COMPARE.LIB`'s `GTR` ends with `FL: ENDM` and `SEQIO.LIB`'s `FILLFCB`
+  with `PFCB: ENDM`; um80 dropped the label, so each reference to it was
+  undefined. MACRO-80 ignores such a label (a reference to it is U), and so
+  does um80 without `--dri`. A label made with `&` on an `ENDM` (`L&X: ENDM`)
+  now ends the body, as in M80, MAC and RMAC; um80 took every line after it
+  into the body ("Unterminated IRP").
+
 ## [0.3.50] - 2026-09-25
 
 mbasic2025 (https://github.com/avwohl/mbasic2025) rebuilds historic Microsoft

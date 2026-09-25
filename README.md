@@ -440,6 +440,7 @@ Digital Research's MAC 2.0 and RMAC 1.1:
 | `test_macro_expansion.py` | EXITM in conditionals, macro shadowing built-ins, string-safe substitution, `NUL` |
 | `test_macro_arguments.py` | (DRI) A `;` inside `<...>` in a macro call's arguments or an `IRP` list is text (DRI's `DISKDEF.LIB`); an `IRPC` with an empty string, as M80 and as MAC go round it |
 | `test_macro_conditionals.py` | (DRI) `EXITM` ends the `IF`s it is in without a message; with `--dri` an `IF` a macro body leaves open ends with it, as in MAC, and without it goes on, as in M80 |
+| `test_macro_endm_label.py` | (DRI) A label on the `ENDM` of a body: defined where the body ends with `--dri`, as in MAC (DRI's `STACK.LIB`); ignored without, as in M80; `L&X: ENDM` ends an `IRP` |
 | `test_macro_names.py` | (DRI) A macro body is matched to its parameters name by name: `?Y` and `@N` are parameters (DRI's `COMPARE.LIB`, `STACK.LIB`), `?X` and `X?` are not `X`, `1X` is 1 then `X`; M80's and MAC's name characters; which `&` goes in a string, in M80 and in RMAC; an `IRP`/`IRPC` body the same way; a `LOCAL` name as a parameter |
 | `test_macro_percent.py` | (DRI) A `%` argument is its value at the call, as digits in the current radix, and an undefined name in it an error; M80 evaluates one in an `IRP` list; in a `REPT` body in a macro, on each repetition (DRI's `SELECT.LIB`); with `--dri`, `%N$C` is the value of `NC` |
 | `test_repeat_blocks.py` | Nested REPT/IRP/IRPC, IRP sublists, EXITM |

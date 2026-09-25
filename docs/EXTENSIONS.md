@@ -171,7 +171,9 @@ Only an argument that starts with `%` is a value, as in MAC; M80 also reads
 `A%E` as `A` and E's value, and evaluates a `%` in an `IRP` list, which MAC
 reads as text. An `IRPC` with an empty string goes round once, with its
 parameter empty, as in MAC; M80 does so only where a macro's empty argument
-made the string empty.
+made the string empty. A label on the `ENDM` that ends a body is defined where
+the body ends, each time, as in MAC (DRI's `STACK.LIB` ends `SIZ` with `STACK:
+ENDM`); M80 ignores it.
 
 **An `IF` a macro body leaves open ends with it.** MAC and RMAC end the `IF`s
 that a macro expansion, or one repetition of a `REPT`, `IRP` or `IRPC`, opened

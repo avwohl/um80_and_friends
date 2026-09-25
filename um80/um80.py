@@ -3981,9 +3981,38 @@ class Assembler:
                 if stmt.strip():
                     self._process_single_statement(read('        ' + stmt.strip()))
 
+    def _body_statement(self, label, operator, line):
+        """The label and operator of a line of a body being collected.
+
+        A label may be made with `&' there - `L&X:' is L1 and L2 in `IRP
+        X,<1,2>' - and parse_line() finds no operator after one: `L&X:
+        ENDM' did not end the IRP, and every line after it went into the
+        body ("Unterminated IRP").  M80, MAC and RMAC end it there.
+        """
+        if operator is None and '&' in line:
+            m = re.match(r'\s*([$A-Za-z_@?&][A-Za-z0-9_@?$.&]*)::?(\s.*)?$', line)
+            if m:
+                return m.group(1), self.parse_line('\t' + (m.group(2) or ''))[1]
+        return label, operator
+
+    def _endm_label(self, label, body):
+        """A label on the ENDM that ends a body being collected.
+
+        MAC and RMAC define it where the body ends, each time it is
+        expanded or repeated: DRI's CONTROL/STACK.LIB ends SIZ with `STACK:
+        ENDM' (a LOCAL name, the stack top), COMPARE.LIB's GTR with `FL:
+        ENDM', SEQIO.LIB's FILLFCB with `PFCB: ENDM'.  With --dri it goes at
+        the end of the body.  MACRO-80 3.44 ignores it (a reference to it is
+        U), and so does um80 without --dri.
+        """
+        if label and self.dri:
+            body.append(label + ':')
+
     def _process_single_statement(self, line):
         """Process a single statement (internal helper for ! separator support)."""
         label, operator, operands, comment = self.parse_line(line)
+        if self.collecting_macro is not None or self.repeat_stack:
+            label, operator = self._body_statement(label, operator, line)
         upper_op = operator.upper() if operator else ''
 
         # If collecting macro definition, handle specially
@@ -4021,6 +4050,7 @@ class Assembler:
                     self.macro_body.append(line_for_macro)
                 else:
                     # End of macro definition
+                    self._endm_label(label, self.macro_body)
                     self.macros[self.collecting_macro] = Macro(
                         self.collecting_macro, self.macro_params, self.macro_body
                     )
@@ -4048,6 +4078,7 @@ class Assembler:
                 else:
                     # ENDM of the outer block - execute it.
                     rept_type, param_or_count, body, iter_var, rept_label = self.repeat_stack.pop()
+                    self._endm_label(label, body)
                     self.execute_repeat(rept_type, param_or_count, body, iter_var)
             else:
                 self.repeat_stack[-1][2].append(line)
