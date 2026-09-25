@@ -7,14 +7,21 @@ on:
 jobs:
   pytest:
     runs-on: ubuntu-latest
+    # The suite takes well under a minute; a hang must not run for hours.
+    timeout-minutes: 15
     steps:
     - uses: actions/checkout@v4
     # tests/test_mbasic2025.py rebuilds historic Microsoft BASIC binaries
-    # byte for byte from mbasic2025's sources.
+    # byte for byte from mbasic2025's sources.  The checkout is pinned, so
+    # that a commit to mbasic2025 alone cannot turn this repository's CI red
+    # (the test pins the mbasic_52 image, which any change to those sources
+    # changes).  To take a newer mbasic2025, change the ref here, run the
+    # test, and update tests/test_mbasic2025.py in the same commit.
     - name: Check out mbasic2025
       uses: actions/checkout@v4
       with:
         repository: avwohl/mbasic2025
+        ref: 1a19a485400f6de243e4d73cc13bec29440e101e
         path: mbasic2025
     - name: Set up Python
       uses: actions/setup-python@v5

@@ -473,8 +473,9 @@ git clone https://github.com/avwohl/mbasic2025 ../mbasic2025
 pytest tests/test_mbasic2025.py -v -rw
 ```
 
-CI (`.github/workflows/tests.yml`) checks out mbasic2025 and runs the whole
-suite on every push and pull request.
+CI (`.github/workflows/tests.yml`) checks out mbasic2025, at a pinned commit,
+and runs the whole suite on every push and pull request. To test against a
+newer mbasic2025, change the `ref:` there.
 
 `tools/fourway_mbasic.py` builds the same sources with every mix of the genuine
 MACRO-80/LINK-80 and um80/ul80. Each assembler builds all modules. Then one

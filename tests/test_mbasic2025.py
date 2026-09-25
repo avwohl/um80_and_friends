@@ -30,7 +30,10 @@ records, so a reference that is not a whole number of records (4K BASIC's
 Some sources have a defect the historic binary does not: they assembled
 right only because of an um80 behavior that was not MACRO-80's, since
 corrected.  Until mbasic2025 changes them, the test applies the change to its
-copy first and says so in a warning (see SOURCE_FIXES).
+copy first and says so in a warning (see SOURCE_FIXES).  Two of those
+(`rdc <!>>' in 4K and 8K BASIC) built the historic bytes with um80 0.3.49 and
+do not with this um80: until mbasic2025 changes them, its own build_8k.sh
+reports a mismatch.
 
 The sources are found at $MBASIC2025_DIR, or in a mbasic2025 checkout next
 to this repository; without them the test is skipped (unless
@@ -107,6 +110,11 @@ VARIANTS = {
         'mbasic52.com', None, MBASIC_52_SHA),
 }
 
+# Where each image loads: an address in a failure message is this plus the
+# file offset.
+ORIGIN = {'mbasic_521': 0x100, 'mbasicz': 0x100, '4k': 0, '4k-annotated': 0, '8k': 0,
+          'mbasic_52': 0x100}
+
 # Source defects the historic binaries do not have: (file, [(text,
 # replacement)], why).  A replacement is made only where the text is still in
 # the source.
@@ -127,13 +135,16 @@ SOURCE_FIXES = {
          [('\trdc\t<!>>\n', "\tdb\t'>'+80h\n"), ('\trdc\t<!<>\n', "\tdb\t'<'+80h\n")],
          "`rdc <!>>' makes the macro's `irpc ch,<str>' read `irpc ch,<>>', an"
          " empty list to M80 (and now to um80, which reads the list as M80 does)"
-         ", and `rdc <!<>' makes `irpc ch,<<>', '<' and '>' to M80"),
+         ", and `rdc <!<>' makes `irpc ch,<<>', '<' and '>' to M80.  um80 0.3.49"
+         " built the historic bytes from the unchanged lines; this um80 does not"),
     ],
     '8k': [
         ('8kbas_src.mac', [('\trdc\t<!>>\n', "\tdb\t'>'+80h\n")],
          "`rdc <!>>' makes the macro's `irpc ch,<str>' read `irpc ch,<>>', an"
          " empty list to M80 (and now to um80, which reads the list as M80 does)"
-         "; the source already writes the '<' keyword as `db '<'+80h'"),
+         "; the source already writes the '<' keyword as `db '<'+80h'.  um80"
+         " 0.3.49 built the historic bytes from the unchanged line; this um80"
+         " does not, so mbasic2025's build_8k.sh fails until the line changes"),
     ],
 }
 
@@ -145,8 +156,13 @@ def _sha(data):
 def _run(tool, args, cwd):
     """Run this checkout's um80 or ul80, as the build scripts run theirs."""
     env = dict(os.environ, PYTHONPATH=REPO, PYTHONDONTWRITEBYTECODE='1')
-    r = subprocess.run([sys.executable, '-m', f'um80.{tool}', *args], cwd=cwd,
-                       capture_output=True, text=True, env=env, check=False)
+    try:
+        # The largest module assembles in a few seconds.
+        r = subprocess.run([sys.executable, '-m', f'um80.{tool}', *args], cwd=cwd,
+                           capture_output=True, text=True, env=env, check=False,
+                           timeout=300)
+    except subprocess.TimeoutExpired as e:
+        raise AssertionError(f'{tool} {" ".join(args)}: no result in {e.timeout} s') from e
     if r.returncode:
         raise AssertionError(f'{tool} {" ".join(args)}:\n{r.stdout}{r.stderr}')
 
@@ -229,5 +245,7 @@ def test_builds_byte_exact(name, built):
     padded = want + bytes(-len(want) % 128)
     i = _first_difference(image, padded)
     n = sum(1 for x, y in zip(image, padded) if x != y) + abs(len(image) - len(padded))
-    assert image == padded, (f'{name}: {n} bytes differ from {subdir}/{ref}, the first at'
-                             f' {i:04X}H (built {len(image)} bytes, reference {len(want)})')
+    assert image == padded, (f'{name}: {n} byte{"s" * (n != 1)} differ{"s" * (n == 1)}'
+                             f' from {subdir}/{ref}, the first at'
+                             f' address {ORIGIN[name] + i:04X}H (file offset {i:X}H;'
+                             f' built {len(image)} bytes, reference {len(want)})')

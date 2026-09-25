@@ -26,8 +26,8 @@ results.
   `docs/mbasic2025.md`). The test changes its copy of those lines and reports
   each change as a warning.
 - CI: `.github/workflows/tests.yml` runs the test suite on every push and
-  pull request, with avwohl/mbasic2025 checked out. Before this, CI ran only
-  pylint.
+  pull request, with avwohl/mbasic2025 checked out at a pinned commit (change
+  its `ref:` to take a newer one). Before this, CI ran only pylint.
 - tools: `tools/fourway_mbasic.py` builds mbasic2025 with every mix of the
   genuine M80.COM/L80.COM (supplied by path; they are not in this
   repository) and this checkout's um80/ul80. It compares each module's two

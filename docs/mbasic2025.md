@@ -36,8 +36,12 @@ any change in how um80 assembles those sources.
 - The sources come from `$MBASIC2025_DIR`, or from a `mbasic2025` checkout
   next to this repository. Without them, the test is skipped. If
   `$MBASIC2025_REQUIRED` is set, the test fails instead.
-- CI (`.github/workflows/tests.yml`) checks out `avwohl/mbasic2025` and runs
-  the whole test suite on every push and pull request.
+- CI (`.github/workflows/tests.yml`) checks out `avwohl/mbasic2025` at a
+  pinned commit and runs the whole test suite on every push and pull
+  request. A commit to mbasic2025 alone therefore cannot turn um80's CI red.
+  To take a newer mbasic2025, change the `ref:` in the workflow, run the
+  test, and update the test in the same commit. The CI job stops after 15
+  minutes, and each um80/ul80 run in the test after 5.
 - ul80 pads its output to a whole 128-byte CP/M record, as LINK-80 writes whole
   records. A reference that is not a whole number of records is compared up to
   its length, and the padding after it must be zeros. (4K BASIC is 3833 bytes,
