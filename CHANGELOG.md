@@ -178,6 +178,15 @@ LINK-80 3.44 under cpmemu, and each has a regression test that fails on
   `<;sec per track>` to a macro whose body is `dw data comment`; um80 cut the
   line at the `;`, so the argument was `<` ("Cannot parse expression").
 
+- um80 assembler: an `IRPC` with an empty string (`IRPC C,`) is no longer
+  an error. um80 stopped with "IRPC requires parameter and string", and the
+  body's `ENDM` was then "ENDM without MACRO". MAC and RMAC go round once
+  with the parameter empty, and so does `--dri`: DRI's `SEQIO.LIB` fills a
+  file name with `IRPC ?FC,FC` and tests `NUL ?FC`, and `FILE` passes an
+  empty type. MACRO-80 goes round once only where a macro's empty argument
+  made the string empty (`IRPC C,P` with P empty), and not for `IRPC C,` or
+  `IRPC C,<>` as written; without `--dri` um80 does the same.
+
 ## [0.3.50] - 2026-09-25
 
 mbasic2025 (https://github.com/avwohl/mbasic2025) rebuilds historic Microsoft

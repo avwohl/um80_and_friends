@@ -59,3 +59,38 @@ def test_a_semicolon_elsewhere_still_starts_a_comment(dri):
     # a bracketed argument is a comment.
     assert _code("GEN\tMACRO\tA\n\tDB\tA\n\tENDM\n\tGEN\t<3> ;<;\n"
                  "\tDB\t1 ;<\n", dri=dri) == '0301'
+
+
+# An IRPC with an empty string.  um80 stopped at `IRPC C,' with "IRPC
+# requires parameter and string", then "ENDM without MACRO".
+EMPTY = {
+    'top': "\tIRPC\tC,\n\tDB\t1\n\tENDM\n\tDB\t9\n",
+    'top_brackets': "\tIRPC\tC,<>\n\tDB\t1\n\tENDM\n\tDB\t9\n",
+    'argument': "MM\tMACRO\tP\n\tIRPC\tC,P\n\tDB\t1\n\tENDM\n\tENDM\n\tMM\n\tDB\t9\n",
+    'argument_brackets': "MM\tMACRO\tP\n\tIRPC\tC,<P>\n\tDB\t1\n\tENDM\n\tENDM\n"
+                         "\tMM\n\tDB\t9\n",
+    'in_a_macro': "MM\tMACRO\n\tIRPC\tC,\n\tDB\t1\n\tENDM\n\tENDM\n\tMM\n\tDB\t9\n",
+    # SEQIO.LIB's FILLNAM: `IRPC ?FC,FC' then `IF NUL ?FC / EXITM'.
+    'nul': "MM\tMACRO\tP\n\tIRPC\tC,P\n\tIF\tNUL C\n\tEXITM\n\tENDIF\n\tDB\t1\n"
+           "\tENDM\n\tENDM\n\tMM\n\tDB\t9\n",
+}
+
+
+@pytest.mark.parametrize('case, m80, mac', [
+    # M80 goes round once only where an empty argument made the string
+    # empty; MAC and RMAC always go round once.
+    ('top', '09', '0109'),
+    ('top_brackets', '09', '0109'),
+    ('argument', '0109', '0109'),
+    ('argument_brackets', '0109', '0109'),
+    ('in_a_macro', '09', '0109'),
+    ('nul', '09', '09'),
+])
+def test_an_irpc_with_an_empty_string(case, m80, mac):
+    assert _code(EMPTY[case]) == m80
+    assert _code(EMPTY[case], dri=True) == mac
+
+
+def test_an_irpc_with_no_comma_is_still_an_error():
+    ok, _, errors, _ = _assemble("\tIRPC\tC\n\tDB\t1\n\tENDM\n")
+    assert not ok and "IRPC requires parameter and string" in errors[0]

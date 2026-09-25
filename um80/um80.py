@@ -313,6 +313,7 @@ class Assembler:
         self.cond_else_levels = set()  # Conditional depths that have seen an ELSE
 
         self.local_counter = 0  # For LOCAL symbols in macros
+        self.irpc_from_argument = False  # see expand_macro()
         self.expanding_macro = False
         self.macro_level = 0
 
@@ -3778,7 +3779,7 @@ class Assembler:
 
         # IRPC - iterate over characters
         if operator == 'IRPC':
-            if len(ops) < 2:
+            if not ops or ',' not in operands:
                 self.error("IRPC requires parameter and string")
                 return True
             param = ops[0].strip().upper()
@@ -3789,8 +3790,15 @@ class Assembler:
                 chars = re.split(r'[\s,]', text, maxsplit=1)[0]
                 self._repeat_line_tail(text[len(chars):],
                                        "IRPC string ends at a blank or a comma")
+            chars = list(chars)
+            if not chars and (self.dri or self.irpc_from_argument):
+                # An empty string: MAC and RMAC go round once, with the
+                # parameter empty (SEQIO.LIB's `IRPC ?FC,FC' tests NUL ?FC
+                # for it).  M80 does not, except where a macro's empty
+                # argument made the string empty (expand_macro()).
+                chars = ['']
             self.block_open_line = self.line_num
-            self.repeat_stack.append(('IRPC', list(chars), [], param, label))
+            self.repeat_stack.append(('IRPC', chars, [], param, label))
             return True
 
         # ENDM for REPT/IRP/IRPC
@@ -4403,14 +4411,29 @@ class Assembler:
             names.update(subst)
             expanded = self.substitute_macro_params(body_line, names)
 
+            # M80 goes round an IRPC once, with its parameter empty, when an
+            # empty argument made its string empty (`IRPC C,P' with P
+            # empty), though not for `IRPC C,' or `IRPC C,<>' as written.
+            self.irpc_from_argument = (
+                op == 'IRPC' and self._irpc_string(opnds) not in ('', '<>')
+                and self._irpc_string(self.parse_line(expanded)[2]) in ('', '<>'))
+
             # Process the expanded line
-            self.process_line(expanded)
+            try:
+                self.process_line(expanded)
+            finally:
+                self.irpc_from_argument = False
         if self.dri:
             # MAC and RMAC end the IFs a body leaves open at its ENDM (M80
             # carries them on).
             self.end_conditionals(cond_depth)
 
         self.macro_level -= 1
+
+    @staticmethod
+    def _irpc_string(operands):
+        """The text after the comma of an IRPC's operands, stripped."""
+        return (operands or '').partition(',')[2].strip()
 
     def execute_repeat(self, rept_type, param_or_count, body, iter_var):
         """Execute a REPT/IRP/IRPC block."""

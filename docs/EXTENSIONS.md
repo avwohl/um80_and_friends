@@ -169,7 +169,9 @@ drops the `&` of the first one in a string alone (`'&X &X'` is `K &K` there,
 `K K` in RMAC). RMAC folds case in a string, as um80 does; MAC 2.0 does not.
 Only an argument that starts with `%` is a value, as in MAC; M80 also reads
 `A%E` as `A` and E's value, and evaluates a `%` in an `IRP` list, which MAC
-reads as text.
+reads as text. An `IRPC` with an empty string goes round once, with its
+parameter empty, as in MAC; M80 does so only where a macro's empty argument
+made the string empty.
 
 **An `IF` a macro body leaves open ends with it.** MAC and RMAC end the `IF`s
 that a macro expansion, or one repetition of a `REPT`, `IRP` or `IRPC`, opened
