@@ -4427,30 +4427,51 @@ class Assembler:
         self.error(f"Unknown instruction or directive: {word}{hint}")
 
     def process_macro_argument(self, arg):
-        """Process a macro argument, handling angle brackets and ! operator.
+        """The text of a macro argument, or of an IRP item.
 
-        A '!' quotes the next character, except inside a quoted string,
-        where it is itself: M80 reads `<'Hi!'>' as 'Hi!' - in a macro call
-        and in an IRP list - and um80 dropped the '!'.
+        A <...> group in it loses its brackets, wherever it is, and keeps
+        its text, as in MACRO-80, MAC and RMAC: `MM 1<2>3' passes 123, `MM
+        5<>5' 55, `MM <1,2>3' `1,23', and `IRP P,<A<B>C,D>' iterates over
+        ABC and D.  Only the outer brackets go: `1<2<3>4>5' is `12<3>45'
+        and `<<A>>' `<A>'.  um80 dropped them only when they were the whole
+        argument, so without --dri `MM 1<2>3' was "Cannot parse expression",
+        and with --dri MAC's relational operators made `DB P' (1<2)>3, 0FFH,
+        without a word.  A '<' with no '>' goes too, and um80 warns (M80
+        flags it X, MAC and RMAC V); a '>' with no '<' is text.
+
+        A '!' quotes the next character, a bracket too (`MM 1<!>>2' is 1>2
+        in M80), except inside a quoted string, where it is itself: M80
+        reads `<'Hi!'>' as 'Hi!' - in a macro call and in an IRP list - and
+        um80 dropped the '!'.  A bracket in a string is text.
         """
-        # Strip outer angle brackets (used to preserve special chars in arglist)
-        if arg.startswith('<') and arg.endswith('>'):
-            arg = arg[1:-1]
-        # Process ! operator (makes next character literal)
         result = []
+        depth = 0
         i = 0
         while i < len(arg):
-            if arg[i] == '!' and i + 1 < len(arg):
+            ch = arg[i]
+            if ch == '!' and i + 1 < len(arg):
                 # ! makes next character literal
                 result.append(arg[i + 1])
                 i += 2
-            elif self._starts_string(arg, i):
+                continue
+            if self._starts_string(arg, i):
                 end = self._string_end(arg, i)
                 result.append(arg[i:end])
                 i = end
-            else:
-                result.append(arg[i])
-                i += 1
+                continue
+            if ch == '<':
+                depth += 1
+                if depth == 1:
+                    ch = ''
+            elif ch == '>' and depth:
+                depth -= 1
+                if not depth:
+                    ch = ''
+            result.append(ch)
+            i += 1
+        if depth and self.pass_num == 2:
+            self.warning(f"'<' in the argument '{arg}' has no '>': it is left"
+                         " out (M80 flags it X, MAC and RMAC V)")
         return ''.join(result)
 
     def _string_spans(self, line):

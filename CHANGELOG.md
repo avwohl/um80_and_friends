@@ -284,6 +284,15 @@ on 0.3.50.
   does um80 without `--dri`. A label made with `&` on an `ENDM` (`L&X: ENDM`)
   now ends the body, as in M80, MAC and RMAC; um80 took every line after it
   into the body ("Unterminated IRP").
+- um80 assembler: a `<...>` group inside a macro argument or an `IRP` item
+  now loses its brackets wherever it is, and keeps its text, as in
+  MACRO-80, MAC and RMAC: `MM 1<2>3` passes `123`, `MM 5<>5` `55`, `MM
+  <1,2>3` `1,23`, and `IRP P,<1<2>3,4>` iterates over `123` and `4`. Only
+  the outer brackets go (`1<2<3>4>5` is `12<3>45`). um80 dropped them only
+  when they were the whole argument, so without `--dri` each was "Cannot
+  parse expression", and with `--dri` MAC's relational operators read `DB
+  P` as `(1<2)>3`, 0FFH, without a word. A `<` with no `>` is left out
+  too, and um80 warns (M80 flags it `X`, MAC and RMAC `V`).
 
 ## [0.3.50] - 2026-09-25
 

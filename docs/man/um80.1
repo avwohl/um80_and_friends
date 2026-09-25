@@ -185,6 +185,12 @@ Declare local symbols within a macro.
 .B EXITM
 Exit macro expansion early.
 .TP
+.B <\fItext\fB>
+In a macro argument or an IRP item: \fItext\fR as it is, its commas and
+semicolons too.  The brackets go wherever they are in the argument
+(\fBMM 1<2>3\fR passes 123, \fBMM <1,2>3\fR 1,23), and only the outer ones
+(\fB<<A>>\fR is <A>), as in MACRO-80, MAC and RMAC.
+.TP
 .B %\fIexpression\fR
 As a macro argument: the value of the expression when the macro is called,
 as digits in the current radix, written as MACRO-80 writes them (with

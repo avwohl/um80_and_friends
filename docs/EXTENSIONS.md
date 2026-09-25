@@ -237,9 +237,11 @@ without `--dri`, with a warning.
 
 Where MAC, RMAC and M80 agree, um80 behaves that way with or without `--dri`:
 a source byte's bit 7 is cleared (a line ending CR 8AH is a line end), the name
-of an `EQU`, `SET` or `MACRO` may be indented, and in 8080 code a register name
+of an `EQU`, `SET` or `MACRO` may be indented, in 8080 code a register name
 is a number in any expression (`RD EQU D` then `DAD RD` is `DAD D`, `DB B` is
-00).
+00), and a `<...>` group inside a macro argument or an `IRP` item loses its
+brackets wherever it is (`MM 1<2>3` passes `123`, not `1<2>3`, which MAC's
+relational operators would read).
 
 MP/M II's sources need `--dri`: `NUCLEUS/MPM.ASM` stores to `nmb$lst`, which
 `DATAPG.ASM` defines as `nmblst`; `RESBDOS1.ASM` calls both `SET$DMABUFA` and
