@@ -4944,7 +4944,9 @@ def main():
     parser.add_argument('--dri', action='store_true',
                         help='Read the source as DRI\'s MAC and RMAC do where they '
                              'differ from M80: a $ inside a name is ignored '
-                             '(NMB$LST is NMBLST)')
+                             '(NMB$LST is NMBLST), a macro body is read with '
+                             'MAC\'s names, and an IF a macro body leaves open '
+                             'ends with it')
     parser.add_argument('-s', '--strict', action='store_true',
                         help='Strict mode: error on out-of-range JR/DJNZ instead of promoting to JP')
 

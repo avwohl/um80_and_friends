@@ -60,7 +60,13 @@ one symbol, and \fBPUBLIC A$BC\fR writes ABC.  A \fB$\fR that starts a word
 (the location counter), one in a quoted string or a comment, and one in the
 arguments of a macro call or the list of an IRP or IRPC, which MAC reads as
 text, are kept.
-Without \fB\-\-dri\fR a \fB$\fR is part of the name, as in MACRO-80.
+A macro body is matched to its parameters with MAC's names, which end at a
+\fB$\fR, \fB_\fR or \fB.\fR, and with RMAC's rules for an \fB&\fR in a
+string; only an argument that starts with \fB%\fR is a value; and an IF that
+a macro expansion, or one repetition of a REPT, IRP or IRPC, leaves open ends
+with it.
+Without \fB\-\-dri\fR a \fB$\fR is part of the name, and a macro body is
+read, as in MACRO-80.
 \fB\-\-dri\fR does not imply \fB\-\-aseg\fR (MAC's absolute sources) or
 \fB\-t\fR (RMAC's six-character names).
 .TP
