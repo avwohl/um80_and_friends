@@ -3640,14 +3640,17 @@ class Assembler:
         Returns None when the list does not start with '<'.  MACRO-80 3.44
         ends the list at the '>' that matches its '<' - counting nested
         brackets, and for IRP (whose items are read like macro arguments)
-        skipping a '!'-quoted character - and ignores the rest of the line:
-        `IRPC C,<>>' iterates over nothing and `IRP X,<1,2>,3' over 1 and 2.
-        um80 used to drop the first and last characters of the operand, so
-        those were '>' and "1,2>,3".  A '!' is an ordinary character in an
-        IRPC list: `IRPC C,<!>>' is '!'.  A list with no matching '>' runs
-        to the end of the line, and M80 flags it 'Q': `IRPC C,<<>' is '<'
-        and '>'.  This matters where a macro wraps its argument in brackets,
-        `IRPC CH,<STR>', and the argument is `!>': the '>' closes the list.
+        skipping a '!'-quoted character and a quoted string - and ignores
+        the rest of the line: `IRPC C,<>>' iterates over nothing and
+        `IRP X,<1,2>,3' over 1 and 2.  um80 used to drop the first and last
+        characters of the operand, so those were '>' and "1,2>,3".  In an
+        IRPC list '!' and quotes are ordinary characters: `IRPC C,<!>>' is
+        '!', and `IRPC C,<A'>'B>' is A and a quote.  In an IRP list a
+        string is one piece of text: `IRP X,<'A>B','Hi!'>' is 'A>B' and
+        'Hi!'.  A list with no matching '>' runs to the end of the line,
+        and M80 flags it 'Q': `IRPC C,<<>' is '<' and '>'.  This matters
+        where a macro wraps its argument in brackets, `IRPC CH,<STR>', and
+        the argument is `!>': the '>' closes the list.
         """
         rest = operands.split(',', 1)[1].lstrip() if ',' in operands else ''
         if not rest.startswith('<'):
@@ -3655,23 +3658,58 @@ class Assembler:
         depth, i = 0, 0
         while i < len(rest):
             ch = rest[i]
-            if ch == '!' and operator == 'IRP':
-                i += 2
-                continue
+            if operator == 'IRP':
+                if ch == '!':
+                    i += 2
+                    continue
+                if self._starts_string(rest, i):
+                    i = self._string_end(rest, i)
+                    continue
             if ch == '<':
                 depth += 1
             elif ch == '>':
                 depth -= 1
                 if depth == 0:
-                    tail = rest[i + 1:].strip()
-                    if tail and self.pass_num == 2:
-                        self.warning(f"{operator} list ends at the '>' that matches"
-                                     f" its '<': '{tail}' after it is ignored")
+                    self._repeat_line_tail(
+                        rest[i + 1:], f"{operator} list ends at the '>' that"
+                        " matches its '<'")
                     return rest[1:i]
             i += 1
         if self.pass_num == 2:
             self.warning(f"{operator} list has no closing '>' (M80: Q)")
         return rest[1:]
+
+    @staticmethod
+    def _starts_string(text, i):
+        """Whether the character at text[i] opens a quoted string.
+
+        The rule split_operands() and parse_line() use: a ' after a letter
+        or digit is not a quote (the Z80's AF').
+        """
+        ch = text[i]
+        return ch == '"' or (ch == "'" and not (i and text[i - 1].isalnum()))
+
+    @staticmethod
+    def _string_end(text, i):
+        """The index just past the quoted string that opens at text[i].
+
+        A doubled quote is a quote inside the string; a string with no
+        closing quote runs to the end of the text.
+        """
+        quote, i = text[i], i + 1
+        while i < len(text):
+            if text[i] == quote:
+                if text[i + 1:i + 2] != quote:
+                    return i + 1
+                i += 1
+            i += 1
+        return i
+
+    def _repeat_line_tail(self, tail, where):
+        """The text after an IRP or IRPC list on its line: M80 ignores it."""
+        tail = tail.strip()
+        if tail and self.pass_num == 2:
+            self.warning(f"{where}: '{tail}' after it is ignored")
 
     def _line_invokes_macro(self, line):
         """Return True if this line's operator is a defined macro name, IRP or IRPC.
@@ -3851,7 +3889,12 @@ class Assembler:
         self._save_listing_entry(line)
 
     def process_macro_argument(self, arg):
-        """Process a macro argument, handling angle brackets and ! operator."""
+        """Process a macro argument, handling angle brackets and ! operator.
+
+        A '!' quotes the next character, except inside a quoted string,
+        where it is itself: M80 reads `<'Hi!'>' as 'Hi!' - in a macro call
+        and in an IRP list - and um80 dropped the '!'.
+        """
         # Strip outer angle brackets (used to preserve special chars in arglist)
         if arg.startswith('<') and arg.endswith('>'):
             arg = arg[1:-1]
@@ -3863,6 +3906,10 @@ class Assembler:
                 # ! makes next character literal
                 result.append(arg[i + 1])
                 i += 2
+            elif self._starts_string(arg, i):
+                end = self._string_end(arg, i)
+                result.append(arg[i:end])
+                i = end
             else:
                 result.append(arg[i])
                 i += 1

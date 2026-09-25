@@ -57,12 +57,19 @@ results.
   warns about the `>` it ignores. The sources need `db '>'+80h`, as the 8K
   source already has for `<`. A list with no closing `>` runs to the end of
   the line, with a warning (M80 flags it `Q`). `IRPC C,<A>B` is `A`;
-  `IRP X,<1,2>,3` is 1 and 2.
+  `IRP X,<1,2>,3` is 1 and 2. In an `IRP` list, a `>`, `<`, `,` or `!` inside
+  a quoted string is text, as in M80 (`IRP X,<'A>B','<',2>` is `'A>B'`, `'<'`
+  and 2); in an `IRPC` list a quote is an ordinary character.
 - um80 assembler: a `!` in an `IRP` or `IRPC` line was taken as DRI's
   statement separator, so `IRPC C,<!>` became `IRPC C,<` and a stray `>`
   line. In an `IRPC` list a `!` is an ordinary character. In an `IRP` list it
   quotes the next character, as in a macro argument (`IRP X,<1!,2,3>` is `1,2`
   and `3`). An unbracketed `IRPC` string ends at a blank (`IRPC C,A B` is `A`).
+- um80 assembler: a `!` inside a quoted string in a macro argument was
+  dropped: `MSG <'Hi!'>` and `MSG 'Hi!'` passed `'Hi'`. MACRO-80 keeps it, and
+  now um80 does too, in a macro call and in an `IRP` list
+  (`IRP M,<'Error!','Ok'>`). Outside a string, `!` still quotes the next
+  character.
 - um80 assembler: `NAME('XYZ')` wrote the module name `'XYZ'`, with the quotes.
   It is now `XYZ`, cut to 6 characters as M80 does.
 - um80 assembler: `TITLE` now names a module that has no `NAME`, as MACRO-80

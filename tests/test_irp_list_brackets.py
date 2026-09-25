@@ -20,8 +20,10 @@ um80 warns about the '>' it ignores.
 Also: a '!' in an IRP or IRPC line is not the DRI statement separator (in an
 IRPC list it is an ordinary character, in an IRP list it quotes the next
 character, as in a macro argument), and an unbracketed IRPC string ends at a
-blank.  Every expected value was produced by the genuine MACRO-80 3.44 under
-a CP/M emulator.
+blank.  In an IRP list, as in a macro argument, a quoted string is text: a
+'<', '>', ',' or '!' inside it is itself (`IRP M,<'Error!','A>B'>').  In an
+IRPC list a quote is an ordinary character.  Every expected value was
+produced by the genuine MACRO-80 3.44 under a CP/M emulator.
 """
 
 import os
@@ -122,3 +124,47 @@ def test_mbasic2025_keyword_table():
     assert _bytes(rel).hex() == 'bdbcd3474e'
     _, rel = _asm(rdc + "\tdb\t'>'+80h\n\trdc\t<!=>\n\tdb\t'<'+80h\n\trdc\t<SGN>\n\tend\n")
     assert _bytes(rel).hex() == 'bebdbcd3474e'
+
+
+# A quoted string in an IRP list or a macro argument, as M80 3.44 reads it:
+# the brackets, commas and '!' inside it are text.  um80 0.3.49 kept those,
+# except that it dropped a '!' in a macro argument; the first fix of the
+# bracket matching counted a '>' inside a string and dropped every '!'.
+MM = "mm\tmacro\tq\n\tdb\tq\n\tendm\n"
+MM2 = "mm\tmacro\tp,q\n\tdb\tp,q\n\tendm\n"
+LST = "lst\tmacro\tl\n\tirp\tx,<l>\n\tdb\tx\n\tendm\n\tendm\n"
+STRING_CASES = {
+    "irp <'Hi!'>": (_irp("<'Hi!'>"), '486921ff'),
+    'irp <"Hi!">': (_irp('<"Hi!">'), '486921ff'),
+    "irp <'!'>": (_irp("<'!'>"), '21ff'),
+    "irp <'a>b'>": (_irp("<'a>b'>"), '613e62ff'),
+    'irp <"a>">': (_irp('<"a>">'), '613eff'),
+    "irp <'>'>": (_irp("<'>'>"), '3eff'),
+    "irp <'<',2>": (_irp("<'<',2>"), '3c02ff'),
+    "irp <'a!>b'>": (_irp("<'a!>b'>"), '61213e62ff'),
+    "irp <'a!,b',3>": (_irp("<'a!,b',3>"), '61212c6203ff'),
+    "irp <<'a>b'>,2>": (_irp("<<'a>b'>,2>"), '613e6202ff'),
+    "irp <'it''s'>": (_irp("<'it''s'>"), '69742773ff'),
+    "irp <'Error!','Ok'>": (_irp("<'Error!','Ok'>"), '4572726f72214f6bff'),
+    # The list is a and a quote; um80 warns about the 'b> it ignores.
+    "irpc <a'>'b>": ("\tirpc\tc,<a'>'b>\n\tdb\t1\n\tendm\n\tdb\t0FFh\n\tend\n", '0101ff'),
+    "irpc <'!'>": ("\tirpc\tc,<'!'>\n\tdb\t1\n\tendm\n\tdb\t0FFh\n\tend\n", '010101ff'),
+    "mm <'Hi!'>": (MM + "\tmm\t<'Hi!'>\n\tend\n", '486921'),
+    "mm 'Hi!'": (MM + "\tmm\t'Hi!'\n\tend\n", '486921'),
+    "mm <'a!'>": (MM + "\tmm\t<'a!'>\n\tend\n", '6121'),
+    "mm 'a!',2": (MM2 + "\tmm\t'a!',2\n\tend\n", '612102'),
+    'mm <"x!y">': (MM + '\tmm\t<"x!y">\n\tend\n', '782179'),
+    "mm <'a>b'>": (MM + "\tmm\t<'a>b'>\n\tend\n", '613e62'),
+    "lst <'Hi!','a>b'>": (LST + "\tlst\t<'Hi!','a>b'>\n\tdb\t0FFh\n\tend\n",
+                          '486921613e62ff'),
+}
+
+
+@pytest.mark.parametrize('name', list(STRING_CASES))
+def test_quoted_string_is_text(name):
+    """M80's bytes for a quoted string in an IRP list or a macro argument."""
+    source, expect = STRING_CASES[name]
+    asm, rel = _asm(source)
+    assert _bytes(rel).hex() == expect
+    assert not asm.warnings or name.startswith('irpc <a'), asm.warnings
+
