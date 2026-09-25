@@ -155,3 +155,25 @@ def test_an_irp_body_string_follows_m80_or_rmac():
            "\tIRPC\tX,K\n\tDB\t'X&'\n\tENDM\n")
     assert _code(src) == '4b20264b' '5826'
     assert _code(src, dri=True) == '4b204b' '4b'
+
+
+@BOTH
+def test_a_local_name_is_read_as_a_parameter(dri):
+    # M80, MAC and RMAC read a LOCAL name as they read a parameter: L? and
+    # ?L are local names (um80: "Symbol 'L?' multiply defined"), and the
+    # text of an argument is not matched again - `MM LL' with LOCAL LL and
+    # `DB P' is the LL outside the macro, 33H (um80 made it the local LL:
+    # 00 and 01).  33 01 01 01 02 01, 33 01 07 01 08 01, then 01 33 00 02.
+    src = ("LL\tEQU\t33H\n"
+           "MM\tMACRO\tP\n\tLOCAL\tLL,L?,?L\nLL:\tDB\tP\nL?:\tDB\t1\n"
+           "?L:\tDW\tL?,?L\n\tENDM\n\tMM\tLL\n\tMM\tLL\n"
+           "MQ\tMACRO\tP\n\tLOCAL\tLL\nLL:\tDB\t1\n\tDW\tP\n\tENDM\n"
+           "\tMQ\t<LL>\nLL2:\tDB\t2\n")
+    assert _code(src, dri=dri) == ('330101010201' '330107010801' '01330002')
+
+
+def test_a_local_name_in_a_string():
+    # `'&L'' is the local's unique name: M80's is ..0000, MAC's ??0001,
+    # um80's L?0001.  um80 left '&L'.
+    assert bytes.fromhex(_code("MM\tMACRO\n\tLOCAL\tL\nL:\tDB\t'&L','L'\n"
+                               "\tENDM\n\tMM\n")) == b"L?0001L"

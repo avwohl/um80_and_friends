@@ -147,6 +147,15 @@ LINK-80 3.44 under cpmemu, and each has a regression test that fails on
   `K`; M80 and MAC `X`), inside longer names (`'A&XB'` gave `AKB`, `?X`
   `?K`), and left the `&` of `X&B`, a parse error.
 
+- um80 assembler: a `LOCAL` name is now read as MACRO-80, MAC and RMAC read
+  it, as a parameter of the macro. A local name with a `?` in it (`LOCAL
+  L?,?L`, as DRI's `SEQIO.LIB` has `EOB?`) was not renamed, so the second
+  expansion defined it again. The text of an argument was renamed as if
+  the macro had written it: `MM LL`, with `LOCAL LL` and `DB P` in the body,
+  read the local `LL`, not the `LL` outside (M80 and MAC: 33H there, um80
+  the local's address). And `'&L'` in a string is now the unique name, as
+  in M80 (`..0000`) and MAC (`??0001`); um80's is `L?0001`.
+
 ## [0.3.50] - 2026-09-25
 
 mbasic2025 (https://github.com/avwohl/mbasic2025) rebuilds historic Microsoft

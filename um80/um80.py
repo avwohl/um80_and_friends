@@ -4149,20 +4149,6 @@ class Assembler:
                 i += 1
         return spans
 
-    def _sub_outside_strings(self, line, pattern, repl):
-        """Apply pattern.sub(repl, ...) only outside quoted string literals."""
-        spans = self._string_spans(line)
-        if not spans:
-            return pattern.sub(repl, line)
-        result = []
-        pos = 0
-        for (s, e) in spans:
-            result.append(pattern.sub(repl, line[pos:s]))
-            result.append(line[s:e])
-            pos = e
-        result.append(pattern.sub(repl, line[pos:]))
-        return ''.join(result)
-
     def substitute_macro_params(self, line, subst):
         """`line' with each name in `subst' replaced by its text.
 
@@ -4183,6 +4169,11 @@ class Assembler:
         too (`'X&B'' is KB), and every such `&' goes.  Names fold case here
         too, as in M80 and RMAC 1.1; MAC 2.0 matches a string as written,
         so `'&abc'' is not its parameter ABC.
+
+        A LOCAL name is in subst too, with its unique name: M80 and MAC read
+        it as a parameter, so `'&L'' is the unique name, `L?:' with LOCAL
+        L? is one, and an argument's text is not matched again (`MM LL'
+        with LOCAL LL and `DB P' is the LL outside the macro).
         """
         table = {name.upper(): text for name, text in subst.items() if name}
         if not table:
@@ -4386,14 +4377,11 @@ class Assembler:
                 # repeat when it runs, not the macro now.
                 break
 
-            # Substitute parameters (M80 '&' concatenation, string-aware).
-            expanded = self.substitute_macro_params(body_line, subst)
-
-            # Replace local symbols with unique versions (outside strings only).
-            for local_sym in local_syms:
-                pat = re.compile(r'\b' + re.escape(local_sym) + r'\b', re.IGNORECASE)
-                expanded = self._sub_outside_strings(
-                    expanded, pat, local_sym + local_suffix)
+            # Parameters and LOCAL names, in one pass, as M80 reads a LOCAL
+            # name as a parameter: an argument's text is not read again.
+            names = {sym: sym + local_suffix for sym in local_syms}
+            names.update(subst)
+            expanded = self.substitute_macro_params(body_line, names)
 
             # Process the expanded line
             self.process_line(expanded)
