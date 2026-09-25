@@ -20,6 +20,13 @@ LINK-80 3.44 under cpmemu, and each has a regression test that fails on
   A string of the bytes `a`, C1H and `b` is now 41H in the middle, as in
   M80, not FDH. This applies to the source, to `INCLUDE`/`MACLIB` files and
   to `--pre` files.
+- um80 assembler: the name of an `EQU`, `SET`, `DEFL`, `ASET` or `MACRO` no
+  longer has to be in column 1. M80, MAC and RMAC all take
+  `<TAB>FOO<TAB>EQU 5`, even when FOO is also an instruction or a macro;
+  um80 stopped with "Unknown instruction or directive: FOO". MP/M II's
+  `MPMLDR/LDRBDOS.ASM` has `<TAB>arech  equ b! arecl  equ c`. A macro
+  defined inside a macro with its name indented was not seen as nested, so
+  its `ENDM` ended the outer macro; it is now nested, as in M80.
 
 ## [0.3.50] - 2026-09-25
 

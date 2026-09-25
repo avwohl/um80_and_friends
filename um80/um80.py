@@ -1489,6 +1489,17 @@ class Assembler:
                     # Not a directive, treat as label (M80 allows labels without colons at col 1)
                     label = match.group(1)
                     line = stripped[match.end():]
+        else:
+            # The name of an EQU, SET, DEFL, ASET or MACRO need not be in
+            # column 1: MACRO-80, MAC and RMAC all take `<TAB>FOO<TAB>EQU 5',
+            # even where FOO is also an instruction or a macro.  MP/M II's
+            # MPMLDR/LDRBDOS.ASM has `<TAB>arech  equ b! arecl  equ c'.
+            match = re.match(r'^([$A-Za-z_@?][A-Za-z0-9_@?$.]*)\s+'
+                             r'(?:EQU|SET|DEFL|ASET|MACRO)(?![A-Za-z0-9_@?$.])',
+                             stripped, re.IGNORECASE)
+            if match:
+                label = match.group(1)
+                line = stripped[match.end(1):]
 
         if not line.strip():
             return (label, None, None, comment)
