@@ -348,6 +348,7 @@ class Assembler:
         self.block_open_line = 0  # Line of the MACRO/REPT/IRP/IRPC still open
 
         self.entry_point = None  # END address if specified
+        self.ended = False  # an END was assembled: the source ends there
         self.module_name = None   # from NAME('...')
         self.title_name = None    # from TITLE, which NAME overrides
 
@@ -3528,6 +3529,10 @@ class Assembler:
             if ops:
                 ev = self.number_operand(ops[0], 'END')
                 self.entry_point = (ev.value & 0xFFFF, ev.seg)
+            # The end of the source: MACRO-80, MAC and RMAC read no further,
+            # from a macro, a REPT or an INCLUDE file too.  um80 went on,
+            # and assembled what followed.
+            self.ended = True
             return True
 
         # Conditional assembly
@@ -3973,6 +3978,8 @@ class Assembler:
                 self._process_single_statement(read(statements[0]))
                 # Process subsequent statements (they can't have labels from original line)
                 for stmt in statements[1:]:
+                    if self.ended:
+                        break
                     # Add leading space to prevent treating first word as label
                     if stmt and not stmt[0].isspace():
                         stmt = '        ' + stmt.strip()
@@ -3984,7 +3991,7 @@ class Assembler:
         tail, self.repeat_line_tail = self.repeat_line_tail, None
         if tail is not None:
             for stmt in self.split_on_exclamation(tail):
-                if stmt.strip():
+                if stmt.strip() and not self.ended:
                     self._process_single_statement(read('        ' + stmt.strip()))
 
     def _process_single_statement(self, line):
@@ -4371,6 +4378,8 @@ class Assembler:
         # Expand body lines with parameter substitution
         self.macro_level += 1
         for body_line in macro.body:
+            if self.ended:
+                break
             # Check for LOCAL directive
             label, op, opnds, comment = self.parse_line(body_line)
             if op and op.upper() == 'LOCAL':
@@ -4436,6 +4445,8 @@ class Assembler:
         repeat is being collected) and not inside a false conditional branch.
         """
         for line in body:
+            if self.ended:
+                return True
             expanded = line
             if iter_var and value is not None:
                 expanded = expanded.replace(f'&{iter_var}', value)
@@ -4497,6 +4508,8 @@ class Assembler:
 
             # Process each line
             for line in lines:
+                if self.ended:
+                    break
                 self.process_line(line)
 
         except IOError as e:
@@ -4546,7 +4559,10 @@ class Assembler:
             self.current_common = None
             self.rel_common = None  # no COMMON block selected in the .REL yet
 
+        self.ended = False
         for line in lines:
+            if self.ended:
+                break
             self.process_line(line)
 
         # An IF/IFx/COND left open at end of pass is an error (M80 reports

@@ -430,7 +430,7 @@ For more details on these extensions and compatibility notes, see [docs/EXTENSIO
 
 ## Testing
 
-The test suite (584 tests) runs under `pytest`:
+The test suite (592 tests) runs under `pytest`:
 
 ```bash
 pip install -e ".[dev]"
@@ -466,6 +466,7 @@ Digital Research's MAC 2.0 and RMAC 1.1:
 | `test_equ_name_column.py` | (DRI) The name of an `EQU`, `SET`, `DEFL`, `ASET` or `MACRO` may be indented |
 | `test_register_values.py` | (DRI) A register operand is an expression and a register name its number: `RD EQU D` / `DAD RD` is `DAD D`; an odd register pair is an error; an address is its offset, as in M80 |
 | `test_dri_names.py` | (DRI) `--dri` ignores a `$` inside a name, as MAC and RMAC do, but not in a macro call's arguments or an `IRP`/`IRPC` list; without it `$` is part of the name, as in M80 |
+| `test_end_directive.py` | (DRI) Nothing after `END` is assembled - the rest of the file, a macro, a `REPT`, an `INCLUDE` file - as in M80, MAC and RMAC |
 | `test_column_one.py` | (DRI) An instruction, directive or macro in column 1 is one; a statement of values is a `DB` and a label needs a colon, as in M80; with `--dri` a word with no colon is a label and a line number or a `*` line is ignored, as in MAC |
 
 Further tests cover the toolchain more broadly: `test_ds_org.py` (DS/ORG and

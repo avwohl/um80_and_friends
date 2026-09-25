@@ -74,6 +74,12 @@ LINK-80 3.44 under cpmemu, and each has a regression test that fails on
   in the expansion. The name in front of an `EQU`, `SET`, `DEFL`, `ASET` or
   `MACRO` is still a name, in any column (`NOP EQU 5` defines `NOP`, as in
   M80).
+- um80 assembler: `END` ends the source, as in MACRO-80, MAC and RMAC,
+  which read nothing after it - not the rest of the file, nor the rest of a
+  macro, a `REPT` or an `INCLUDE` file that has one. um80 went on and
+  assembled what followed (`DB 1 / END / DB 2` was 01 02), and a label
+  after the `END` was defined, where all three report it undefined. An `END`
+  in a false `IF` is still skipped.
 - um80 assembler: a statement whose first word is no instruction, directive
   or macro is a list of values assembled as `DB`, as in M80: after `FOO EQU
   5`, `FOO` is the byte 05, `FOO+1,'AB'` is 06 41 42 and `LAB: 5,6` is 05 06.
