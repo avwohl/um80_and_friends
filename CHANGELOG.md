@@ -323,6 +323,11 @@ on 0.3.50.
   B,2` is an error (MAC: `S`, 3E 01), not 3E 01 06 02. Where MAC takes the
   line's own CR for that line feed, the next line starts with a line feed,
   which MAC flags `S`, and so does um80. Without `--dri` nothing changes.
+- um80 assembler: an empty macro argument, `IRP` item or `IRPC` character
+  that a quoted string in the body takes (`'Z&P'`) is now a 00 byte there,
+  as in MACRO-80, which passes an empty argument as a 00: `'Z&P'` is 5A 00,
+  and `IRP P,<A;;B>` with `DB '&P'` is 41 00 42 (um80: 5A, and 41 42). MAC
+  and RMAC pass nothing (5A), and so does um80 with `--dri`.
 
 ## [0.3.50] - 2026-09-25
 

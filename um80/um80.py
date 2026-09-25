@@ -4835,7 +4835,9 @@ class Assembler:
                 out.append(self._substitute_names(line[i:j], table))
                 i = j
             elif i in names:
-                out.append(names[i][1])
+                # M80 passes an empty argument as a 00 byte, which a
+                # string keeps: `'Z&P'' is 5A 00 (MAC and RMAC: 5A).
+                out.append(names[i][1] or ('\x00' if inside[i] else ''))
                 i = names[i][0]
             else:
                 if i not in drop:

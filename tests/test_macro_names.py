@@ -234,3 +234,36 @@ def test_a_local_name_in_a_string():
     # um80's L?0001.  um80 left '&L'.
     assert bytes.fromhex(_code("MM\tMACRO\n\tLOCAL\tL\nL:\tDB\t'&L','L'\n"
                                "\tENDM\n\tMM\n")) == b"L?0001L"
+
+
+# An empty argument.  MACRO-80 3.44 passes a macro argument, an IRP item or
+# an IRPC character that is empty as a 00 byte, which a string keeps:
+# `'Z&P'' is 5A 00.  MAC and RMAC pass nothing (5A), and so did um80 in
+# either mode - so `IRP P,<A;;B>' with `DB '&P'' was 41 42, where M80
+# assembles 41 00 42.
+EMPTY_ARGUMENT = [
+    ("MM\tMACRO\tP\n\tDB\t'Z&P'\n\tENDM\n\tMM\n", '5a00', '5a'),
+    ("MM\tMACRO\tP\n\tDB\t'Z&P'\n\tENDM\n\tMM\t<>\n", '5a00', '5a'),
+    ("MM\tMACRO\tP\n\tDB\t'Z','&P','Y'\n\tENDM\n\tMM\n", '5a0059', '5a59'),
+    ("MM\tMACRO\tP\n\tDB\t'A&P&B'\n\tENDM\n\tMM\n", '410042', '4142'),
+    ("MM\tMACRO\tP,Q\n\tDB\t'Z&P'\n\tDB\t'Y&Q'\n\tENDM\n\tMM\t,X\n",
+     '5a005958', '5a5958'),
+    ("\tIRP\tP,<A,>\n\tDB\t'&P&P'\n\tENDM\n", '41410000', '4141'),
+    ("\tIRP\tP,<>\n\tDB\t'Z&P'\n\tENDM\n", '5a00', '5a'),
+    ("MM\tMACRO\tP\n\tIRPC\tC,P\n\tDB\t'Z&C'\n\tENDM\n\tENDM\n\tMM\n", '5a00', '5a'),
+    # Not empty: a blank, and a quote.
+    ("MM\tMACRO\tP\n\tDB\t'Z&P'\n\tENDM\n\tMM\t< >\n", '5a20', '5a20'),
+    ("MM\tMACRO\tP\n\tDB\t'Z&P'\n\tENDM\n\tMM\t''\n", '5a27', '5a27'),
+]
+
+
+@pytest.mark.parametrize('source, m80, mac', EMPTY_ARGUMENT)
+def test_an_empty_argument_in_a_string(source, m80, mac):
+    assert _code(source) == m80
+    assert _code(source, dri=True) == mac
+
+
+def test_m80_an_empty_irp_item_in_a_string():
+    # The gate's repro: M80 41 00 42, and 31 00 32.
+    assert _code("\tIRP\tP,<A;;B>\n\tDB\t'&P'\n\tENDM\n") == '410042'
+    assert _code("\tIRP\tP,<1,;2>\n\tDB\t'&P'\n\tENDM\n") == '310032'
