@@ -43,21 +43,25 @@ Checked against the genuine L80 under a CP/M emulator.
 
 ### Command-Line Control
 
-Use `-t` or `--truncate` to disable extended format and truncate symbols to 8 characters (M80-compatible mode):
+Use `-t` or `--truncate` to disable extended format and cut every name in the
+.REL - PUBLIC, EXTRN, module name - to 6 characters, as MACRO-80 3.44 does:
 
 ```bash
-um80 -t program.mac          # Truncate symbols to 8 chars
+um80 -t program.mac          # Names cut to 6 chars, as M80
 um80 --truncate program.mac  # Same as above
 um80 program.mac             # Default: allow long symbols
 ```
 
 This is useful when:
-- Debugging symbol resolution issues
+- Linking with objects that the genuine M80 assembled: M80 writes the PUBLIC
+  `FBUFP27` as `FBUFP2`, and a module that um80 assembled without `-t` asks
+  for `FBUFP27`, which neither LINK-80 nor ul80 then finds
 - Comparing behavior with original tools
 
 For objects the original Microsoft L80 is to read, keep symbols to 7
-characters (6 for an external used in a link-time expression): `-t` still
-allows 8, which L80 refuses.
+characters (6 for an external used in a link-time expression), or use `-t`.
+(Up to 0.3.49, `-t` cut names to 8 characters, which neither M80 nor L80
+does: L80 refuses an 8-character name.)
 
 ---
 

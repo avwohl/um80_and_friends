@@ -178,7 +178,7 @@ class Assembler:
                  strict_jr=False):
         self.symbols = {}  # Symbol table
         self.export_all_symbols = export_all_symbols  # -g flag: export all as PUBLIC
-        self.truncate_symbols = truncate_symbols  # -t flag: truncate symbols to 8 chars
+        self.truncate_symbols = truncate_symbols  # -t flag: names cut to 6 chars, as M80
         self.strict_jr = strict_jr  # --strict flag: error on out-of-range JR instead of promoting to JP
         self.promoted_jr = set()  # Line numbers where JR/DJNZ was promoted to JP
         self.macros = {}   # Macro definitions
@@ -4598,7 +4598,7 @@ def main():
     parser.add_argument('-g', '--globals', action='store_true',
                         help='Export all symbols as PUBLIC (for debug symbol files)')
     parser.add_argument('-t', '--truncate', action='store_true',
-                        help='Truncate symbols to 8 chars (M80 compatible)')
+                        help='Cut PUBLIC, EXTRN and module names to 6 characters, as M80 does')
     parser.add_argument('--aseg', action='store_true',
                        help='Assemble as absolute code, the way DRI\'s MAC does: '
                             'the file starts in ASEG, so ORG is an absolute address')

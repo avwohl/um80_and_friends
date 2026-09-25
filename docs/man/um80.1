@@ -41,6 +41,11 @@ Export all defined symbols as PUBLIC. This is useful for generating complete sym
 files for debugging. The linker can then output all symbols with their final
 relocated addresses using the \fB\-S\fR option.
 .TP
+.B \-t\fR, \fB\-\-truncate
+Cut every PUBLIC, EXTRN and module name in the .REL file to 6 characters, as
+MACRO-80 does. Use it for an object that is to be linked with objects that
+M80 assembled, when a PUBLIC or EXTRN name is longer than 6 characters.
+.TP
 .BI \-D " SYMBOL" [= VALUE ]
 Define a symbol before assembly begins. If no value is given, the symbol is
 defined with value 1. Can be specified multiple times.
@@ -264,6 +269,8 @@ Symbol names are converted to uppercase.
 The .REL file format is binary-compatible with the original: LINK-80 3.44
 loads um80's objects. LINK-80 refuses a symbol of more than 7 characters
 (more than 6 for an external inside a link-time expression), which um80
-writes in an extended form only ul80 reads; M80 itself keeps 6.
+writes in an extended form only ul80 reads; M80 itself keeps 6, as
+.B \-t
+does.
 .SH AUTHOR
 um80 project contributors.

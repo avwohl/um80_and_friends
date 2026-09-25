@@ -36,7 +36,7 @@ um80 program.mac                    # Creates program.rel
 um80 -o output.rel program.mac      # Specify output name
 um80 -l listing.prn program.mac     # Generate listing file
 um80 -g program.mac                 # Export all symbols as PUBLIC (for debug)
-um80 -t program.mac                 # Truncate symbols to 8 chars
+um80 -t program.mac                 # Cut symbol names to 6 chars, as M80 does
 um80 -e ".z80" program.mac          # Execute code before source (set Z80 mode)
 um80 --pre macros.mac program.mac   # Include file before source
 um80 --aseg program.asm             # Absolute, like DRI's MAC: ORG is an address
@@ -281,7 +281,7 @@ The original Microsoft REL format limits symbol names to 8 characters (and LINK-
 - Long descriptive symbol names in modern code
 - Compatibility with source code written for other assemblers
 
-Use `-t` or `--truncate` to cut symbols to 8 characters. For objects the original LINK-80 is to read, keep names to 7 characters (6 for an external used in a link-time expression).
+Use `-t` or `--truncate` to cut symbol names to 6 characters, as MACRO-80 does. An object that is to be linked with objects that M80 assembled needs it if a PUBLIC or EXTRN name is longer than 6 characters: M80 writes `FBUFP27` as `FBUFP2`. For objects that the original LINK-80 is to read, keep names to 7 characters (6 for an external used in a link-time expression), or use `-t`.
 
 See [docs/EXTENSIONS.md](docs/EXTENSIONS.md) for technical details on the extended REL format.
 

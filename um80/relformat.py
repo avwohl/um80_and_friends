@@ -267,12 +267,20 @@ EXT_OP_NAMES = {
 }
 
 
+# MACRO-80 3.44 keeps the first six characters of a name: PUBLIC FBUFP27 is
+# FBUFP2 in its .REL, and in the .REL of the module that uses it.  um80 -t
+# does the same, so its objects link with M80's (um80 otherwise writes the
+# whole name, and a 7-character one did not match M80's six).
+SYMBOL_CHARS_M80 = 6
+
+
 class RELWriter:
     """Write Microsoft REL format relocatable object files."""
 
     def __init__(self, truncate_symbols=False):
         self.bits = BitWriter()
-        self.truncate_symbols = truncate_symbols  # If True, truncate to 8 chars like M80
+        # If True, cut every name to the six characters MACRO-80 keeps.
+        self.truncate_symbols = truncate_symbols
         # A set-location item held back until another item is written
         # (defer_set_location()).
         self.deferred_loc = None
@@ -350,7 +358,8 @@ class RELWriter:
     def _write_b_field(self, name):
         """Write B-field: 3-bit length + characters.
 
-        Extended format for symbols > 8 chars (unless truncate_symbols is set):
+        Extended format for symbols > 8 chars (unless truncate_symbols is set,
+        which cuts every name to 6 characters, as MACRO-80 3.44 does):
         - 3-bit length = 0
         - First byte = 0xFF (marker for extended mode)
         - Second byte = actual length (9-255)
@@ -359,8 +368,7 @@ class RELWriter:
         name = name.upper()
 
         if self.truncate_symbols:
-            # M80 compatible: truncate to 8 chars
-            name = name[:8]
+            name = name[:SYMBOL_CHARS_M80]
 
         length = len(name)
 
@@ -475,7 +483,7 @@ class RELWriter:
         """Extension item 'B': push the value of external symbol `name'."""
         name = name.upper()
         if self.truncate_symbols:
-            name = name[:8]
+            name = name[:SYMBOL_CHARS_M80]
         self.write_extension(bytes([EXT_ITEM_SYMBOL]) + name.encode('ascii'))
 
     def write_ext_value(self, addr_type, value):
