@@ -250,6 +250,45 @@ def test_m80_a_close_bracket_that_is_text_ends_nothing(call, m80):
     assert code == m80 and warnings == []
 
 
+# A parenthesis in a macro call's arguments is text to MACRO-80 3.44, MAC
+# 2.0 and RMAC 1.1: a comma inside one ends the argument, so `MM (A,B),C'
+# passes `(A', `B)' and C.  um80 kept such a comma in the argument, and a
+# `)' with no `(' (`MM A),B,C') or a `(' with no `)' (`MM A(B,C') stopped
+# every later comma from ending one, with or without --dri, without a word.
+# M80 puts a 00 in a string for an empty argument, MAC and RMAC nothing.
+@BOTH
+@pytest.mark.parametrize('call, m80, mac', [
+    ('(A,B),C', 'ee5a2841ee594229ee5843', None),              # (A, B), C
+    ('((A,B),C),D', 'ee5a282841ee594229ee584329', None),       # ((A, B), C)
+    ('A(B,C)D,E', 'ee5a412842ee59432944ee5845', None),        # A(B, C)D, E
+    ('A((B,C)),D', 'ee5a41282842ee59432929ee5844', None),
+    ('A),B,C', 'ee5a4129ee5942ee5843', None),                 # A), B, C
+    ('A),(B,C', 'ee5a4129ee592842ee5843', None),
+    ('A(B,C', 'ee5a412842ee5943ee5800', 'ee5a412842ee5943ee58'),
+    ('A,(B,C', 'ee5a41ee592842ee5843', None),
+])
+def test_a_comma_in_parentheses_ends_a_macro_argument(dri, call, m80, mac):
+    ok, code, errors, warnings = _assemble(THREE_TEXT + "\tMM\t" + call + "\n",
+                                           dri=dri)
+    assert ok, errors
+    assert code == (mac or m80 if dri else m80) and warnings == []
+
+
+@BOTH
+@pytest.mark.parametrize('call, expect', [
+    ('(1),2', 'ee01ee02'),
+    ('(1+2)*2,3', 'ee06ee03'),
+    ('%(1+2),3', 'ee03ee03'),
+    ('%(1+(2)),3', 'ee03ee03'),
+    ('%(1),(2)', 'ee01ee02'),
+])
+def test_an_argument_in_parentheses_is_as_before(dri, call, expect):
+    # The same bytes in M80, MAC and RMAC.
+    ok, code, errors, warnings = _assemble(TWO + "\tMM\t" + call + "\n", dri=dri)
+    assert ok, errors
+    assert code == expect and warnings == []
+
+
 # The items of an IRP list.  MACRO-80 3.44 ends an item at a `,', a `;', a
 # blank or a tab, and skips the blanks in front of one.  4558825 made a `;'
 # inside the list's <...> text, so `IRP P,<A;B;C>' went round once, with

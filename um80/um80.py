@@ -1919,6 +1919,13 @@ class Assembler:
         delimiter (M80 macro syntax). The '!' is retained in the returned
         argument for process_macro_argument() to consume (issue #3).
 
+        A parenthesis is text in a macro call's arguments (escape_bang), as
+        in MACRO-80, MAC and RMAC: a comma inside one ends the argument, so
+        `MM (A,B),C' passes `(A', `B)' and C.  um80 kept the comma in the
+        argument - `(A,B)' and C - and a `)' with no `(' (`MM A),B,C') took
+        the depth below 0, and a `(' with no `)' (`MM A(B,C') kept it above,
+        so no later comma ended an argument, without a word.
+
         In a macro call's arguments (escape_bang) a '>' with no '<' open
         before it closes nothing.  MAC and RMAC (--dri) read it as text:
         `MM 1>2,3' passes `1>2' and 3.  MACRO-80 ends the argument there,
@@ -1961,10 +1968,10 @@ class Assembler:
                     in_string = True
                     string_char = ch
                     current += ch
-            elif ch == '(':
+            elif ch == '(' and not escape_bang:
                 paren_depth += 1
                 current += ch
-            elif ch == ')':
+            elif ch == ')' and not escape_bang:
                 paren_depth -= 1
                 current += ch
             elif ch == '<' and angles:

@@ -340,6 +340,14 @@ on 0.3.50.
   `MM A>,B` A, an empty argument and B, and `MM <A>>B` A and B. Without
   `--dri` um80 now does the same, and warns; it had passed `1>2,3`, an
   error, or `A>B` (`MM <A>>B`) without a word.
+- um80 assembler: a comma inside parentheses in a macro call's arguments now
+  ends the argument, as in MACRO-80, MAC and RMAC, to which a parenthesis
+  there is text: `MM (A,B),C` passes `(A`, `B)` and C. um80 kept the comma
+  in the argument (`(A,B)` and C), and a `)` with no `(` or a `(` with no
+  `)` stopped every later comma from ending an argument: `MM A),B,C` passed
+  the one argument `A),B,C`, and `MM A(B,C` `A(B,C`, where the three tools
+  pass `A)`, B and C, and `A(B` and C - with or without `--dri`, without a
+  word. The operands of every other statement keep their parentheses.
 
 ## [0.3.50] - 2026-09-25
 
