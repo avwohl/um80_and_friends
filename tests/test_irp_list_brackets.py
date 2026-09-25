@@ -168,3 +168,81 @@ def test_quoted_string_is_text(name):
     assert _bytes(rel).hex() == expect
     assert not asm.warnings or name.startswith('irpc <a'), asm.warnings
 
+
+# DRI writes a whole repeat block on one line, `IRPC C,AB ! DB '&C' ! ENDM':
+# '!' separates statements.  M80 ignores the text after the list, so it takes
+# the rest of the file for the block's body and assembles nothing after it.
+# um80 0.3.49 split the line at every '!'; now a '!' inside the list is M80's
+# and one after it is DRI's.
+DRI_CASES = {
+    "irpc c,ab ! db '&c' ! endm": ("\tirpc\tc,ab ! db '&c' ! endm\n\tdb\t0FFh\n\tend\n", '6162ff'),
+    'irp x,<1,2> ! db x ! endm': ("\tirp\tx,<1,2> ! db x ! endm\n\tdb\t0FFh\n\tend\n", '0102ff'),
+    "irp x,<'a!',2>!db x!endm": ("\tirp\tx,<'a!',2>!db x!endm\n\tdb\t0FFh\n\tend\n", '612102ff'),
+    "irpc c,<a!b> ! db '&c' ! endm": ("\tirpc\tc,<a!b> ! db '&c' ! endm\n\tdb\t0FFh\n\tend\n",
+                                      '612162ff'),
+}
+
+
+@pytest.mark.parametrize('name', list(DRI_CASES))
+def test_dri_statements_after_the_list(name):
+    """A '!' after the list starts a DRI statement, as in um80 0.3.49."""
+    source, expect = DRI_CASES[name]
+    asm, rel = _asm(source)
+    assert _bytes(rel).hex() == expect
+    assert not asm.warnings
+
+
+def test_unbracketed_irpc_text_after_string_warns():
+    """M80 ignores the text after an unbracketed IRPC string; um80 warns."""
+    asm, rel = _asm(_irpc('a b'))
+    assert _bytes(rel).hex() == '61ff'
+    assert any("'b' after it is ignored" in w for w in asm.warnings), asm.warnings
+
+
+@pytest.mark.parametrize('source,kind', [
+    ("\tirpc\tc,ab\n\tdb\t1\n\tend\n", 'IRPC'),
+    ("\tirp\tx,<1,2>\n\tdb\tx\n\tend\n", 'IRP'),
+    ("\trept\t2\n\tdb\t1\n\tend\n", 'REPT'),
+    ("mm\tmacro\n\tdb\t1\n\tend\n", 'MACRO MM'),
+])
+def test_block_without_endm_warns(source, kind):
+    """M80: "Unterminated REPT/IRP/IRPC/MACRO".  um80 said nothing and wrote
+    an empty module: every line after the block had become its body."""
+    asm, rel = _asm(source)
+    assert _bytes(rel) == b''
+    assert any(f'Unterminated {kind} (line 1)' in w for w in asm.warnings), asm.warnings
+
+
+@pytest.mark.parametrize('source,expect', [
+    ("\tdb\t1\n\tirpc\tc,ab\n\tdb\t2\n\tend\n", '01'),
+    ("\tdb\t1\nmm\tmacro\n\tdb\t2\n\tend\n", '01'),
+    ("\tdb\t1,2\n\trept\t2\n\tdb\t3\n\tend\n", '0102'),
+])
+def test_code_before_an_unterminated_block(source, expect):
+    """The block was still open when pass 2 began, so pass 2 took the lines
+    before it as its body too and the module came out empty.  M80: 01."""
+    asm, rel = _asm(source)
+    assert _bytes(rel).hex() == expect
+    assert any('Unterminated' in w for w in asm.warnings), asm.warnings
+
+
+SMASK = ("smask\tmacro\thblk\n@y\tset\thblk\n@x\tset\t0\n\trept\t8\n\tif\t@y eq 1\n"
+         "\texitm\n\tendif\n@y\tset\t@y shr 1\n@x\tset\t@x+1\n\tendm\n\tendm\n")
+
+
+@pytest.mark.parametrize('source,expect', [
+    # CP/M 2.0's DEBLOCK.ASM computes log2 so (with `=' for `eq').
+    (SMASK + "\tdb\t0AAh\n\tsmask\t4\n\tdb\t@x\n\tsmask\t32\n\tdb\t@x\n\tend\n", 'aa0205'),
+    ("mm\tmacro\n\tirp\tx,<1,2,3>\n\tif\tx eq 3\n\texitm\n\tendif\n\tdb\tx\n\tendm\n"
+     "\tdb\t0FFh\n\tendm\n\tmm\n\tdb\t0EEh\n\tend\n", '0102ffee'),
+])
+def test_exitm_in_a_repeat_in_a_macro(source, expect):
+    """An EXITM in a REPT or IRP in a macro ends the repeat, as in M80.
+
+    The macro's expansion took it for its own EXITM while it was collecting
+    the repeat's body, so the repeat never got its ENDM and took the rest of
+    the file (0.3.49: an error in pass 2, or nothing assembled).
+    """
+    asm, rel = _asm(source)
+    assert _bytes(rel).hex() == expect
+    assert not any('Unterminated REPT' in w or 'Unterminated IRP' in w for w in asm.warnings)

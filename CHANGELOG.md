@@ -60,11 +60,24 @@ results.
   `IRP X,<1,2>,3` is 1 and 2. In an `IRP` list, a `>`, `<`, `,` or `!` inside
   a quoted string is text, as in M80 (`IRP X,<'A>B','<',2>` is `'A>B'`, `'<'`
   and 2); in an `IRPC` list a quote is an ordinary character.
-- um80 assembler: a `!` in an `IRP` or `IRPC` line was taken as DRI's
+- um80 assembler: a `!` in an `IRP` or `IRPC` list was taken as DRI's
   statement separator, so `IRPC C,<!>` became `IRPC C,<` and a stray `>`
   line. In an `IRPC` list a `!` is an ordinary character. In an `IRP` list it
   quotes the next character, as in a macro argument (`IRP X,<1!,2,3>` is `1,2`
-  and `3`). An unbracketed `IRPC` string ends at a blank (`IRPC C,A B` is `A`).
+  and `3`). An unbracketed `IRPC` string ends at a blank (`IRPC C,A B` is `A`),
+  and um80 warns about the text after it, which M80 ignores. After the list, a
+  `!` is still DRI's separator, so a whole block on one line,
+  `IRPC C,AB ! DB '&C' ! ENDM`, assembles as before.
+- um80 assembler: a `MACRO`, `REPT`, `IRP` or `IRPC` with no `ENDM` takes
+  every line after it as its body, so nothing after it is assembled, and um80
+  said nothing. It now warns, as MACRO-80 does ("Unterminated
+  REPT/IRP/IRPC/MACRO"). Worse, the block was still open when pass 2 began,
+  so pass 2 took the lines before it as its body too, and the module came
+  out empty. `DB 1` followed by an unterminated `IRPC` is now 01, as in M80.
+- um80 assembler: an `EXITM` in a `REPT`, `IRP` or `IRPC` inside a macro ended
+  the macro while the repeat's body was still being collected, so the repeat
+  never got its `ENDM` (`REPT 8 / IF @Y EQ 1 / EXITM / ENDIF / ... / ENDM`, the
+  log2 macro of CP/M 2.0's `DEBLOCK.ASM`). It now ends the repeat, as in M80.
 - um80 assembler: a `!` inside a quoted string in a macro argument was
   dropped: `MSG <'Hi!'>` and `MSG 'Hi!'` passed `'Hi'`. MACRO-80 keeps it, and
   now um80 does too, in a macro call and in an `IRP` list

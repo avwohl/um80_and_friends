@@ -193,6 +193,11 @@ with or without `-t`.
 - `.PRINTX /text/`: M80 prints the delimiters too.
 - um80 accepts some lines that M80 rejects: `NAME 'X'`, `IRP X,1,2` without
   brackets, the `SET` directive in `.Z80` mode, and one-operand `ADD A`.
+- A whole DRI repeat block on one line, `IRPC C,AB ! DB '&C' ! ENDM`: M80
+  ignores the text after the list, takes the rest of the file as the block's
+  body, and warns "Unterminated REPT/IRP/IRPC/MACRO". um80 assembles DRI's
+  statements, as 0.3.49 did. Inside the list, a `!` means what it means to
+  M80.
 
 ## Changes that mbasic2025 could make
 

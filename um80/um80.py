@@ -220,6 +220,8 @@ class Assembler:
         # REPT/IRP/IRPC state
         self.repeat_stack = []  # Stack of (type, count/list, body, iter_var)
         self.repeat_nest_depth = 0  # Nesting depth while collecting a repeat body
+        self.repeat_line_tail = None  # DRI '!' statements after an IRP/IRPC list
+        self.block_open_line = 0  # Line of the MACRO/REPT/IRP/IRPC still open
 
         self.entry_point = None  # END address if specified
         self.module_name = None   # from NAME('...')
@@ -3566,6 +3568,7 @@ class Assembler:
             if operands:
                 params = [p.strip().upper() for p in operands.split(',')]
             self.collecting_macro = label.upper()
+            self.block_open_line = self.line_num
             self.macro_params = params
             self.macro_body = []
             self.macro_nest_depth = 0
@@ -3592,6 +3595,7 @@ class Assembler:
                 self.error("REPT requires a count")
                 return True
             count = self.number_operand(ops[0], 'REPT').value & 0xFFFF
+            self.block_open_line = self.line_num
             self.repeat_stack.append(('REPT', count, [], None, label))
             return True
 
@@ -3613,6 +3617,7 @@ class Assembler:
                 # iterates once with an empty argument (matches real M80).
                 values = self.split_operands(inner, escape_bang=True) \
                     if inner.strip() else ['']
+            self.block_open_line = self.line_num
             self.repeat_stack.append(('IRP', values, [], param, label))
             return True
 
@@ -3625,7 +3630,11 @@ class Assembler:
             chars = self.repeat_list(operator, operands)
             if chars is None:
                 # No <...>: the string ends at a blank or a comma.
-                chars = re.split(r'[\s,]', operands.split(',', 1)[1].strip(), maxsplit=1)[0]
+                text = operands.split(',', 1)[1].strip()
+                chars = re.split(r'[\s,]', text, maxsplit=1)[0]
+                self._repeat_line_tail(text[len(chars):],
+                                       "IRPC string ends at a blank or a comma")
+            self.block_open_line = self.line_num
             self.repeat_stack.append(('IRPC', list(chars), [], param, label))
             return True
 
@@ -3706,9 +3715,17 @@ class Assembler:
         return i
 
     def _repeat_line_tail(self, tail, where):
-        """The text after an IRP or IRPC list on its line: M80 ignores it."""
+        """The text after an IRP or IRPC list on its line.
+
+        M80 ignores it, and um80 warns.  Text that starts with '!' is DRI's
+        statement separator instead - `IRPC C,AB ! DB '&C' ! ENDM', which
+        um80 0.3.49 assembled - and process_line() assembles the statements
+        after the IRP or IRPC line.  Inside the list a '!' is M80's.
+        """
         tail = tail.strip()
-        if tail and self.pass_num == 2:
+        if tail.startswith('!'):
+            self.repeat_line_tail = tail[1:]
+        elif tail and self.pass_num == 2:
             self.warning(f"{where}: '{tail}' after it is ignored")
 
     def _line_invokes_macro(self, line):
@@ -3753,6 +3770,12 @@ class Assembler:
                 return
         # Fall through to normal processing (single statement or macro/repeat body)
         self._process_single_statement(line)
+        # DRI statements after an IRP or IRPC list: `IRPC C,AB ! DB '&C' ! ENDM'.
+        tail, self.repeat_line_tail = self.repeat_line_tail, None
+        if tail is not None:
+            for stmt in self.split_on_exclamation(tail):
+                if stmt.strip():
+                    self._process_single_statement('        ' + stmt.strip())
 
     def _process_single_statement(self, line):
         """Process a single statement (internal helper for ! separator support)."""
@@ -4096,9 +4119,12 @@ class Assembler:
                     for sym in opnds.split(','):
                         local_syms.add(sym.strip().upper())
                 continue
-            if op and op.upper() == 'EXITM' and self.cond_false_depth == 0:
+            if (op and op.upper() == 'EXITM' and self.cond_false_depth == 0
+                    and not self.repeat_stack and self.collecting_macro is None):
                 # Exit macro expansion early. Ignored inside a false conditional
-                # branch (the canonical IF cond / EXITM / ENDIF idiom).
+                # branch (the canonical IF cond / EXITM / ENDIF idiom), and in
+                # a REPT/IRP/IRPC body being collected: that EXITM ends the
+                # repeat when it runs, not the macro now.
                 break
 
             # Substitute parameters (M80 '&' concatenation, string-aware).
@@ -4248,6 +4274,14 @@ class Assembler:
         # every label after it.  Exit 0, no diagnostic.
         self.z80_mode = False
         self.repeat_nest_depth = 0
+        # A MACRO, REPT, IRP or IRPC left open by the last pass must not
+        # swallow this one's lines as well.
+        self.repeat_stack = []
+        self.repeat_line_tail = None
+        self.collecting_macro = None
+        self.macro_params = []
+        self.macro_body = []
+        self.macro_nest_depth = 0
         self.phase = None
 
         # Reset segment locations for pass 2
@@ -4268,6 +4302,14 @@ class Assembler:
         # "Unterminated Conditional"). Report once, on the final pass.
         if self.cond_stack and pass_num == 2:
             self.warning("Unterminated conditional (missing ENDIF)")
+        # So is a MACRO, REPT, IRP or IRPC with no ENDM: every line after it
+        # became its body, and none of them was assembled.  M80 says
+        # "Unterminated REPT/IRP/IRPC/MACRO".
+        if pass_num == 2 and (self.repeat_stack or self.collecting_macro is not None):
+            kind = (f"MACRO {self.collecting_macro}" if self.collecting_macro is not None
+                    else self.repeat_stack[-1][0])
+            self.warning(f"Unterminated {kind} (line {self.block_open_line}): no ENDM,"
+                         " so nothing after it was assembled")
 
     def write_listing(self, filepath):
         """Write the listing file."""
