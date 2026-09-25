@@ -32,10 +32,26 @@ LINK-80 3.44 under cpmemu, and each has a regression test that fails on
   --aseg` assembles `MPMLDR/LDRBDOS.ASM` to the bytes at 0D00H-164CH of
   MPMLDR.COM (V2.0 and V2.1). `--dri` does not imply `--aseg` or `-t`;
   `docs/EXTENSIONS.md` says exactly what it changes.
+- um80 assembler: with `--dri`, the first word of a statement that is no
+  instruction, directive or macro is a label, colon or not, in any column, as
+  in MAC and RMAC: `OBP DS 1` (MP/M II's `UTIL3/GENHEX.ASM`), `<TAB>LAB NOP`,
+  and `HALT LXI H,1` in 8080 code. A line number in front of a statement
+  (`00010 LAB: NOP`), a line that starts with `*` (a `!` still ends it, as in
+  MAC) and MAC's assembly controls (`$-MACRO`) are ignored, as in MAC.
+- um80 assembler: M80's `$TITLE('text')` (a subtitle) and `$EJECT`. um80 took
+  `$TITLE` in column 1 for a label.
 - ul80 linker: `--fatal-mult-def` makes a global that more than one module
   defines an error: ul80 writes no output and exits 1 (see Changed).
 
 ### Changed
+- um80 assembler: a label needs a colon without `--dri`, as in MACRO-80 3.44,
+  which has no label without one. um80 took a word in column 1 for a label
+  (see Fixed); `OBP DS 1` is now an error, an undefined `OBP` (M80: `U`), with
+  a hint to add the colon or read the source with `--dri`. So is a line that
+  starts with `*` (M80: `U`, but for its `*EJECT` in column 1) or with a line
+  number (M80: `O`); um80 left both out, without a word. DRI sources that
+  have them - `CPM22.ASM`, `GENHEX.ASM`, MP/M II's `BNKBDOS.ASM` - need
+  `--dri`.
 - ul80 linker: a global that a second module defines is now LINK-80's
   warning, with its message, `%Mult. Def. Global FOO`, and ul80 says which
   modules define it and whose definition every reference uses: the first one
@@ -49,6 +65,20 @@ LINK-80 3.44 under cpmemu, and each has a regression test that fails on
   that must not link such a program passes `--fatal-mult-def`.
 
 ### Fixed
+- um80 assembler: an instruction, a directive or a macro in column 1 is that,
+  as in MACRO-80, MAC and RMAC. um80 took any word in column 1 without a colon
+  for a label, so `NOP`, `RET`, `XCHG`, `END` or `DB 7` there assembled
+  nothing, without a word, and `MVI A,5` there was "Unknown instruction or
+  directive: A". An `ENDM` in column 1 did not end a `REPT` or a macro, so
+  every line after it became its body, and a `LOCAL` in column 1 was a label
+  in the expansion. The name in front of an `EQU`, `SET`, `DEFL`, `ASET` or
+  `MACRO` is still a name, in any column (`NOP EQU 5` defines `NOP`, as in
+  M80).
+- um80 assembler: a statement whose first word is no instruction, directive
+  or macro is a list of values assembled as `DB`, as in M80: after `FOO EQU
+  5`, `FOO` is the byte 05, `FOO+1,'AB'` is 06 41 42 and `LAB: 5,6` is 05 06.
+  um80 left out a statement that started with a value (`LAB: 5,6`, `'AB'`),
+  without a word. um80 warns, as M80 does not.
 - um80 assembler: a source byte with bit 7 set is now read with bit 7
   clear, as MACRO-80, MAC and RMAC all read it. um80 read it as a character
   that no name or operator starts with, so a line that began with one was

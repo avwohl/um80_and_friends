@@ -61,6 +61,11 @@ one symbol, and \fBPUBLIC A$BC\fR writes ABC.  A \fB$\fR that starts a word
 arguments of a macro call or the list of an IRP or IRPC, which MAC reads as
 text, are kept.
 Without \fB\-\-dri\fR a \fB$\fR is part of the name, as in MACRO-80.
+The first word of a statement that is not an instruction, directive or
+macro is a label, colon or not, in any column (\fBOBP DS 1\fR); a line
+number in front of a statement, a line that starts with \fB*\fR and MAC's
+assembly controls (\fB$\-MACRO\fR) are ignored.  Without \fB\-\-dri\fR a
+label needs its colon, as in MACRO-80.
 \fB\-\-dri\fR does not imply \fB\-\-aseg\fR (MAC's absolute sources) or
 \fB\-t\fR (RMAC's six-character names).
 .TP
@@ -73,7 +78,12 @@ Add a directory to the include file search path. Can be specified multiple times
 .SH SOURCE FORMAT
 Assembly source files consist of lines containing:
 .IP \(bu 2
-Labels (optional) followed by a colon
+Labels (optional) followed by a colon.  The first word of a statement is
+its operation, in column 1 or not (\fBNOP\fR in column 1 is an instruction),
+except the name in front of an EQU, SET, DEFL, ASET or MACRO.  As in
+MACRO-80, a statement whose first word is no instruction, directive or macro
+is assembled as DB, with a warning (\fBLAB: 5,6\fR), so a label without a
+colon is an error (see \fB\-\-dri\fR)
 .IP \(bu 2
 Instructions or directives
 .IP \(bu 2

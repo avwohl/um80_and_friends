@@ -40,7 +40,7 @@ um80 -t program.mac                 # Cut symbol names to 6 chars, as M80 does
 um80 -e ".z80" program.mac          # Execute code before source (set Z80 mode)
 um80 --pre macros.mac program.mac   # Include file before source
 um80 --aseg program.asm             # Absolute, like DRI's MAC: ORG is an address
-um80 --dri program.asm              # DRI source: a $ inside a name is ignored
+um80 --dri program.asm              # DRI source: MAC's names and labels
 ```
 
 ### Link object files
@@ -276,6 +276,16 @@ written. um80 makes it an error because that is a silent miscompile; this is a
 deliberate divergence, recorded in CHANGELOG.md. Nothing is written and the
 exit status is 1, as for any other assembly error.
 
+### A label needs a colon
+
+As in M80, the first word of a statement is its operation, in column 1 or not
+(`NOP` in column 1 is a NOP), and a label is a name with a colon after it; the
+name in front of an `EQU`, `SET` or `MACRO` needs none. A statement whose
+first word is no instruction, directive or macro is a list of values M80
+assembles as `DB` (after `FOO EQU 5`, `FOO` alone is 05), so `LAB DS 1` is an
+error there, and in um80. DRI's MAC and RMAC take such a word for a label, in
+any column: `um80 --dri` reads it as they do.
+
 ## Extended Symbol Names
 
 The original Microsoft REL format limits symbol names to 8 characters (and LINK-80 3.44 reads at most 7). um80/ul80 extend this to support symbols up to 255 characters, which is essential for:
@@ -339,7 +349,9 @@ The `$` characters are ignored during parsing and do not affect the numeric valu
 DRI's MAC and RMAC also ignore a `$` inside a name: `NMB$LST` and `NMBLST` are
 one symbol. MACRO-80 keeps it, so by default um80 does too. `um80 --dri` reads
 names as MAC and RMAC do; MP/M II's sources need it (`MPM.ASM` stores to
-`nmb$lst`, which `DATAPG.ASM` defines as `nmblst`). See
+`nmb$lst`, which `DATAPG.ASM` defines as `nmblst`). It also takes a word with no
+colon for a label, as MAC does, and ignores a line number, a `*` comment line
+and MAC's `$-MACRO` controls. See
 [docs/EXTENSIONS.md](docs/EXTENSIONS.md#dri-sources---dri) for exactly what it
 changes.
 
@@ -418,7 +430,7 @@ For more details on these extensions and compatibility notes, see [docs/EXTENSIO
 
 ## Testing
 
-The test suite (571 tests) runs under `pytest`:
+The test suite (584 tests) runs under `pytest`:
 
 ```bash
 pip install -e ".[dev]"
@@ -454,6 +466,7 @@ Digital Research's MAC 2.0 and RMAC 1.1:
 | `test_equ_name_column.py` | (DRI) The name of an `EQU`, `SET`, `DEFL`, `ASET` or `MACRO` may be indented |
 | `test_register_values.py` | (DRI) A register operand is an expression and a register name its number: `RD EQU D` / `DAD RD` is `DAD D`; an odd register pair is an error; an address is its offset, as in M80 |
 | `test_dri_names.py` | (DRI) `--dri` ignores a `$` inside a name, as MAC and RMAC do, but not in a macro call's arguments or an `IRP`/`IRPC` list; without it `$` is part of the name, as in M80 |
+| `test_column_one.py` | (DRI) An instruction, directive or macro in column 1 is one; a statement of values is a `DB` and a label needs a colon, as in M80; with `--dri` a word with no colon is a label and a line number or a `*` line is ignored, as in MAC |
 
 Further tests cover the toolchain more broadly: `test_ds_org.py` (DS/ORG and
 segment placement), `test_defs_fill.py` (DEFS fill value), `test_end_symbol.py`

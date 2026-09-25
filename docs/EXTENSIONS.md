@@ -128,7 +128,7 @@ The `$` characters are stripped during parsing and do not affect the numeric val
 ### DRI sources (`--dri`)
 
 `um80 --dri` reads a source the way DRI's MAC and RMAC read it where they
-differ from MACRO-80. It changes one thing:
+differ from MACRO-80. It changes these things:
 
 **A `$` inside a name is ignored.** DRI's manuals: "All characters are
 significant in an identifier, except for the embedded dollar sign ($) which
@@ -164,6 +164,22 @@ Without `--dri`, a `$` is part of the name, as in MACRO-80 3.44: there
 `NMBLST EQU 5` then `LDA NMB$LST` is an undefined symbol, and `AB EQU 1` with
 `A$B EQU 2` defines two symbols, where MAC reports `AB` defined twice.
 
+**A word with no colon may be a label.** The first word of a statement that
+is not an instruction, a directive or a macro is a label, in any column, as
+in MAC and RMAC ("the ':' following the identifier in a label is optional"):
+`OBP DS 1` (`UTIL3/GENHEX.ASM`), `<TAB>LAB<TAB>NOP`, and `HALT LXI H,1` in
+8080 code, where `HALT` is no instruction. Without `--dri` it is not, as in
+M80 (see [The first word of a statement](#the-first-word-of-a-statement)).
+um80's own directives stay directives: MAC would take `ENTRY JMP START` for a
+label `ENTRY`, which is no MAC directive; um80 reads the `ENTRY` directive.
+
+**A line number, a `*` comment line and a MAC control are ignored.** A word
+that starts with a digit in front of a statement is a line number (`00010
+LAB: NOP`); a line whose first character, after any blanks, is `*` is a
+comment (a `!` in it still ends the comment, as in MAC: `* TEXT ! NOP` is a
+NOP); and MAC's assembly controls (`$-MACRO`, `$+PRINT`, `$*MACRO`) are left
+out. M80 flags each (`O` or `U`), and so does um80 without `--dri`.
+
 MP/M II's sources need `--dri`: `NUCLEUS/MPM.ASM` stores to `nmb$lst`, which
 `DATAPG.ASM` defines as `nmblst`; `RESBDOS1.ASM` calls both `SET$DMABUFA` and
 `SET$DMA$BUFA`; `CLI.ASM` defines `cli$slct$user` and uses `cli$slctuser`;
@@ -194,9 +210,7 @@ is a number (`RD EQU D` then `DAD RD` is `DAD D`).
 
 Other differences between MAC/RMAC and M80 that `--dri` does not cover (none of
 MP/M II's sources needs them): MAC takes `=` as `EQ` (`IF @Y = 1`, in
-`CONTROL/DEBLOCK.ASM`), where M80 reports a syntax error; MAC takes an indented
-word with no colon that is not an instruction, directive or macro as a label
-(`<TAB>LAB<TAB>NOP`), where M80 reports it undefined; MAC stops reading at a
+`CONTROL/DEBLOCK.ASM`), where M80 reports a syntax error; MAC stops reading at a
 9AH byte (1AH with bit 7), where M80 reads on; and an 8AH that does not follow
 a CR, which ends no line in any of them, is a 0AH in a MAC string, where M80
 and um80 leave it out (`DB 'A<8AH>B'` is 41 42).
@@ -254,17 +268,38 @@ DRI assemblers allowed `PUSH A` and `POP A` as synonyms for `PUSH PSW` and `POP 
 
 This is shorthand recognized in MP/M and CP/M Plus source code.
 
-### Conditional Directive Parsing
+### The first word of a statement
 
-Conditional assembly directives at column 1 without a trailing colon are correctly recognized as directives, not labels:
+A label is a name with a colon after it (`::` also makes it `PUBLIC`), in any
+column. The first word of a statement is otherwise its operation, in column 1
+or not, as in MACRO-80 3.44 - but for the name of an `EQU`, `SET`, `DEFL`,
+`ASET` or `MACRO` in front of its directive (`NOP EQU 5` defines `NOP`, as in
+M80):
 
 ```asm
-IF DEBUG                            ; IF is a directive, not a label
+IF DEBUG                            ; IF, in column 1
         CALL TRACE
-ENDIF                               ; ENDIF is a directive
+ENDIF
+NOP                                 ; 00
+DB      7                           ; 07
+END
 ```
 
-This matches DRI assembler behavior where `IF`, `ELSE`, `ENDIF`, `IFDEF`, `IFNDEF`, etc. do not require indentation.
+Up to 0.3.50 um80 took any word in column 1 for a label, so `NOP`, `RET`,
+`END` or `DB 7` there assembled nothing, without a word, and an `ENDM` or a
+`LOCAL` in column 1 was never seen.
+
+A statement whose first word is no instruction, directive or macro is, in
+M80, a list of values it assembles as `DB`, and so it is in um80, which also
+warns: after `FOO EQU 5`, `FOO` alone is the byte 05, `FOO+1,'AB'` is 06 41 42,
+and `LAB: 5,6` (a statement that starts with a value) is 05 06. Up to 0.3.50
+um80 left out a statement that started with a value, without a word. So M80
+has no label without a colon: `OBP DS 1` is an error, an undefined `OBP` (M80:
+`U`), and so is `<TAB>FOO<TAB>NOP`, with a hint to add the colon or read the
+source with `--dri`, where it is a label, as in MAC and RMAC
+([DRI sources](#dri-sources---dri)). A line that starts with `*` is not a
+comment either, as in M80 - but for M80's `*EJECT` in column 1 - and nor is a
+line number. M80's `$TITLE('text')` (a subtitle) and `$EJECT` are directives.
 
 ### External Symbol Aliases (EQU external+offset)
 
@@ -699,6 +734,8 @@ defined global" but wrote the output and exited 0.
 | `$` ignored inside names | ✗ | `--dri` | ✓ | ✗ |
 | Register EQU aliases | ✓ | ✓ | ✓ | ✗ |
 | PUSH A / POP A | ✗ | ✓ | ✓ | ✗ |
+| Label with no colon | ✗ | `--dri` | ✓ | ✗ |
+| Statement of values (`LAB: 5,6` is `DB`) | ✓ | ✓ | ✗ | ✗ |
 | EQU external+offset | ✗ | ✓ | ✗ | ✓ |
 | `__END__` symbol | ✗ | ✓ | ✗ | ✗ |
 | PRL / SPR output | ✗ | ✓ | (RMAC) | ✗ |
@@ -708,7 +745,7 @@ defined global" but wrote the output and exited 0.
 
 ## Version History
 
-- **Unreleased** — `--dri` (a `$` inside a name is ignored, as in MAC and RMAC); in 8080 code a register name is its number, as in M80 and MAC; ul80 `--fatal-mult-def`
+- **Unreleased** — `--dri` (a `$` inside a name is ignored, a word with no colon may be a label, as in MAC and RMAC); an instruction or directive in column 1 is one, and a statement of values is a `DB`, as in M80; in 8080 code a register name is its number, as in M80 and MAC; ul80 `--fatal-mult-def`
 - **0.3.50** — MACRO-80 IRP/IRPC lists, 6-character `-t`, mbasic2025 in the test suite
 - **0.3.49** — link-time expressions (REL extension link items), LINK-80 interchange, absolute code in a link
 - **0.3.48** — `--spr`, `--extra` and `--aseg`; `--prl` links a transient at 100H

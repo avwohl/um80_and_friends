@@ -37,6 +37,41 @@ class AssemblerError(Exception):
 IDENT_CHARS = frozenset('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
                         '0123456789_@?$.')
 
+# The operations of a statement: every directive assemble_pseudo_op() takes,
+# and the instructions of each processor (assemble_instruction() and
+# assemble_z80_instruction()).  See Assembler.is_operation().
+DIRECTIVES = frozenset({
+    'ORG', 'EQU', 'SET', 'DEFL', 'ASET', 'DB', 'DEFB', 'DEFM', 'DC', 'DW', 'DEFW',
+    'DS', 'DEFS', 'CSEG', 'DSEG', 'ASEG', 'COMMON', 'PUBLIC', 'ENTRY', 'GLOBAL',
+    'EXTRN', 'EXT', 'EXTERNAL', 'NAME', 'TITLE', 'SUBTTL', '$TITLE', 'PAGE',
+    '$EJECT', '*EJECT', '.LIST', '.XLIST', '.RADIX', '.8080', '.Z80', '.SALL',
+    '.LALL', '.XALL', '.SFCOND', '.LFCOND', '.TFCOND', '.PRINTX', '.COMMENT',
+    '.REQUEST', '.PHASE', '.DEPHASE', 'END', 'IF', 'IFT', 'IFE', 'IFF', 'IFDEF',
+    'IFNDEF', 'IF1', 'IF2', 'IFB', 'IFNB', 'IFIDN', 'IFDIF', 'ELSE', 'ENDIF',
+    'ENDC', 'COND', 'INCLUDE', '$INCLUDE', 'MACLIB', 'MACRO', 'ENDM', 'EXITM',
+    'LOCAL', 'REPT', 'IRP', 'IRPC'})
+INSTRUCTIONS_8080 = frozenset(
+    set(NO_OPERAND) | COND_RETS | COND_JUMPS | COND_CALLS | set(ALU_REG)
+    | set(ALU_IMM) | {'MOV', 'MVI', 'LXI', 'INR', 'DCR', 'INX', 'DCX', 'DAD',
+                      'LDAX', 'STAX', 'PUSH', 'POP', 'JMP', 'CALL', 'RST', 'LDA',
+                      'STA', 'LHLD', 'SHLD', 'IN', 'OUT'})
+INSTRUCTIONS_Z80 = frozenset(
+    set(Z80_NO_OPERAND) | set(Z80_ED_NO_OPERAND) | Z80_ALU_MNEMONICS
+    | Z80_ROT_MNEMONICS | Z80_BIT_MNEMONICS
+    | {'EX', 'LD', 'PUSH', 'POP', 'INC', 'DEC', 'JP', 'JR', 'DJNZ', 'CALL',
+       'RET', 'RST', 'IN', 'OUT', 'IM'})
+
+# A name that begins a statement, and the name of an EQU, SET, DEFL, ASET or
+# MACRO in front of its directive (see Assembler.parse_line()).
+NAME_WORD = re.compile(r'([$A-Za-z_@?][A-Za-z0-9_@?$.]*)\s*')
+NAME_DEFINITION = re.compile(r'([$A-Za-z_@?][A-Za-z0-9_@?$.]*)\s+'
+                             r'(?:EQU|SET|DEFL|ASET|MACRO)(?![A-Za-z0-9_@?$.])',
+                             re.IGNORECASE)
+# MAC's line number in front of a statement, and its assembly controls
+# ($-MACRO, $+PRINT, ...): see Assembler.parse_line().
+LINE_NUMBER = re.compile(r'\d[0-9A-Za-z$]*(?:\s+|$)')
+DRI_CONTROL = re.compile(r'\$[-+*][A-Za-z]')
+
 # Every byte of a source file with its bit 7 cleared (see source_lines()).
 STRIP_PARITY = bytes(b & 0x7F for b in range(256))
 # An 8AH that does not follow a CR or an 8DH (see source_lines()).
@@ -1497,6 +1532,14 @@ class Assembler:
             return value - self.segments['DSEG'].org
         return value
 
+    def is_operation(self, word):
+        """True if `word' is a macro, a directive or an instruction of the
+        processor being assembled for (so `HALT' is one after .Z80 only)."""
+        word = word.upper()
+        return (word in self.macros or word in DIRECTIVES
+                or word in (INSTRUCTIONS_Z80 if self.z80_mode
+                            else INSTRUCTIONS_8080))
+
     def parse_line(self, line):
         """Parse a source line, return (label, operator, operands, comment)."""
         # Remove comment
@@ -1524,20 +1567,40 @@ class Assembler:
         if not line:
             return (None, None, None, comment)
 
-        # Parse label (if any)
-        # Labels can be at column 1 or indented, but are identified by trailing colon
-        # Conditional directives (IF, ELSE, ENDIF, etc.) at column 1 without colon are NOT labels
-        CONDITIONAL_DIRECTIVES = {
-            'IF', 'IFT', 'IFE', 'IFF', 'IFDEF', 'IFNDEF',
-            'IF1', 'IF2', 'IFB', 'IFNB', 'IFIDN', 'IFDIF',
-            'COND', 'ELSE', 'ENDIF', 'ENDC'
-        }
+        # The label, if any.  A name with a colon after it is one, in any
+        # column.  So is the name of an EQU, SET, DEFL, ASET or MACRO in
+        # front of its directive: MACRO-80, MAC and RMAC all take
+        # `<TAB>FOO<TAB>EQU 5', even where FOO is also an instruction or a
+        # macro (MP/M II's MPMLDR/LDRBDOS.ASM has `<TAB>arech  equ b!
+        # arecl  equ c').
+        #
+        # A name with no colon is not a label in MACRO-80 3.44, in column 1
+        # or not: the first word of a statement is its operation, and a word
+        # that is no instruction, directive or macro starts a list of values
+        # M80 assembles as DB (`FOO NOP' is U, `FOO' after `FOO EQU 5' is the
+        # byte 05; see _process_single_statement()).  um80 took a word in
+        # column 1 for a label even when it was an instruction or a
+        # directive, so `NOP', `RET', `END' and `DB 7' there assembled
+        # nothing, without a word.  MAC and RMAC (--dri) take a word that
+        # is not an instruction, directive or macro for a label, colon or
+        # not, in any column; they ignore a line number in front of a
+        # statement, a line whose first character is `*', and MAC's
+        # assembly controls ($-MACRO, $+PRINT).
         label = None
         stripped = line.lstrip()
-        # Check for label: identifier followed by : or ::
+        if self.dri:
+            if stripped.startswith('*') or DRI_CONTROL.match(stripped):
+                return (None, None, None, comment)
+            number = LINE_NUMBER.match(stripped)
+            if number:
+                stripped = line = stripped[number.end():]
+                if not line:
+                    return (None, None, None, comment)
+        elif line[:6].upper() == '*EJECT':
+            # MACRO-80's page eject, in column 1 only.
+            return (None, '*EJECT', line[6:].strip(), comment)
         match = re.match(r'^([$A-Za-z_@?][A-Za-z0-9_@?$.]*)(::|:)\s*', stripped)
         if match:
-            # Has a colon, so it's definitely a label
             label = match.group(1)
             colons = match.group(2)
             stripped = stripped[match.end():]
@@ -1546,26 +1609,17 @@ class Assembler:
                 sym = self.lookup_symbol(label)
                 sym.public = True
                 sym.public_line = sym.public_line or self.line_num
-        elif not line[0].isspace() if line else False:
-            # At column 1, no colon - check if it's a conditional directive
-            match = re.match(r'^([$A-Za-z_@?][A-Za-z0-9_@?$.]*)\s*', stripped)
-            if match:
-                potential = match.group(1).upper()
-                if potential not in CONDITIONAL_DIRECTIVES:
-                    # Not a directive, treat as label (M80 allows labels without colons at col 1)
-                    label = match.group(1)
-                    line = stripped[match.end():]
         else:
-            # The name of an EQU, SET, DEFL, ASET or MACRO need not be in
-            # column 1: MACRO-80, MAC and RMAC all take `<TAB>FOO<TAB>EQU 5',
-            # even where FOO is also an instruction or a macro.  MP/M II's
-            # MPMLDR/LDRBDOS.ASM has `<TAB>arech  equ b! arecl  equ c'.
-            match = re.match(r'^([$A-Za-z_@?][A-Za-z0-9_@?$.]*)\s+'
-                             r'(?:EQU|SET|DEFL|ASET|MACRO)(?![A-Za-z0-9_@?$.])',
-                             stripped, re.IGNORECASE)
+            match = NAME_DEFINITION.match(stripped)
             if match:
                 label = match.group(1)
                 line = stripped[match.end(1):]
+            elif self.dri:
+                match = NAME_WORD.match(stripped)
+                if (match and match.group(1) != '$'
+                        and not self.is_operation(match.group(1))):
+                    label = match.group(1)
+                    line = stripped[match.end():]
 
         if not line.strip():
             return (label, None, None, comment)
@@ -3379,14 +3433,14 @@ class Assembler:
         # TITLE/SUBTTL - listing titles.  Without a NAME, MACRO-80 names the
         # module after the last TITLE: the first six characters of its text
         # up to a blank, whatever they are (TITLE 'BASIC' is the module
-        # 'BASIC).
-        if operator in ('TITLE', 'SUBTTL'):
+        # 'BASIC).  M80's $TITLE('text') is a subtitle, and names nothing.
+        if operator in ('TITLE', 'SUBTTL', '$TITLE'):
             if operator == 'TITLE' and operands and operands.strip():
                 self.title_name = operands.split()[0].upper()[:6]
             return True
 
-        # PAGE/*EJECT - new page in listing (ignore for now)
-        if operator == 'PAGE' or operator == '*EJECT':
+        # PAGE/*EJECT/$EJECT - new page in listing (ignore for now)
+        if operator in ('PAGE', '*EJECT', '$EJECT'):
             return True
 
         # .LIST/.XLIST - listing control
@@ -4029,6 +4083,9 @@ class Assembler:
             self.define_value(label, self.here())
 
         if not operator:
+            if operands:
+                # A statement that starts with a value: `5,6', `'AB''.
+                self.statement_of_values(None, operands)
             self._save_listing_entry(line)
             return
 
@@ -4064,8 +4121,55 @@ class Assembler:
             self._save_listing_entry(line)
             return
 
-        self.error(f"Unknown instruction or directive: {operator}")
+        self.statement_of_values(operator, operands,
+                                 column_one=not line[:1].isspace())
         self._save_listing_entry(line)
+
+    def statement_of_values(self, word, rest, column_one=False):
+        """A statement whose first word, `word' (None if it starts with
+        something else), is no instruction, directive or macro.
+
+        MACRO-80 3.44 assembles it as a DB of the whole statement: after
+        `FOO EQU 5', `FOO' is the byte 05, `FOO+1,'AB'' is 06 41 42 and
+        `LAB: 5,6' is 05 06.  um80 left out a statement that started with a
+        value, without a word.  It warns, as M80 does not: M80 takes a
+        mistyped mnemonic or a label with no colon for a value too (`LAB
+        DS 1' is U, and one byte).  --dri reads the source as MAC and RMAC
+        do, which assemble no such statement (S) - a word there is a label
+        (parse_line()).
+        """
+        text = f"{word} {rest}".strip() if word else rest
+        shown = text if len(text) <= 40 else text[:37] + '...'
+        errors = len(self.errors)
+        if not self.dri and not text.startswith('*'):
+            self.assemble_pseudo_op('DB', text, None)
+            if len(self.errors) == errors:
+                if self.pass_num == 2:
+                    self.warning(f"'{shown}' is no instruction, directive or "
+                                 f"macro: it is assembled as DB {shown}, as in M80")
+                return
+            del self.errors[errors:]
+        if word is None:
+            hint = ''
+            if not self.dri and text.startswith('*'):
+                hint = (" (a comment starts with ';': MAC's '*' comment lines"
+                        " are read with --dri)")
+            elif not self.dri and LINE_NUMBER.match(text):
+                hint = " (MAC's line numbers are read with --dri)"
+            self.error(f"'{shown}' is not an instruction, directive or macro, "
+                       f"nor values to assemble{hint}")
+            return
+        hint = ''
+        after = NAME_WORD.match(rest or '')
+        if not self.dri and (after and self.is_operation(after.group(1))
+                             or not rest and column_one):
+            hint = (" (a label needs a colon, as in M80: MAC's labels"
+                    " without one are read with --dri)")
+        elif word in (INSTRUCTIONS_8080 if self.z80_mode else INSTRUCTIONS_Z80):
+            hint = (" (an 8080 instruction: .8080 assembles 8080 mnemonics)"
+                    if self.z80_mode else
+                    " (a Z80 instruction: .Z80 assembles Z80 mnemonics)")
+        self.error(f"Unknown instruction or directive: {word}{hint}")
 
     def process_macro_argument(self, arg):
         """Process a macro argument, handling angle brackets and ! operator.
