@@ -89,7 +89,8 @@ This is commonly used in DRI source code to group related operations. The commen
 - A macro-invocation line is **not** split on `!`. There, `!` retains its M80
   meaning of quoting the next character in the argument list (e.g.
   `head FOO,!!CF` passes the name `!CF`, and `!,` passes a literal comma), so
-  the separator never interferes with macro arguments.
+  the separator never interferes with macro arguments. Without `--dri` it
+  quotes a `;` too, as in M80: `MM A!;B` passes `A;B`, and `MM A!"B;C` `A"B`.
 
 ### HIGH and LOW Operators (Function Syntax)
 

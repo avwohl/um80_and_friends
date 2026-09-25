@@ -1799,21 +1799,18 @@ class Assembler:
                 or word in (INSTRUCTIONS_Z80 if self.z80_mode
                             else INSTRUCTIONS_8080))
 
-    def parse_line(self, line, brackets=False):
+    def parse_line(self, line):
         """Parse a source line, return (label, operator, operands, comment).
 
-        In the arguments of a macro call and the list of an IRP or IRPC a
-        `;' inside <...> is text, not a comment, as in MACRO-80, MAC and
-        RMAC: DRI's CONTROL/DISKDEF.LIB passes `<;sec per track>' to a
-        macro that puts it after a DW.  Such a line is read again with
-        `brackets'.
+        The operands of a macro call, an IRP and an IRPC are read again to
+        find where the comment starts, as the three tools read arguments
+        (arguments_comment()).
         """
         whole = line
         # Remove comment
         comment = ''
         in_string = False
         string_char = None
-        depth = 0
         for i, ch in enumerate(line):
             if in_string:
                 if ch == string_char:
@@ -1826,14 +1823,12 @@ class Assembler:
                 else:
                     in_string = True
                     string_char = ch
-            elif brackets and ch in '<>':
-                depth = depth + 1 if ch == '<' else max(depth - 1, 0)
-            elif ch == ';' and not depth:
+            elif ch == ';':
                 comment = line[i+1:]
                 line = line[:i]
                 break
 
-        line = line.rstrip()
+        line = head = line.rstrip()
         if not line:
             return (None, None, None, comment)
 
@@ -1903,10 +1898,55 @@ class Assembler:
         operator = match.group(1).upper()
         operands = line[match.end():].strip()
 
-        if (comment and not brackets and '<' in operands
-                and (operator in self.macros or operator in ('IRP', 'IRPC'))):
-            return self.parse_line(whole, brackets=True)
+        if operator in self.macros or operator in ('IRP', 'IRPC'):
+            # `line' is the end of `head', which starts `whole'.
+            start = len(head) - len(line) + match.end()
+            end, semicolon = self.arguments_comment(whole, start, operator)
+            operands = whole[start:end].lstrip()
+            comment = '' if semicolon is None else whole[semicolon + 1:]
         return (label, operator, operands, comment)
+
+    def arguments_comment(self, line, i, operator):
+        """Where the operands of a macro call, an IRP or an IRPC that start
+        at line[i] end, and where the `;' that starts the comment is (None
+        if none does): (end, semicolon).
+
+        A `;' inside <...> is text, not a comment, as in MACRO-80, MAC and
+        RMAC: DRI's CONTROL/DISKDEF.LIB passes `<;sec per track>' to a
+        macro that puts it after a DW.  So is one in a quoted string.
+
+        Without --dri a '!' quotes the next character in a macro call's
+        arguments and an IRP list, as in M80: `MM A!;B' passes `A;B', `MM
+        A!"B;C' `A"B', `MM <A!>;B>' `A>;B', and `MM A! ;B' `A ' (a quoted
+        blank is not dropped from the end).  um80 cut the line at the
+        first `;' outside a string, and then passed `A!', `A"B;C', `A>'
+        and `A!' there, without a word.  (MAC and RMAC end the statement
+        at the '!', and um80 --dri reads the comment as before.)
+        """
+        bang = not self.dri and operator != 'IRPC'
+        depth, end = 0, i
+        n = len(line)
+        while i < n:
+            ch = line[i]
+            if ch in ' \t':
+                i += 1
+                continue
+            if bang and ch == '!' and i + 1 < n:
+                i += 2
+                end = i
+                continue
+            if self._starts_string(line, i):
+                i = end = self._string_end(line, i)
+                continue
+            if ch == ';' and not depth:
+                return end, i
+            if ch == '<':
+                depth += 1
+            elif ch == '>':
+                depth = max(depth - 1, 0)
+            i += 1
+            end = i
+        return end, None
 
     def split_operands(self, operands, escape_bang=False, angles=True):
         """Split operands by comma, respecting strings, parentheses, and angle brackets.

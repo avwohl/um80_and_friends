@@ -412,6 +412,64 @@ def test_mac_flags_text_after_the_blanks_s(call):
     assert any('flag it S' in e for e in errors), errors
 
 
+# A `!' quotes the next character in a macro call's arguments and an IRP
+# list, a `;' too: MACRO-80 3.44 reads `MM A!;B' as the one argument `A;B'.
+# um80 cut the line at its first `;' outside a string before it read the
+# arguments, so it passed `A!' - and after a `!'-quoted quote (`MM A!"B;C')
+# it took the rest of the line for a string - without a word.
+@pytest.mark.parametrize('call, m80', [
+    ('A!;B', 'ee5a413b42ee5900ee5800'),                   # `A;B'
+    ('A!;B,C', 'ee5a413b42ee5943ee5800'),
+    ('!;,B', 'ee5a3bee5942ee5800'),
+    ('A,!;', 'ee5a41ee593bee5800'),
+    ('A,B!;', 'ee5a41ee59423bee5800'),
+    ('A!;B;C', 'ee5a413b42ee5900ee5800'),
+    ('A!;B ;comment', 'ee5a413b42ee5900ee5800'),
+    ('A!;;B', 'ee5a413bee5900ee5800'),                    # `A;'
+    ('A!;B!;C', 'ee5a413b423b43ee5900ee5800'),
+    ('A!!!;B', 'ee5a41213b42ee5900ee5800'),               # `A!;B'
+    ('A!;B C', 'ee5a413b42ee5943ee5800'),                 # `A;B', C
+    ('A!;B<C;D>', 'ee5a413b42433b44ee5900ee5800'),        # `A;BC;D'
+    # A quoted quote opens no string.
+    ('A!"B;C', 'ee5a412242ee5900ee5800'),                 # `A"B'
+    ('!"A;B",C', 'ee5a2241ee5900ee5800'),                 # `"A'
+    # A quoted bracket opens or closes no group.
+    ('<A!>;B>,C', 'ee5a413e3b42ee5943ee5800'),            # `A>;B', C
+    ('A!<;B', 'ee5a413cee5900ee5800'),                    # `A<'
+    ('<A!<>;B,C', 'ee5a413cee5900ee5800'),
+    # A quoted blank or tab at the end is kept.
+    ('A! ;B', 'ee5a4120ee5900ee5800'),                    # `A '
+    ('A!\t;B', 'ee5a4109ee5900ee5800'),
+    ('A!  ;B', 'ee5a4120ee5900ee5800'),
+    ('A! ', 'ee5a4120ee5900ee5800'),
+    # As before.
+    ('A!!;B', 'ee5a4121ee5900ee5800'),                    # `A!'
+    ('A!,B;C', 'ee5a412c42ee5900ee5800'),                 # `A,B'
+])
+def test_m80_a_bang_quotes_a_semicolon(call, m80):
+    ok, code, errors, warnings = _assemble(THREE_TEXT + "\tMM\t" + call + "\n")
+    assert ok, errors
+    assert code == m80 and warnings == []
+
+
+Q_ITEM = "\tDB\t0EEH\n\tDB\t'Q&X'\n\tENDM\n"
+
+
+@pytest.mark.parametrize('head, m80', [
+    # In an IRP list too: `<A!>;B>' is `A>' and B (a `;' ends an item);
+    # um80 took the `>' for the list's end.
+    ('IRP\tX,<A!>;B>', 'ee51413eee5142'),
+    # As before.
+    ('IRP\tX,<A!;B,C>', 'ee51413b42ee5143'),
+    # In an IRPC string a `!' is text, and a `;' starts the comment.
+    ('IRPC\tX,A!;B', 'ee5141ee5121'),
+])
+def test_m80_a_bang_in_an_irp_list_quotes_a_semicolon(head, m80):
+    ok, code, errors, warnings = _assemble("\t" + head + "\n" + Q_ITEM)
+    assert ok, errors
+    assert code == m80 and warnings == []
+
+
 # The items of an IRP list.  MACRO-80 3.44 ends an item at a `,', a `;', a
 # blank or a tab, and skips the blanks in front of one.  4558825 made a `;'
 # inside the list's <...> text, so `IRP P,<A;B;C>' went round once, with

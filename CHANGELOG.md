@@ -362,6 +362,16 @@ on 0.3.50.
   comma, blanks and all (`MM %1 + 1,5` passes 2 and 5), and without `--dri`
   a `%` after a `<...>` group is now a value, as in M80: `MM <A>%1+1` passes
   A2, where um80 passed `A%1+1`.
+- um80 assembler: without `--dri`, a `!` in a macro call's arguments or an
+  `IRP` list now quotes a `;` after it, as in MACRO-80, which passes `MM
+  A!;B` as the one argument `A;B`. um80 cut the line at its first `;`
+  outside a string before it read the arguments, so it passed `A!`, and a
+  `!`-quoted quote started a string that hid the comment: `MM A!"B;C` passed
+  `A"B;C`, where M80 passes `A"B`. A quoted bracket there opens or closes no
+  group either (`MM <A!>;B>` passes `A>;B`; um80 `A>`), and a quoted blank
+  at the end of the arguments is kept (`MM A! ;B` passes `A `; um80 `A!`) -
+  all without a word. With `--dri` the comment starts where it did; MAC and
+  RMAC end the statement at the `!`.
 
 ## [0.3.50] - 2026-09-25
 
