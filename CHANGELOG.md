@@ -2,7 +2,7 @@
 
 All notable changes to the um80 toolchain are documented here.
 
-## [Unreleased]
+## [0.3.50] - 2026-09-25
 
 mbasic2025 (https://github.com/avwohl/mbasic2025) rebuilds historic Microsoft
 BASIC binaries - MBASIC 5.21, as 14 modules and as one Z80 file, and Altair
@@ -21,10 +21,9 @@ results.
   historic binaries are pinned by SHA-256. The MBASIC 5.2 sources, which have
   no historic binary, are pinned to the image M80 and L80 build from them. It
   runs when the sources are at `$MBASIC2025_DIR` or in a `mbasic2025` checkout
-  next to this repository; otherwise it is skipped. Three of the sources have
-  a defect that the historic binary does not have (see Fixed, and
-  `docs/mbasic2025.md`). The test changes its copy of those lines and reports
-  each change as a warning.
+  next to this repository; otherwise it is skipped. It needs mbasic2025
+  2d19520 or later, the first revision whose sources build every variant
+  byte for byte with this release (see Fixed).
 - CI: `.github/workflows/tests.yml` runs the test suite on every push and
   pull request, with avwohl/mbasic2025 checked out at a pinned commit (change
   its `ref:` to take a newer one). Before this, CI ran only pylint.
@@ -57,10 +56,10 @@ results.
   but the genuine M80 left out the `>` keyword byte, so every address after
   it moved (6645 bytes of 8192). um80 now assembles what M80 assembles, and
   warns about the `>` it ignores. The sources need `db '>'+80h`, as the 8K
-  source already has for `<`. **Until mbasic2025 makes that change,
-  mbasic2025's `4k8k/8k/build_8k.sh` fails with this um80** (6645 bytes
-  differ; it passes with 0.3.49), so release the two together.
-  `tests/test_mbasic2025.py` makes the change in its copy and warns. A list
+  source already has for `<`. mbasic2025 2d19520 made that change (and the
+  others `docs/mbasic2025.md` lists) alongside this release; **with an older
+  mbasic2025 its `4k8k/8k/build_8k.sh` fails with this um80** (6645 bytes
+  differ; it passed with 0.3.49). A list
   with no closing `>` runs to the end of the line, with a warning (M80 flags
   it `Q`). `IRPC C,<A>B` is `A`; `IRP X,<1,2>,3` is 1 and 2. In an `IRP`
   list, a `>`, `<`, `,` or `!` inside a quoted string is text, as in M80
@@ -74,6 +73,10 @@ results.
   and um80 warns about the text after it, which M80 ignores. After the list, a
   `!` is still DRI's separator, so a whole block on one line,
   `IRPC C,AB ! DB '&C' ! ENDM`, assembles as before.
+- ud80 disassembler: the output ended with `END` and no newline, and
+  MACRO-80 reads a line only once it ends, so it never saw the `END` and
+  warned "%No END statement". mbasic2025's `4kbas40_new.mac`, written by
+  ud80, did exactly that. The output now ends with a newline.
 - um80 assembler: a `MACRO`, `REPT`, `IRP` or `IRPC` with no `ENDM` takes
   every line after it as its body, so nothing after it is assembled, and um80
   said nothing. It now warns, as MACRO-80 does ("Unterminated

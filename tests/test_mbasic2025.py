@@ -24,16 +24,14 @@ built it with the genuine tools and every mix of them with um80 and ul80).
 ul80 pads its output to a 128-byte CP/M record, as LINK-80 writes whole
 records, so a reference that is not a whole number of records (4K BASIC's
 3833 bytes) is compared up to its length and the rest must be zeros.
-(build_4k.sh compares the whole file with cmp, which has failed since ul80
-0.3.18 began padding.)
+(mbasic2025's build_4k.sh compared the whole file with cmp, which failed from
+ul80 0.3.18 until mbasic2025 d2a9387.)
 
-Some sources have a defect the historic binary does not: they assembled
-right only because of an um80 behavior that was not MACRO-80's, since
-corrected.  Until mbasic2025 changes them, the test applies the change to its
-copy first and says so in a warning (see SOURCE_FIXES).  Two of those
-(`rdc <!>>' in 4K and 8K BASIC) built the historic bytes with um80 0.3.49 and
-do not with this um80: until mbasic2025 changes them, its own build_8k.sh
-reports a mismatch.
+mbasic2025 2d19520 is the first revision every variant builds byte for byte
+with this um80 and with the genuine MACRO-80 and LINK-80: before it, mbasicz
+used DC where it meant DB, and 4K and 8K BASIC wrote a keyword as
+`rdc <!>>', which only an um80 that misread IRPC lists assembled to the
+historic byte.  CI checks that revision out.
 
 The sources are found at $MBASIC2025_DIR, or in a mbasic2025 checkout next
 to this repository; without them the test is skipped (unless
@@ -48,7 +46,6 @@ import os
 import shutil
 import subprocess
 import sys
-import warnings
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
@@ -115,40 +112,6 @@ VARIANTS = {
 ORIGIN = {'mbasic_521': 0x100, 'mbasicz': 0x100, '4k': 0, '4k-annotated': 0, '8k': 0,
           'mbasic_52': 0x100}
 
-# Source defects the historic binaries do not have: (file, [(text,
-# replacement)], why).  A replacement is made only where the text is still in
-# the source.
-SOURCE_FIXES = {
-    'mbasicz': [
-        ('mbasicz.mac',
-         [(f"\tdc\t'{s}'", f"\tdb\t'{s}'")
-          for s in (' in ', 'Ok', 'Break', '?Redo from start', 'Undefined line ',
-                    'Random number seed (-32768 to 32767)', 'Owned by Microsoft',
-                    ' Bytes free', 'BASIC-80 Rev. 5.21', '[CP/M Version]',
-                    'Copyright 1977-1981 (C) by Microsoft', 'Created: 28-Jul-81')],
-         "DC for DB: DC sets the high bit of a string's last character (M80, and"
-         " um80 since 0.3.7), and these messages have none in MBASIC 5.21;"
-         " mbasic_521 has used DB for them since mbasic2025 1ba49ad"),
-    ],
-    '4k-annotated': [
-        ('4kbas40.mac',
-         [('\trdc\t<!>>\n', "\tdb\t'>'+80h\n"), ('\trdc\t<!<>\n', "\tdb\t'<'+80h\n")],
-         "`rdc <!>>' makes the macro's `irpc ch,<str>' read `irpc ch,<>>', an"
-         " empty list to M80 (and now to um80, which reads the list as M80 does)"
-         ", and `rdc <!<>' makes `irpc ch,<<>', '<' and '>' to M80.  um80 0.3.49"
-         " built the historic bytes from the unchanged lines; this um80 does not"),
-    ],
-    '8k': [
-        ('8kbas_src.mac', [('\trdc\t<!>>\n', "\tdb\t'>'+80h\n")],
-         "`rdc <!>>' makes the macro's `irpc ch,<str>' read `irpc ch,<>>', an"
-         " empty list to M80 (and now to um80, which reads the list as M80 does)"
-         "; the source already writes the '<' keyword as `db '<'+80h'.  um80"
-         " 0.3.49 built the historic bytes from the unchanged line; this um80"
-         " does not, so mbasic2025's build_8k.sh fails until the line changes"),
-    ],
-}
-
-
 def _sha(data):
     return hashlib.sha256(data).hexdigest()
 
@@ -168,26 +131,12 @@ def _run(tool, args, cwd):
 
 
 def _build(name, root, pool):
-    """Build a variant in a copy under `root'; return (image, source changes made)."""
+    """Build a variant in a copy under `root'; return its image."""
     subdir, steps, output, _, _ = VARIANTS[name]
     d = os.path.join(root, name)
     shutil.copytree(os.path.join(MBASIC2025, subdir), d,
                     ignore=shutil.ignore_patterns('out', '*.rel', '*.prn', '*.sym'))
     os.makedirs(os.path.join(d, 'out'), exist_ok=True)
-    changed = []
-    for fname, edits, why in SOURCE_FIXES.get(name, []):
-        p = os.path.join(d, fname)
-        with open(p, encoding='latin1') as f:
-            text = f.read()
-        n = 0
-        for old, new in edits:
-            if old in text:
-                text = text.replace(old, new)
-                n += 1
-        if n:
-            with open(p, 'w', encoding='latin1') as f:
-                f.write(text)
-            changed.append(f'{subdir}/{fname}: {n} line(s): {why}')
     # The modules assemble independently: all at once, then the link.
     for job in [pool.submit(_run, tool, args, d) for tool, *args in steps if tool == 'um80']:
         job.result()
@@ -195,7 +144,7 @@ def _build(name, root, pool):
         if tool != 'um80':
             _run(tool, args, d)
     with open(os.path.join(d, output), 'rb') as f:
-        return f.read(), changed
+        return f.read()
 
 
 @pytest.fixture(scope='module')
@@ -233,9 +182,7 @@ def test_builds_byte_exact(name, built):
     subdir, _, _, ref, sha = VARIANTS[name]
     if isinstance(built[name], Exception):
         raise built[name]
-    image, changed = built[name]
-    for change in changed:
-        warnings.warn(f'mbasic2025 source changed for this build: {change}')
+    image = built[name]
     if ref is None:
         assert _sha(image) == sha, f'{name}: {len(image)} bytes, SHA-256 {_sha(image)}'
         return

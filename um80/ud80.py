@@ -1432,7 +1432,10 @@ class Disassembler:
         lines.append('')
         lines.append('\tEND')
 
-        return '\n'.join(lines)
+        # A newline after END too: MACRO-80 reads a line only when it ends,
+        # so without one it never sees the END and warns "%No END statement"
+        # (mbasic2025's 4kbas40_new.mac, written by ud80, did exactly that).
+        return '\n'.join(lines) + '\n'
 
 
 def parse_range(s):

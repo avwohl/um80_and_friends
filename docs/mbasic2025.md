@@ -73,14 +73,11 @@ Each variant was built with the commands of its own build script:
 - `4k`: the image is identical. The file is 7 bytes longer because ul80 has
   padded to a 128-byte record since 0.3.18. `build_4k.sh` compares the whole
   file with `cmp`, so it has reported a failure since then.
-- `4k-annotated` and `8k` on this branch: see "`rdc <!>>`" below. On this
-  branch um80 assembles these lines as the genuine M80 does, which is not
-  the historic binary. **So this um80 breaks mbasic2025's own
-  `4k8k/8k/build_8k.sh`** ("ERROR: Output differs from original!"), which
-  passes with 0.3.49, until mbasic2025 changes the line (item 2 under
-  "Changes that mbasic2025 could make"). The test here passes because it
-  makes that change in its copy and warns. Release this um80 and that
-  mbasic2025 change together.
+- `4k-annotated` and `8k`: see "`rdc <!>>`" below. um80 now assembles these
+  lines as the genuine M80 does, which is not the historic binary, so this
+  um80 needed mbasic2025 to change them. It did, in the same release cycle
+  (see "What mbasic2025 changed"); with mbasic2025 2d19520 or later every
+  variant builds byte for byte, and CI checks that revision.
 - `mbasic_52` in 0.3.48: `DCPM.MAC` has `lxi h,filnam+9-0-0-2*0`, where
   `FILNAM` is external. 0.3.48 kept only the last constant, so the result
   was `FILNAM`. 0.3.49 fixed this (see its CHANGELOG), and the result is
@@ -221,28 +218,29 @@ with or without `-t`.
   statements, as 0.3.49 did. Inside the list, a `!` means what it means to
   M80.
 
-## Changes that mbasic2025 could make
+## What mbasic2025 changed
 
-mbasic2025 is not changed here. These are suggestions for its owner:
+mbasic2025 2d19520 (2026-09-24) made these changes, each byte-neutral against
+the historic binaries, so that every variant builds byte for byte with this
+um80 and ul80 and, except mbasicz, with the genuine MACRO-80 and LINK-80 in
+every combination (mbasic_521's mixed-module links without `-t`):
 
-1. `mbasicz/mbasicz.mac`: change the 12 message strings from `dc` to `db`, as
-   in `mbasic_521`. Without this, mbasicz has not been byte-exact since um80
-   0.3.7.
-2. `4k8k/4k/4kbas40.mac` lines 186 and 188, and `4k8k/8k/8kbas_src.mac` line
-   198: change `rdc <!>>` to `db '>'+80h` and `rdc <!<>` to `db '<'+80h`.
-   **Needed before the next um80 release:** without it, `build_8k.sh`
-   fails with that um80 (it passes with 0.3.49 and with the change).
-3. `4k8k/4k/build_4k.sh` and `build_4k_hack.sh`: compare only the reference's
-   length (`cmp -n 3833`), or accept zero padding. `build_8k.sh` works because
-   8192 bytes is a whole number of records.
-4. `mbasic_521`: rename `fbufp27` (for example to `fbup27`, like `fbup33`), so
-   that objects from M80 and um80 mix without `-t`.
-5. `mbasicz.mac`: if the file must also assemble with M80, change `set` to
-   `aset` and use the two-operand `ADD`/`ADC`/`SBC` forms.
-6. `4kbas40_new.mac` and `4kbas40.mac` do not end with a newline, so M80 does
-   not read their `END` line and warns "%No END statement". The warning does
-   not change the output.
-7. Documentation: `4k8k/4k/WORK_IN_PROGRESS.txt` says that `4kbas40.mac` does
-   not match, but it does now. `4k8k/4k/.claude/CLAUDE.md` says that
-   `build_4k.sh` builds `4kbas40.mac`, but it builds `4kbas40_new.mac`. In the
-   top-level README, the `4k8k/` tree lists `mbasic_521`'s files.
+1. `mbasicz/mbasicz.mac`: the 12 message strings are `db`, not `dc`, as in
+   `mbasic_521` (9911ac3).
+2. `4k8k/4k/4kbas40.mac` and `4k8k/8k/8kbas_src.mac`: `rdc <!>>` and
+   `rdc <!<>` became `db '>'+80h` and `db '<'+80h` (a20d008).
+3. `4k8k/4k/build_4k.sh` and `build_4k_hack.sh` compare only the reference's
+   3833 bytes (d2a9387). (`cmp -n` does not work on macOS when the lengths
+   differ, so they compare `head -c` of the output.)
+4. `mbasic_521`: `fbufp27` is `fbup27`, like `fbup33`, so objects from M80
+   and um80 mix without `-t` (a4af9d1).
+5. `4kbas40_new.mac` and `4kbas40.mac` end with a newline, so M80 reads their
+   `END` (ba573d2). ud80, which wrote `4kbas40_new.mac`, now ends its output
+   with one too.
+6. The stale notes and the READMEs, which now say the genuine MACRO-80 and
+   LINK-80 build these as well, that M80 needs CR LF line endings, and that
+   LINK-80 leaves a trailing `ds` as whatever was in its memory (2d19520).
+
+Not changed, as its owner chose: `mbasicz.mac` is still um80 dialect (`set`
+in `.Z80` mode, one-operand `ADD`/`ADC`/`SBC`), so the genuine M80 does not
+assemble it.
