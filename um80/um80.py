@@ -3973,12 +3973,7 @@ class Assembler:
                 # wants the brackets; um80 takes the list without them).
                 values = ops[1:]
             else:
-                # Split while respecting nested <...> groups (so
-                # <<1,2>,<3,4>> yields two items, not four) and '!' (so
-                # <1!,2,3> yields "1,2" and "3"). An empty list <> still
-                # iterates once with an empty argument (matches real M80).
-                values = self.split_operands(inner, escape_bang=True) \
-                    if inner.strip() else ['']
+                values = self.irp_items(inner)
             if not self.dri:
                 # M80 reads an item as it reads a macro argument, `%' and
                 # all: `IRP X,<%E,2>' iterates over E's value then, and 2.
@@ -4066,6 +4061,60 @@ class Assembler:
         if self.pass_num == 2:
             self.warning(f"{operator} list has no closing '>' (M80: Q)")
         return rest[1:]
+
+    def irp_items(self, inner):
+        """The items of an IRP list, from the text inside its <...>.
+
+        MACRO-80 3.44 ends an item at a ',', a ';', a blank or a tab, and
+        skips the blanks in front of one: `IRP P,<A;B;C>' and `<A B>' are
+        A, B (and C), `<A;;B>' and `<A ,B>' A, an empty item and B, and
+        `<A;>' and `<A >' A and an empty item.  An item that starts with a
+        `%' is an expression, to a ',' or a ';' (`<%1 + 1,5>' is 2 and 5).
+        MAC and RMAC end an item at a comma only, so `<A ,B>' is A and B,
+        and they flag a ';' in the list B: with --dri it is an error.  um80
+        split the list at its commas, and 4558825 made a ';' inside the
+        <...> text, so `<A;B;C>' was the one item `A;B;C', without a word
+        (M80 does read a ';' inside a macro call's <...> as text: `MM
+        <1;2>' passes `1;2', and an `IRP P,<Q>' in the body goes round
+        twice).
+
+        A nested <...> group, a quoted string and a '!'-quoted character
+        are part of an item: `<<A;B>,C>' is `<A;B>' and C (and
+        process_macro_argument() drops the brackets), `<1!,2,3>' is `1!,2'
+        and 3.  A comma at the end of the list is an empty item, as in
+        M80, MAC and RMAC (`<A,>' is A and an empty item; um80 dropped it),
+        and `<>' is one empty item.
+        """
+        items = []
+        i, n = 0, len(inner)
+        while True:
+            while i < n and inner[i] in ' \t':
+                i += 1
+            start, depth = i, 0
+            ends = ',;' if self.dri or inner.startswith('%', i) else ',; \t'
+            while i < n:
+                ch = inner[i]
+                if ch == '!' and i + 1 < n:
+                    i += 2
+                    continue
+                if self._starts_string(inner, i):
+                    i = self._string_end(inner, i)
+                    continue
+                if ch == '<':
+                    depth += 1
+                elif ch == '>':
+                    depth = max(depth - 1, 0)
+                elif not depth and ch in ends:
+                    if ch != ';' or not self.dri:
+                        break
+                    self.error(f"';' in the list of an IRP, <{inner}>: MAC and"
+                               " RMAC flag it B (M80 ends the item there)")
+                i += 1
+            item = inner[start:i]
+            items.append(item.rstrip() if ends == ',;' else item)
+            if i >= n:
+                return items
+            i += 1
 
     @staticmethod
     def _starts_string(text, i):

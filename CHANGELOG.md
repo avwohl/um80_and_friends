@@ -262,10 +262,12 @@ on 0.3.50.
   assembled, and it warned "Unterminated conditional". Without `--dri` um80
   still carries them on, as M80 does.
 - um80 assembler: a `;` inside `<...>` in the arguments of a macro call, or
-  in the list of an `IRP` or `IRPC`, is now text, not the start of a
-  comment, as in MACRO-80, MAC and RMAC. DRI's `CONTROL/DISKDEF.LIB` passes
-  `<;sec per track>` to a macro whose body is `dw data comment`; um80 cut the
-  line at the `;`, so the argument was `<` ("Cannot parse expression").
+  in the list of an `IRPC` or in a nested `<...>` in the list of an `IRP`,
+  is now text, not the start of a comment, as in MACRO-80, MAC and RMAC.
+  DRI's `CONTROL/DISKDEF.LIB` passes `<;sec per track>` to a macro whose
+  body is `dw data comment`; um80 cut the line at the `;`, so the argument
+  was `<` ("Cannot parse expression"). In the list of an `IRP` a `;` ends an
+  item (see below).
 - um80 assembler: an `IRPC` with an empty string (`IRPC C,`) is no longer
   an error. um80 stopped with "IRPC requires parameter and string", and the
   body's `ENDM` was then "ENDM without MACRO". MAC and RMAC go round once
@@ -293,6 +295,19 @@ on 0.3.50.
   parse expression", and with `--dri` MAC's relational operators read `DB
   P` as `(1<2)>3`, 0FFH, without a word. A `<` with no `>` is left out
   too, and um80 warns (M80 flags it `X`, MAC and RMAC `V`).
+- um80 assembler: an item of an `IRP` list now ends where MACRO-80 ends it,
+  at a `,`, a `;`, a blank or a tab: `IRP P,<A;B;C>` goes round three times,
+  and `<A;;B>` and `<1,;2>` have an empty item in the middle. um80 had
+  made a `;` in the list text, so `<A;B;C>` was one item, `A;B;C`, without
+  a word (0.3.50 cut the line there, took `A`, and warned), and a macro's
+  `IRP P,<Q>` called with `<1;2>` went round once. A blank ends an item too:
+  `<A B>` is A and B, and `<A ,B>` and `<A >` have an empty item after A,
+  as in M80; um80 took `A B` for one item. MAC and RMAC end an item at a
+  comma only (`<A ,B>` is A and B), and flag a `;` in the list `B`: with
+  `--dri` um80 does the same, and a `;` is an error. A comma at the end of
+  the list is an empty item, in M80, MAC and RMAC: `<A,>` is A and an
+  empty item, and `<,>` two empty items; um80 dropped the last one. A `%`
+  item is an expression to its `,` or `;` (`<%1 + 1,5>` is 2 and 5).
 
 ## [0.3.50] - 2026-09-25
 

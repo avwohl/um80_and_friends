@@ -180,7 +180,11 @@ is `K'L` in both). RMAC folds case in a string, as um80 does; MAC 2.0 does
 not.
 Only an argument that starts with `%` is a value, as in MAC; M80 also reads
 `A%E` as `A` and E's value, and evaluates a `%` in an `IRP` list, which MAC
-reads as text. An `IRPC` with an empty string goes round once, with its
+reads as text. An item of an `IRP` list ends at a comma only, as in MAC
+(`<A ,B>` is A and B), and a `;` in the list, outside a nested `<...>`, is an
+error, as MAC and RMAC flag it `B`; M80 ends an item at a `,`, a `;`, a blank
+or a tab, so there `<A;B>` and `<A B>` are A and B, and `<A ,B>` is A, an
+empty item and B. An `IRPC` with an empty string goes round once, with its
 parameter empty, as in MAC; M80 does so only where a macro's empty argument
 made the string empty. A label on the `ENDM` that ends a body is defined where
 the body ends, each time, as in MAC (DRI's `STACK.LIB` ends `SIZ` with `STACK:
