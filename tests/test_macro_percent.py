@@ -211,3 +211,48 @@ def test_m80_evaluates_a_percent_in_an_irp_list():
         assert len(asm.warnings) == 1 and 'last item' in asm.warnings[0]
     ok, _, errors = _assemble(irp.format('%VV,2'), dri=True)
     assert not ok and len(errors) == 1, errors
+
+
+# A `%' with no expression after it.  M80 passes 0, without a flag (`MM %'
+# is 0, `MM A%' A0), and MAC and RMAC pass 0 and flag it E; um80 passed
+# `%', without a word.
+THREE_TEXT = ("MM\tMACRO\tP,Q,R\n\tDB\t0EEH\n\tDB\t'Z&P'\n\tDB\t0EEH\n"
+              "\tDB\t'Y&Q'\n\tDB\t0EEH\n\tDB\t'X&R'\n\tENDM\n")
+
+
+@pytest.mark.parametrize('call, m80', [
+    ('%', 'ee5a30ee5900ee5800'),
+    ('%,A', 'ee5a30ee5941ee5800'),
+    ('% ,A', 'ee5a30ee5941ee5800'),
+    ('%  ,B', 'ee5a30ee5942ee5800'),
+    ('%;X', 'ee5a30ee5900ee5800'),
+    ('%\t;X', 'ee5a30ee5900ee5800'),
+    ('A,%', 'ee5a41ee5930ee5800'),
+    ('A,%,B', 'ee5a41ee5930ee5842'),
+    ('A%', 'ee5a4130ee5900ee5800'),
+    ('A%,B', 'ee5a4130ee5942ee5800'),
+    ('<A>%', 'ee5a4130ee5900ee5800'),
+])
+def test_m80_a_percent_with_no_expression_is_0(call, m80):
+    assert _code(THREE_TEXT + "\tMM\t" + call + "\n") == m80
+
+
+def test_m80_a_percent_with_no_expression_elsewhere():
+    assert _code("GEN\tMACRO\tN,M\n\tDB\t0EEH,N,0EEH,M\n\tENDM\n\tGEN\t%,5\n") \
+        == 'ee00ee05'
+    assert _code("\t.RADIX\t16\n" + THREE_TEXT + "\tMM\t%\n") == 'ee5a30ee5900ee5800'
+    # M80 reads an IRP item as a macro argument: `<%,A>' is 0 and A.
+    assert _code("\tIRP\tX,<%,A>\n\tDB\t0EEH,'Q&X'\n\tENDM\n") == 'ee5130ee5141'
+
+
+@pytest.mark.parametrize('call', ['%', '%,A', '% ,A', 'A,%', '%;X'])
+def test_mac_flags_a_percent_with_no_expression_e(call):
+    ok, _, errors = _assemble(THREE_TEXT + "\tMM\t" + call + "\n", dri=True)
+    assert not ok and any("'%' with no expression" in e for e in errors), errors
+
+
+def test_mac_a_percent_that_starts_no_argument_is_still_text():
+    # `MM A%' passes `A%' in MAC and RMAC; `IRP X,<%,A>' goes round `%' and A.
+    assert _code(THREE_TEXT + "\tMM\tA%\n", dri=True) == 'ee5a4125ee59ee58'
+    assert _code("\tIRP\tX,<%,A>\n\tDB\t0EEH,'Q&X'\n\tENDM\n", dri=True) \
+        == 'ee5125ee5141'

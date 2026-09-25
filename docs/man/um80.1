@@ -62,8 +62,9 @@ arguments of a macro call or the list of an IRP or IRPC, which MAC reads as
 text, are kept.
 A macro body is matched to its parameters with MAC's names, which end at a
 \fB$\fR, \fB_\fR or \fB.\fR, and with RMAC's rules for an \fB&\fR in a
-string; only an argument that starts with \fB%\fR is a value, and a
-\fB<\fR or \fB>\fR in it is an operator; an item of
+string; only an argument that starts with \fB%\fR is a value, a
+\fB<\fR or \fB>\fR in it is an operator, and a \fB%\fR with nothing
+after it is an error (MACRO-80 passes 0); an item of
 an IRP list ends at a comma only, and a \fB;\fR in the list is an error
 (MACRO-80 ends an item at a comma, a \fB;\fR, a blank or a tab); the
 arguments of a macro call end at a blank after one, and text after it

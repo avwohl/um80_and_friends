@@ -5102,13 +5102,23 @@ class Assembler:
         is a value, and --dri reads a name in the expression without its
         `$', so `%N$C' is the value of NC.  A `%' inside a <...> group is
         text, as is one after `!' or in a quoted string; in M80 one after
-        a group is a value (`<A>%1+1' is A2).  In MAC a `<' or a `>' in the
+        a group is a value (`<A>%1+1' is A2).  A `%' with no expression
+        after it is 0: `MM %' passes 0 in M80, and in MAC and RMAC, which
+        flag it E (with --dri an error).  In MAC a `<' or a `>' in the
         expression is an operator (`MM %1<2,3', macro_call_arguments()).
         """
         i = self._percent_position(arg)
-        if i is None or not arg[i + 1:].strip():
+        if i is None:
             return arg
         expr = arg[i + 1:]
+        if not expr.strip():
+            # `MM %': M80 passes 0 (`MM A%' A0), without a flag, and MAC
+            # and RMAC pass 0 and flag it E.  um80 passed `%'.
+            if self.dri:
+                self.error(f"'%' with no expression after it, in the macro"
+                           f" argument '{arg}': MAC and RMAC flag it E and"
+                           " pass 0")
+            return arg[:i] + '0'
         if self.dri:
             expr = drop_name_dollars(expr)
         # An undefined name is an error, as in M80 and MAC (U), where it

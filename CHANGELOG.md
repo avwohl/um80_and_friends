@@ -386,6 +386,11 @@ on 0.3.50.
   `DB P` and `DB Q`). um80 read `<2,3` as a `<...>` group that ran to the
   end of the line, and reported "Cannot parse expression", and a `;` after
   such a `<` was not a comment (`MM %1<2;X`).
+- um80 assembler: a `%` with no expression after it in a macro argument is
+  now 0, as in MACRO-80, which passes `MM %` as 0 and `MM A%` as A0, and
+  goes round 0 and A for `IRP X,<%,A>`, without a flag; um80 passed `%`,
+  without a word. MAC and RMAC pass 0 and flag it `E`; with `--dri` it is
+  now an error.
 
 ## [0.3.50] - 2026-09-25
 
