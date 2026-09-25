@@ -172,6 +172,12 @@ LINK-80 3.44 under cpmemu, and each has a regression test that fails on
   assembled, and it warned "Unterminated conditional". Without `--dri` um80
   still carries them on, as M80 does.
 
+- um80 assembler: a `;` inside `<...>` in the arguments of a macro call, or
+  in the list of an `IRP` or `IRPC`, is now text, not the start of a
+  comment, as in MACRO-80, MAC and RMAC. DRI's `CONTROL/DISKDEF.LIB` passes
+  `<;sec per track>` to a macro whose body is `dw data comment`; um80 cut the
+  line at the `;`, so the argument was `<` ("Cannot parse expression").
+
 ## [0.3.50] - 2026-09-25
 
 mbasic2025 (https://github.com/avwohl/mbasic2025) rebuilds historic Microsoft

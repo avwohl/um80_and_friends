@@ -1513,12 +1513,21 @@ class Assembler:
             return value - self.segments['DSEG'].org
         return value
 
-    def parse_line(self, line):
-        """Parse a source line, return (label, operator, operands, comment)."""
+    def parse_line(self, line, brackets=False):
+        """Parse a source line, return (label, operator, operands, comment).
+
+        In the arguments of a macro call and the list of an IRP or IRPC a
+        `;' inside <...> is text, not a comment, as in MACRO-80, MAC and
+        RMAC: DRI's CONTROL/DISKDEF.LIB passes `<;sec per track>' to a
+        macro that puts it after a DW.  Such a line is read again with
+        `brackets'.
+        """
+        whole = line
         # Remove comment
         comment = ''
         in_string = False
         string_char = None
+        depth = 0
         for i, ch in enumerate(line):
             if in_string:
                 if ch == string_char:
@@ -1531,7 +1540,9 @@ class Assembler:
                 else:
                     in_string = True
                     string_char = ch
-            elif ch == ';':
+            elif brackets and ch in '<>':
+                depth = depth + 1 if ch == '<' else max(depth - 1, 0)
+            elif ch == ';' and not depth:
                 comment = line[i+1:]
                 line = line[:i]
                 break
@@ -1595,6 +1606,9 @@ class Assembler:
         operator = match.group(1).upper()
         operands = line[match.end():].strip()
 
+        if (comment and not brackets and '<' in operands
+                and (operator in self.macros or operator in ('IRP', 'IRPC'))):
+            return self.parse_line(whole, brackets=True)
         return (label, operator, operands, comment)
 
     def split_operands(self, operands, escape_bang=False):
