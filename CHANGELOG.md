@@ -90,6 +90,12 @@ LINK-80 3.44 under cpmemu, and each has a regression test that fails on
   MAC and RMAC do not let a program define such a name. An operator with
   nothing on one side - `DW EQ` or `DW SHL` with no such symbol, `DW 1 EQ` -
   is an error, as in M80 (`O`); um80 took the missing value for 0.
+- um80 assembler: in Z80 code, `JP P` after a label `P` jumps to it, as in
+  M80, and so do `JP Z`, `JP NZ`, `JP PE` and the rest after labels of those
+  names, defined before or after the jump. um80 stopped with "JP with
+  condition requires address", so uplm80 wrote `JP 0+P` for a jump to its
+  procedure `P`. (M80 3.44 gets one defined further down wrong: its pass 1
+  takes `JP P` for one byte, and it reports a phase error.)
 - um80 assembler: `TYPE` of an expression that is not a name is its mode
   with the defined bit, as in M80: `TYPE 5`, `TYPE 'A'` and `TYPE +2` are
   20H, `TYPE (LAB)` with LAB in CSEG 21H. um80 gave 0 for all of them.

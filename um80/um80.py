@@ -2969,9 +2969,16 @@ class Assembler:
                     self.emit_byte(PREFIX_FD)
                     self.emit_byte(0xE9)
                     return True
-                # Check if it's a condition
-                if op in Z80_CONDITIONS:
-                    self.error("JP with condition requires address")
+                # A condition with no address - but a symbol named like a
+                # condition is the address, as in M80: after `P: NOP',
+                # `JP P' is C3 and P (um80 stopped with this error, so
+                # uplm80 wrote `JP 0+P').  One defined further down is a
+                # symbol from the second time through pass 1.
+                if op in Z80_CONDITIONS and not self.names_symbol(op):
+                    if self.pass_num == 2:
+                        self.error("JP with condition requires address")
+                    self.emit_byte(0xC3)
+                    self.emit_word(0)
                     return True
                 # Unconditional JP nn
                 ev = self.eval_operand(ops[0])
