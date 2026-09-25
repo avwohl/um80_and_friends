@@ -76,8 +76,12 @@ LINK-80 3.44 under cpmemu, and each has a regression test that fails on
   were 3). A register operand may be any expression, as in M80 and MAC:
   `DAD 2`, `MOV A,2`, `PUSH PSW+0` and a register name defined further down
   now assemble. An odd number for a register pair (`DAD E`, `PUSH 3`), which
-  um80 took for the pair of the register below it, and an address (`DAD
-  LABEL`, which was `DAD B`) are errors, as in M80 and MAC.
+  um80 took for the pair of the register below it, is an error, as in M80
+  and MAC. An address is read as M80 reads it, without a flag: a label's
+  offset in its segment, or an external's constant, is the number, so with
+  `LAB` two bytes into the code `DAD LAB` is `DAD D` (19H), and with `Y`
+  EXTRN `MOV A,Y` is `MOV A,B`; um80 warns, and RMAC flags it V. 0.3.50 took
+  the offset too, as the pair's encoding (`DAD H`), and rejected an external.
 
 ## [0.3.50] - 2026-09-25
 

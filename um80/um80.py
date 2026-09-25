@@ -1958,8 +1958,15 @@ class Assembler:
         MACRO-80 and DRI's MAC read a register operand as an expression in
         which each register name stands for its number (REG_VALUES): `RD EQU
         D' makes RD 2, and `MOV A,2', `DAD RD' and `PUSH PSW+0' are MOV A,D,
-        DAD D and PUSH PSW.  None if the operand is not an absolute value,
-        or is a symbol the pass cannot read yet (the caller reports it).
+        DAD D and PUSH PSW.  None if the operand cannot be read, or is a
+        symbol the pass cannot read yet (the caller reports it).
+
+        An address is read as M80 reads it: a relocatable value is its
+        offset in its segment, an external its constant.  `DAD LAB', LAB two
+        bytes into the code, is DAD D, and `MOV A,Y' with Y EXTRN is MOV
+        A,B.  M80 flags nothing, RMAC flags it V, and um80 warns; um80 0.3.50
+        took a relocatable label's offset too.  Anything else computed from
+        an address (`HIGH LAB', `LAB-Y') is None, as it was in 0.3.50.
         """
         name = text.strip().upper()
         if name in REG_VALUES:
@@ -1973,8 +1980,12 @@ class Assembler:
         if len(self.errors) > errors:
             del self.errors[errors:]
             return None
-        if ev.kind != 'abs':
+        if ev.kind not in ('abs', 'rel', 'ext'):
             return None
+        if ev.kind != 'abs' and self.pass_num == 2 and 0 <= ev.value <= 7:
+            what = 'an external' if ev.kind == 'ext' else 'an address'
+            self.warning(f"register operand '{text.strip()}' is {what}: its offset,"
+                         f" {ev.value}, is taken for the register, as in M80 (RMAC: V)")
         return ev.value
 
     def resolve_register_alias(self, name):

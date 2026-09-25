@@ -214,9 +214,17 @@ A register pair operand is the number of the pair's first register: 0 is B
 So `DAD 2` is `DAD D`, `PUSH 6` is `PUSH PSW`, `LXI SP-2,0` is `LXI H,0`,
 and `MOV A,2` is `MOV A,D` - any expression with an absolute value will do,
 including a name defined further down. An odd number for a pair (`DAD E`,
-`DAD 1`), `LDAX`/`STAX` of anything but B or D, a number above 7 for a
-register, and an address (`DAD LABEL`) are errors, as in M80 (`A`) and MAC
-(`R` or `V`). um80 also takes `BC`, `DE` and `HL` for B, D and H.
+`DAD 1`), `LDAX`/`STAX` of anything but B or D, and a number above 7 for a
+register are errors, as in M80 (`A`) and MAC (`R` or `V`). um80 also takes
+`BC`, `DE` and `HL` for B, D and H.
+
+An address is a number too, as M80 reads it: a label's offset in its segment,
+or an external's constant (`Y+2` is 2). With `LAB` two bytes into the code,
+`DAD LAB` is `DAD D`, and with `Y` EXTRN, `MOV A,Y` is `MOV A,B`. M80 flags
+nothing; RMAC flags `V`, and um80 warns. (In MAC, which has no relocatable
+values, a label is its address, so `DAD LAB` is an error only when that is
+not a register's number.) Anything else computed from an address -
+`HIGH LAB`, `LAB-Y` - is an error in um80, as it was in 0.3.50.
 
 Up to 0.3.50 um80 took a value for a pair's own encoding (0 BC, 1 DE, 2 HL,
 3 SP), so `RD EQU D` then `DAD RD` was `DAD H`, and an odd value was quietly

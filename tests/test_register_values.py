@@ -12,6 +12,12 @@ The fixtures are the .REL files the genuine M80 3.44 writes; MAC and RMAC
 assemble the same bytes.  An odd number for a register pair (`DAD E',
 `DAD 1', `PUSH 3'), `LDAX H' and a register number above 7 are errors in all
 three: M80 flags them A, MAC and RMAC R or V.
+
+An address is a register operand too, in M80: its offset in its segment, or
+an external's constant, is the number, and nothing is flagged.  `DAD LAB',
+LAB two bytes into the code, is DAD D; `MOV A,Y' with Y EXTRN is MOV A,B.
+um80 0.3.50 took a relocatable label's offset as well (for a pair, as the
+pair's encoding).  RMAC flags it V.
 """
 
 import os
@@ -81,11 +87,63 @@ def test_ldrbdos_register_pairs():
     assert code == bytes([0xD5, 0xC5, 0xE5])
 
 
+# Labels in the code, data and a COMMON block, an EXTRN (also as Y##) and
+# a name equated further down to a label, each used as a register.
+ADDRESSES = ("\textrn\ty\n"
+             "\tnop\n\tnop\nlab2:\tnop\nlab3:\tnop\nlab4:\tnop\n\tnop\n\tnop\nlab7:\n"
+             "\tmov\ta,lab2\n\tmov\tlab7,a\n\tmvi\tlab3,5\n\tinr\tlab4\n\tadd\tlab7\n"
+             "\tdad\tlab2\n\tpush\tlab4\n\tpop\tlab2\n\tlxi\tlab4,1234h\n\tinx\tlab2\n"
+             "\tldax\tlab2\n\tstax\tlab2-2\n\tdad\tlab4+2\n\tpush\tlab4+2\n"
+             "\tmov\ta,y\n\tmov\ta,y+2\n\tdad\ty##+4\n\tpush\tdl\n\tdcx\tcl\n"
+             "\tmov\ta,fw\n\tmov\ta,lab4-lab2\n"
+             "\tdseg\n\tds\t2\ndl:\n\tcommon\t/cb/\n\tds\t4\ncl:\n\tcseg\n"
+             "fw\tequ\tlab4+1\n\tend\n")
+M80_ADDRESSES = bytes.fromhex(
+    '8455228080090d0a500401351f0000000000000000007a3f8780a2443865cad1108d0241'
+    '30d00872f53c1e852d5159f4f52e000097010041486852f00009782004b47c0230000056'
+    '670000009e1a')
+
+
+def test_address_as_register_is_its_offset_as_m80():
+    ok, code, errors = _assemble(ADDRESSES)
+    assert ok, errors
+    assert code == _code(M80_ADDRESSES)
+    assert code.hex() == '00' * 7 + '7a7f1e05248719e5d1213412131a0239f5787a29d52b7d7a'
+
+
+def test_address_as_register_is_a_warning():
+    # M80 flags nothing; RMAC flags V.  um80 assembles it and says so.
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, 't.mac')
+        with open(p, 'w') as f:
+            f.write("\textrn\ty\n\tnop\n\tnop\nlab:\tdad\tlab\n\tmov\ta,y\n"
+                    "\tmov\ta,lab-lab\n\tend\n")
+        asm = Assembler()
+        assert asm.assemble(p)
+    warned = [w for w in asm.warnings if 'register operand' in w]
+    assert len(warned) == 2, asm.warnings
+    assert "'lab' is an address: its offset, 2," in warned[0]
+    assert "'y' is an external: its offset, 0," in warned[1]
+
+
+@pytest.mark.parametrize('line', ['mov\ta,high lab', 'mov\ta,lab-y', 'dad\tlab and 7'])
+def test_other_values_from_an_address_are_errors(line):
+    # Not an address plus a constant: as in 0.3.50, not a register.  (M80
+    # flags `LAB AND 7' and takes HIGH LAB and LAB-Y.)
+    ok, _, errors = _assemble(f"\textrn\ty\n\tnop\n\tnop\nlab:\t{line}\n\tend\n")
+    assert not ok
+    assert any('Invalid register' in e for e in errors), errors
+
+
 @pytest.mark.parametrize('line', [
     'dad\tre', 'dad\t1', 'push\t3', 'inx\t5', 'ldax\th', 'stax\t6', 'mov\ta,8',
-    'mvi\t9,0', 'dad\tlab', 'mov\ta,lab',
+    'mvi\t9,0',
+    # An address whose value is not a register's number, as M80 flags it A.
+    'dad\tlab1', 'push\tlab1', 'mov\ta,lab8', 'mvi\tlab8,0', 'ldax\tlab1+3',
+    'inx\ty+1', 'mov\ta,y+8', 'pop\ty-2',
 ])
 def test_not_a_register_is_an_error(line):
-    ok, _, errors = _assemble(f"re\tequ\te\nlab:\tnop\n\t{line}\n\tend\n")
+    ok, _, errors = _assemble("re\tequ\te\n\textrn\ty\n\tnop\nlab1:\tnop\n"
+                              + "\tnop\n" * 6 + f"lab8:\n\t{line}\n\tend\n")
     assert not ok
     assert any('Invalid register' in e for e in errors), errors

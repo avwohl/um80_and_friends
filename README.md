@@ -361,7 +361,9 @@ RD      EQU     D                   ; 2: register D, or the pair DE
 ```
 
 A register pair operand is the number of its first register: 0 B, 2 D, 4 H,
-6 SP or PSW. An odd number (`DAD E`) is an error, as in M80 and MAC. See
+6 SP or PSW. An odd number (`DAD E`) is an error, as in M80 and MAC. An
+address is its offset in its segment, as in M80 (`DAD LAB`, with `LAB` two
+bytes into the code, is `DAD D`), with a warning. See
 [docs/EXTENSIONS.md](docs/EXTENSIONS.md#register-names-as-values-equ-of-a-register).
 
 ### PUSH A / POP A
@@ -450,7 +452,7 @@ Digital Research's MAC 2.0 and RMAC 1.1:
 | `test_truncate_m80.py` | `-t` cuts names to M80's 6 characters, so a um80 object links with an M80 object's `FBUFP2` |
 | `test_parity_bit.py` | (DRI) A source byte's bit 7 is cleared: a line ending CR 8AH ends the line, C1H in a string is `A`, and an 8AH not after a CR is left out, as in M80 |
 | `test_equ_name_column.py` | (DRI) The name of an `EQU`, `SET`, `DEFL`, `ASET` or `MACRO` may be indented |
-| `test_register_values.py` | (DRI) A register operand is an expression and a register name its number: `RD EQU D` / `DAD RD` is `DAD D`; an odd register pair is an error |
+| `test_register_values.py` | (DRI) A register operand is an expression and a register name its number: `RD EQU D` / `DAD RD` is `DAD D`; an odd register pair is an error; an address is its offset, as in M80 |
 | `test_dri_names.py` | (DRI) `--dri` ignores a `$` inside a name, as MAC and RMAC do; without it `$` is part of the name, as in M80 |
 
 Further tests cover the toolchain more broadly: `test_ds_org.py` (DS/ORG and
