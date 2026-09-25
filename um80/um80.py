@@ -4176,63 +4176,62 @@ class Assembler:
         result.append(out_pat.sub(out_repl, line[pos:]))
         return ''.join(result)
 
-    def process_percent_operator(self, line):
-        """Process % operator (expression -> number), skipping quoted strings."""
-        spans = self._string_spans(line)
-        if not spans:
-            return self._percent_segment(line)
-        result = []
-        pos = 0
-        for (s, e) in spans:
-            result.append(self._percent_segment(line[pos:s]))
-            result.append(line[s:e])
-            pos = e
-        result.append(self._percent_segment(line[pos:]))
-        return ''.join(result)
+    def percent_argument(self, arg):
+        """A macro argument with its `%expression' replaced by the value.
 
-    def _percent_segment(self, line):
-        """Process % operator within a string-free segment."""
-        result = []
+        `%' makes an argument a value: the expression after it is
+        evaluated when the macro is called, and the argument is the value's
+        digits in the current radix, as MACRO-80 writes them: with .RADIX
+        16 26 is 1A and 160 is 0A0 (a 0 before a letter, and no H), with
+        .RADIX 8 it is 32, and in any other radix decimal - 26, even with
+        .RADIX 2.  MAC has only decimal.  The expression runs to the end of
+        the argument, blanks and all (`%(A + 1)', `% A').  MAC and M80 both
+        evaluate it at the call: `GEN %E' passes E's value then, however
+        the body changes E, and a call in a REPT body inside a macro is
+        evaluated on each repetition - DRI's SELECT.LIB counts its cases so.
+        The digits substitute like any other text, so `LB&N:' is LB10 and
+        `DB '&N'' is '10'.  In M80 the `%' may follow other text (`A%E' is
+        A7); in MAC and RMAC (--dri) only an argument that starts with `%'
+        is a value, and --dri reads a name in the expression without its
+        `$', so `%N$C' is the value of NC.  An argument in <...> is text,
+        as is a `%' after `!' or in a quoted string.
+        """
+        i = self._percent_position(arg)
+        if i is None or not arg[i + 1:].strip():
+            return arg
+        expr = arg[i + 1:]
+        if self.dri:
+            expr = drop_name_dollars(expr)
+        value = self.number_operand(expr, 'The % operator',
+                                    allow_undefined=True).value & 0xFFFF
+        if self.radix == 16:
+            text = f'{value:X}'
+            text = '0' + text if text[0] > '9' else text
+        elif self.radix == 8:
+            text = f'{value:o}'
+        else:
+            text = str(value)
+        return arg[:i] + text
+
+    def _percent_position(self, arg):
+        """Where the `%' that makes `arg' a value is, or None."""
+        if self.dri:
+            return 0 if arg.startswith('%') else None
         i = 0
-        while i < len(line):
-            if line[i] == '%':
-                # Find the expression following %
-                # Expression ends at comma, space, or end of line
-                j = i + 1
-                paren_depth = 0
-                while j < len(line):
-                    ch = line[j]
-                    if ch == '(':
-                        paren_depth += 1
-                    elif ch == ')':
-                        if paren_depth > 0:
-                            paren_depth -= 1
-                        else:
-                            break
-                    elif paren_depth == 0 and ch in ',; \t':
-                        break
-                    j += 1
-                expr = line[i + 1:j]
-                if expr:
-                    val = self.number_operand(expr, 'The % operator',
-                                              allow_undefined=True).value & 0xFFFF
-                    # Convert to current radix
-                    if self.radix == 16:
-                        result.append(f'{val:X}H')
-                    elif self.radix == 8:
-                        result.append(f'{val:o}O')
-                    elif self.radix == 2:
-                        result.append(f'{val:b}B')
-                    else:
-                        result.append(str(val))
-                    i = j
-                else:
-                    result.append('%')
-                    i += 1
-            else:
-                result.append(line[i])
-                i += 1
-        return ''.join(result)
+        while i < len(arg):
+            ch = arg[i]
+            if ch == '<':
+                return None
+            if ch == '!':
+                i += 2
+                continue
+            if self._starts_string(arg, i):
+                i = self._string_end(arg, i)
+                continue
+            if ch == '%':
+                return i
+            i += 1
+        return None
 
     def expand_macro(self, name, operands):
         """Expand a macro."""
@@ -4244,10 +4243,12 @@ class Assembler:
         # Parse actual arguments, handling ! operator. '!' quotes the next
         # character (including an argument-separating comma), so split with
         # escape_bang and let process_macro_argument() resolve the escapes.
+        # A `%expression' is evaluated now, at the call (percent_argument()).
         args = []
         if operands:
             raw_args = self.split_operands(operands, escape_bang=True)
-            args = [self.process_macro_argument(arg) for arg in raw_args]
+            args = [self.process_macro_argument(self.percent_argument(arg))
+                    for arg in raw_args]
 
         # Build substitution map
         subst = {}
@@ -4294,9 +4295,6 @@ class Assembler:
                 pat = re.compile(r'\b' + re.escape(local_sym) + r'\b', re.IGNORECASE)
                 expanded = self._sub_outside_strings(
                     expanded, pat, local_sym + local_suffix)
-
-            # Process % operator (convert expressions to numbers)
-            expanded = self.process_percent_operator(expanded)
 
             # Process the expanded line
             self.process_line(expanded)

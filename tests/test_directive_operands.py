@@ -52,7 +52,7 @@ TAIL = "\tDSEG\nDL:\tDS 2\n\tEND\n"
     "\tORG HIGH LAB\n",
     "\tORG DL\n",
     "\tDS -LAB2\n",
-    "M\tMACRO\n\tDB %LOW(LAB)\n\tENDM\n\tM\n",
+    "M\tMACRO\tX\n\tDB X\n\tENDM\n\tM %LOW(LAB)\n",
 ])
 def test_link_time_operand_of_a_directive_is_an_error(body):
     ok, asm = _asm(HEAD + body + TAIL)

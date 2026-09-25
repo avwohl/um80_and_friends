@@ -148,7 +148,10 @@ A$BC` writes `ABC`, as RMAC does. Kept as they are:
   four times. Where an argument becomes a name in the body it loses the `$`
   there: `MM NMB$LST`, with a body of `LDA P`, loads `NMBLST`. The macro's
   name, a label, and the parameter of an `IRP` or `IRPC` are names and lose
-  theirs.
+  theirs. An argument that starts with `%` is a value, taken at the call, and
+  a name in its expression loses the `$`: `GEN %N$C` passes the value of
+  `NC`. Only an argument that starts with `%` is one, as in MAC; M80 also
+  reads `A%E` as `A` and E's value.
 
 A line of a `MACRO`, `REPT`, `IRP` or `IRPC` body is kept as written, and read
 when it is expanded, because MAC finds a formal parameter in the body as

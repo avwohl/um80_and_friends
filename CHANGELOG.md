@@ -87,6 +87,24 @@ LINK-80 3.44 under cpmemu, and each has a regression test that fails on
   EXTRN `MOV A,Y` is `MOV A,B`; um80 warns, and RMAC flags it V. 0.3.50 took
   the offset too, as the pair's encoding (`DAD H`), and rejected an external.
 
+- um80 assembler: a macro argument written `%expression` is now the
+  expression's value when the macro is called, as in MACRO-80, MAC and RMAC.
+  um80 left the `%` in the argument and evaluated each `%` in a body line as
+  that line was expanded, so a call in a `REPT` body inside a macro got the
+  same value on every repetition: DRI's `CONTROL/SELECT.LIB` builds its case
+  table so, and um80 gave `10 01 10 01 10 01` for M80's and MAC's `10 01 15
+  01 1A 01` (and `LXI H,011FH` for `LXI H,013AH`). A body that changed the
+  symbol before it used the argument read the new value; the value was not
+  text, so `LB&N:` was a parse error and `DB '&N'` gave `%E`; and with
+  `--dri`, where the argument keeps its `$`, `GEN %N$C` looked up `N$C` as
+  written, an undefined name, and passed 0 without a word (MAC: the value of
+  `NC`). The argument is now the value's digits in the current radix, as M80
+  writes them (with `.RADIX 16`, 26 is `1A` and 160 `0A0`), and with `--dri`
+  a name in the expression loses its `$`. M80 also evaluates a `%` after
+  other text (`A%E` is `A7`); with `--dri` only an argument that starts with
+  `%` is a value, as in MAC. A `%` in a body line that is not an argument is
+  an error, as in M80 (O) and MAC (E); um80 evaluated it.
+
 ## [0.3.50] - 2026-09-25
 
 mbasic2025 (https://github.com/avwohl/mbasic2025) rebuilds historic Microsoft

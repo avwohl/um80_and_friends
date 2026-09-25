@@ -158,6 +158,15 @@ Declare local symbols within a macro.
 .TP
 .B EXITM
 Exit macro expansion early.
+.TP
+.B %\fIexpression\fR
+As a macro argument: the value of the expression when the macro is called,
+as digits in the current radix, written as MACRO-80 writes them (with
+.B .RADIX 16,
+26 is 1A and 160 is 0A0).
+With
+.B \-\-dri
+only an argument that starts with % is a value, as in MAC.
 .SS Repeat Blocks
 .TP
 .B REPT \fIcount\fR
