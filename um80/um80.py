@@ -4549,6 +4549,15 @@ class Assembler:
                 if seg == ADDR_COMMON_REL:
                     self.select_common(block)
                 self.output.write_chain_external(seg, offset, name)
+        # And, as MACRO-80 does, an empty chain (its head is absolute 0, where
+        # LINK-80 chains end) for every other external: one declared and never
+        # used, or used only in a link-time expression.  It is what tells the
+        # linker the module needs the symbol, so that it searches a library
+        # for it - `EXTRN X' alone pulls X's module out of a library - and
+        # reports it if nothing defines it.
+        for sym in self.symbols.values():
+            if sym.external and not sym.defined and sym.name not in self.ext_chains:
+                self.output.write_chain_external(ADDR_ABSOLUTE, 0, sym.name)
 
         # Write end with optional entry point
         if self.entry_point:

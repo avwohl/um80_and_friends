@@ -658,17 +658,29 @@ class Linker:
         return list(undefined)
 
     def resolve_externals(self):
-        """Check that all external references can be resolved."""
+        """Check that all external references can be resolved.
+
+        An external that nothing defines is an error when something refers
+        to it.  One a module only declares - an EXTRN no instruction uses,
+        which MACRO-80 writes as an empty chain - is a warning: LINK-80 lists
+        it with its undefined globals and writes the program all the same,
+        and there is nothing in the program to fill in.  (One used only in a
+        link-time expression is an error when the expression is computed.)
+        """
         undefined = {}
         for module in self.modules:
-            for name in module.externals:
+            for name, refs in module.externals.items():
                 base_name, _ = self._split_offset_name(name)
                 if base_name not in self.globals or not self.globals[base_name][3]:
-                    undefined[name] = True
+                    undefined[name] = undefined.get(name, False) or bool(refs)
 
-        if undefined:
-            for name in undefined:
-                self.error(f"Undefined symbol: {name}")
+        for name, used in undefined.items():
+            if not used:
+                self.warning(f"Undefined symbol: {name} (declared EXTRN, never used)")
+        if any(undefined.values()):
+            for name, used in undefined.items():
+                if used:
+                    self.error(f"Undefined symbol: {name}")
             return False
         return True
 
