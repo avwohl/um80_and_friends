@@ -135,7 +135,10 @@ on 0.3.50.
   macro, a `REPT` or an `INCLUDE` file that has one. um80 went on and
   assembled what followed (`DB 1 / END / DB 2` was 01 02), and a label
   after the `END` was defined, where all three report it undefined. An `END`
-  in a false `IF` is still skipped.
+  in a false `IF` is still skipped. An `END` in a `MACLIB` file ends the
+  source too, as in M80, which reads one as an `INCLUDE` file, and um80 says
+  so in a warning; with `--dri` it ends only the library, as in MAC and RMAC,
+  which go on after the `MACLIB` and take no start address from it.
 - um80 assembler: a statement whose first word is no instruction, directive
   or macro is a list of values assembled as `DB`, as in M80: after `FOO EQU
   5`, `FOO` is the byte 05, `FOO+1,'AB'` is 06 41 42 and `LAB: 5,6` is 05 06.

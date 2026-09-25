@@ -227,6 +227,12 @@ them (12H OR 0F00H, 2, 03H), and so does um80 without `--dri`. MAC's order,
 highest first: `* / MOD SHL SHR`, `+ -`, `EQ LT LE GT GE NE` (and `= < <= >
 >= <>`), `NOT`, `AND`, `OR XOR`, `HIGH LOW`.
 
+**An `END` in a `MACLIB` library ends the library.** MAC and RMAC stop
+reading a library at its `END` and go on with the source after the `MACLIB`,
+and the address on that `END` is not the start address. M80 reads a `MACLIB`
+file as an `INCLUDE` file, so its `END` ends the source, and so does um80
+without `--dri`, with a warning.
+
 Where MAC, RMAC and M80 agree, um80 behaves that way with or without `--dri`:
 a source byte's bit 7 is cleared (a line ending CR 8AH is a line end), the name
 of an `EQU`, `SET` or `MACRO` may be indented, and in 8080 code a register name

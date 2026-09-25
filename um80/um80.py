@@ -3916,7 +3916,8 @@ class Assembler:
                 return True
 
             # Process the include file
-            self.process_include_file(include_path)
+            self.process_include_file(include_path,
+                                      library=(operator == 'MACLIB'))
             return True
 
         # MACRO definition - starts collecting
@@ -4849,10 +4850,19 @@ class Assembler:
 
         return None
 
-    def process_include_file(self, filepath):
-        """Process an include file."""
+    def process_include_file(self, filepath, library=False):
+        """Process an include file.
+
+        An END in it ends the source, as in MACRO-80, which reads a MACLIB
+        file as an INCLUDE file.  With --dri, a MACLIB file (`library') is
+        MAC's and RMAC's library: its END ends the library, and the source
+        goes on after the MACLIB; the address on that END is not the start
+        address (RMAC's REL has none).  Without --dri um80 warns, as the
+        rest of a DRI source is then left out, without a word from M80.
+        """
         # Save current state
         saved_line_num = self.line_num
+        saved_entry_point = self.entry_point
 
         # Push onto include stack
         self.include_stack.append((filepath, saved_line_num))
@@ -4878,6 +4888,15 @@ class Assembler:
             # Pop from include stack and restore line number
             self.include_stack.pop()
             self.line_num = saved_line_num
+
+        if library and self.ended:
+            if self.dri:
+                self.ended = False
+                self.entry_point = saved_entry_point
+            elif self.pass_num == 2:
+                self.warning(f"END in MACLIB file {os.path.basename(filepath)}"
+                             " ends the source, as in M80; MAC and RMAC go on"
+                             " after the MACLIB (--dri)")
 
     def assemble_pass(self, lines, pass_num):
         """Run one pass of assembly."""
