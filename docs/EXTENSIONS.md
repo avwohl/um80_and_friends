@@ -160,7 +160,11 @@ is `DB X$B` after `MM X`; `DB P$1` is not the formal `P$1` (MAC reports it
 undefined), and `LOCAL L$1` declares `L1`. So do a `_` and a `.`: in MAC a
 name is letters, digits, `?` and `@`, where in M80 it is also `$`, `.` and
 `_`, so with the formal `X` MAC reads `'&X_'` as the argument and `_`, and
-M80 as the text `&X_`.
+M80 as the text `&X_`. In a quoted string MAC and RMAC drop every `&` next to
+a parameter, and a name before an `&` is one too (`'X&B'` is the argument and
+`B`); M80 reads only `&X`, and drops the `&` of the first one in a string
+alone (`'&X &X'` is `K &K` there, `K K` in RMAC). RMAC folds case in a string,
+as um80 does; MAC 2.0 does not.
 
 um80 drops each such `$` from a statement as it reads it, so the listing shows
 the statement without them. A `$` in a number (`0001$1111B`) is ignored with

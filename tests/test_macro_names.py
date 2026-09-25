@@ -94,3 +94,42 @@ def test_dri_a_dollar_dot_or_underscore_ends_the_name():
            "MM\tMACRO\tX\n\tDB\tX$1,A$X\n\tDB\t'&X$','&X.','&X_'\n\tENDM\n"
            "\tMM\tK\n")
     assert _code(src, dri=True) == '2122' '4b24' '4b2e' '4b5f'
+
+
+# In a quoted string only a name next to an `&' is a parameter, and M80 and
+# MAC differ on which `&' goes.  One body, `MM K,L':
+STRINGS = ("MM\tMACRO\tX,Y\n"
+           "\tDB\t'&X &X'\n"
+           "\tDB\t'&X&X'\n"
+           "\tDB\t'&X&Z'\n"
+           "\tDB\t'&Q &X'\n"
+           "\tDB\t'A&X B&X'\n"
+           "\tDB\t'&X &X&Y'\n"
+           "\tDB\t'X&Y'\n"
+           "\tDB\t'&X','&X'\n"
+           "\tDB\t'&x &X'\n"
+           "\tDB\t'X&','X&B','AX&','&&X'\n"
+           "\tENDM\n\tMM\tK,L\n"
+           "MN\tMACRO\tABC\n\tDB\t'&abc','&ABC'\n\tENDM\n\tMN\tK\n")
+
+
+def test_m80_drops_the_ampersand_of_the_first_parameter_in_a_string():
+    # M80 3.44: 'K &K', 'KK', 'KZ', '&Q K', 'AK B&K', 'K &K&L', 'XL',
+    # 'K','K', 'K &K', 'X&','X&B','AX&','&K', 'K','K'.  Only `&X' is a
+    # parameter, and M80 drops the `&' of the first one in a string (and
+    # of `&X&Y' after it); the later ones keep theirs.  um80 dropped every
+    # `&' before a parameter and none after one ('K&Z').
+    assert _code(STRINGS) == ('4b20264b' '4b4b' '4b5a' '2651204b' '414b2042264b'
+                              '4b20264b264c' '584c' '4b4b' '4b20264b'
+                              '5826' '582642' '415826' '264b' '4b4b')
+
+
+def test_dri_drops_every_ampersand_next_to_a_parameter_in_a_string():
+    # RMAC 1.1: 'K K', 'KK', 'KZ', '&Q K', 'AK BK', 'K KL', 'KL', 'K','K',
+    # 'K K', 'K','KB','AX&','&K', 'K','K'.  A name before an `&' is a
+    # parameter too.  (MAC 2.0 is the same but matches a string as
+    # written: its '&x &X' is '&x K' and '&abc' is '&abc'.)
+    assert _code(STRINGS, dri=True) == ('4b204b' '4b4b' '4b5a' '2651204b'
+                                        '414b20424b' '4b204b4c' '4b4c' '4b4b'
+                                        '4b204b' '4b' '4b42' '415826' '264b'
+                                        '4b4b')

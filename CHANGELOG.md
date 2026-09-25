@@ -131,6 +131,16 @@ LINK-80 3.44 under cpmemu, and each has a regression test that fails on
   and `@`, and a `$`, `_` or `.` ends it (`X$1` is the parameter X, then
   `$1`).
 
+- um80 assembler: in a quoted string in a macro body, the `&` next to a
+  parameter now goes as it goes in MACRO-80, and with `--dri` as in RMAC.
+  M80 drops the `&` of the first `&X` in a string, and one right after it
+  (`'&X&Z'` is `KZ`; um80 gave `K&Z`), but a later `&X` in the same string
+  keeps its `&`: `'&X &X'` is `K &K`, where um80 gave `K K`. MAC and RMAC
+  drop every `&` next to a parameter, and read a name before an `&` as one
+  too: `'X&B'` is `KB` (M80: `X&B`). MAC 2.0 also matches a string's text
+  as written, so `'&abc'` is not its parameter `ABC`; RMAC 1.1, M80 and um80
+  fold case.
+
 ## [0.3.50] - 2026-09-25
 
 mbasic2025 (https://github.com/avwohl/mbasic2025) rebuilds historic Microsoft

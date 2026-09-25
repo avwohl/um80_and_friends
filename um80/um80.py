@@ -4174,8 +4174,15 @@ class Assembler:
         `X?' are other names; `1X' is 1 then X, as in M80 and MAC (15 after
         `MM 5').  Outside a quoted string a name is replaced wherever it
         is, and an `&' next to it on either side is dropped: `A&X' and
-        `X&B'.  Inside a string only `&X' is replaced, and its `&' dropped.
-        Names fold case.
+        `X&B'.  Names fold case.
+
+        Inside a string only a name next to an `&' is a parameter.  In M80
+        that is one after the `&' (`'&X'', `'A&X''), and M80 drops the `&'
+        only in the first one, and in a chain `&X&Y' right after it: `'&X
+        &X'' is 'K &K', `'&X&Y'' KL.  In MAC a name before an `&' is one
+        too (`'X&B'' is KB), and every such `&' goes.  Names fold case here
+        too, as in M80 and RMAC 1.1; MAC 2.0 matches a string as written,
+        so `'&abc'' is not its parameter ABC.
         """
         table = {name.upper(): text for name, text in subst.items() if name}
         if not table:
@@ -4228,22 +4235,39 @@ class Assembler:
     def _substitute_in_string(self, text, table):
         """substitute_macro_params() in a quoted string, quotes and all."""
         res = []
-        amp = False  # the last thing copied is an `&'
+        amp = False   # the last thing copied is an `&'
+        chain = -1    # where a name's dropped `&' after it leads
+        first = True  # M80: no `&' dropped yet
         i, n = 0, len(text)
         while i < n:
             j = self._name_end(text, i)
             if j is None:
+                if chain == i:
+                    first = False
                 amp = text[i] == '&'
                 res.append(text[i])
                 i += 1
                 continue
-            value = table.get(text[i:j].upper())
-            if value is not None and amp:
-                res.pop()
+            word = text[i:j]
+            value = table.get(word.upper())
+            before, amp = amp, False
+            chained = chain == i
+            after = j < n and text[j] == '&'
+            if value is None or not (before or chained or (self.dri and after)):
+                if chained:
+                    first = False
+                res.append(word)
+            elif self.dri or first:
+                if before:
+                    res.pop()
                 res.append(value)
+                if after:
+                    j += 1
+                    chain = j
+                else:
+                    first = False
             else:
-                res.append(text[i:j])
-            amp = False
+                res.append(value)
             i = j
         return ''.join(res)
 
