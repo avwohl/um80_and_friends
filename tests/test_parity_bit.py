@@ -193,3 +193,9 @@ def test_dri_source_lines():
     # After an 8DH, the CR of the line end is the LF, and the next line
     # starts with its LF.
     assert source_lines(b'a\x8d\r\nb\r\nc', dri=True) == ['a', '\nb', 'c']
+    # Where no 8AH or 8DH is inside a line, MAC's reading is M80's.
+    from um80.um80 import mac_source_lines  # pylint: disable=import-outside-toplevel
+    for data in (b'a\r\nb\r\x8ac\nd\re\r\r\nf\xc1\r\n\x00\x00',
+                 b'a\r\n\x00b\x00\x00', b'\r\n', b''):
+        assert mac_source_lines(data) == source_lines(data) == \
+            source_lines(data, dri=True), data

@@ -119,7 +119,9 @@ def source_lines(data, dri=False):
     eof = data.find(0x1A)
     if eof >= 0:
         data = data[:eof]
-    if dri:
+    if dri and (0x8D in data or LONE_8AH.search(data)):
+        # Where no 8AH or 8DH is inside a line both read the file alike,
+        # and this is the faster.
         return mac_source_lines(data)
     data = LONE_8AH.sub(b'', data)
     text = data.translate(STRIP_PARITY).decode('ascii')
