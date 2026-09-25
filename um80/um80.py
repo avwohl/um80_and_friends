@@ -3592,15 +3592,18 @@ class Assembler:
                 self.error("IRP requires parameter and list")
                 return True
             param = ops[0].strip().upper()
-            # Rest of ops are the list values
-            values = ops[1:]
-            # Handle <...> enclosed list: strip the outer brackets and split
-            # while respecting nested <...> groups (so <<1,2>,<3,4>> yields two
-            # items, not four). An empty list <> still iterates once with an
-            # empty argument (matches real M80).
-            if len(values) == 1 and values[0].startswith('<') and values[0].endswith('>'):
-                inner = values[0][1:-1]
-                values = self.split_operands(inner) if inner.strip() else ['']
+            inner = self.repeat_list(operator, operands)
+            if inner is None:
+                # No <...>: the rest of the operands are the list (M80
+                # wants the brackets; um80 takes the list without them).
+                values = ops[1:]
+            else:
+                # Split while respecting nested <...> groups (so
+                # <<1,2>,<3,4>> yields two items, not four) and '!' (so
+                # <1!,2,3> yields "1,2" and "3"). An empty list <> still
+                # iterates once with an empty argument (matches real M80).
+                values = self.split_operands(inner, escape_bang=True) \
+                    if inner.strip() else ['']
             self.repeat_stack.append(('IRP', values, [], param, label))
             return True
 
@@ -3610,9 +3613,10 @@ class Assembler:
                 self.error("IRPC requires parameter and string")
                 return True
             param = ops[0].strip().upper()
-            chars = ops[1].strip()
-            if chars.startswith('<') and chars.endswith('>'):
-                chars = chars[1:-1]
+            chars = self.repeat_list(operator, operands)
+            if chars is None:
+                # No <...>: the string ends at a blank or a comma.
+                chars = re.split(r'[\s,]', operands.split(',', 1)[1].strip(), maxsplit=1)[0]
             self.repeat_stack.append(('IRPC', list(chars), [], param, label))
             return True
 
@@ -3621,17 +3625,61 @@ class Assembler:
 
         return False  # Not a pseudo-op
 
+    def repeat_list(self, operator, operands):
+        """The text inside the <...> list of an IRP or IRPC, as M80 reads it.
+
+        Returns None when the list does not start with '<'.  MACRO-80 3.44
+        ends the list at the '>' that matches its '<' - counting nested
+        brackets, and for IRP (whose items are read like macro arguments)
+        skipping a '!'-quoted character - and ignores the rest of the line:
+        `IRPC C,<>>' iterates over nothing and `IRP X,<1,2>,3' over 1 and 2.
+        um80 used to drop the first and last characters of the operand, so
+        those were '>' and "1,2>,3".  A '!' is an ordinary character in an
+        IRPC list: `IRPC C,<!>>' is '!'.  A list with no matching '>' runs
+        to the end of the line, and M80 flags it 'Q': `IRPC C,<<>' is '<'
+        and '>'.  This matters where a macro wraps its argument in brackets,
+        `IRPC CH,<STR>', and the argument is `!>': the '>' closes the list.
+        """
+        rest = operands.split(',', 1)[1].lstrip() if ',' in operands else ''
+        if not rest.startswith('<'):
+            return None
+        depth, i = 0, 0
+        while i < len(rest):
+            ch = rest[i]
+            if ch == '!' and operator == 'IRP':
+                i += 2
+                continue
+            if ch == '<':
+                depth += 1
+            elif ch == '>':
+                depth -= 1
+                if depth == 0:
+                    tail = rest[i + 1:].strip()
+                    if tail and self.pass_num == 2:
+                        self.warning(f"{operator} list ends at the '>' that matches"
+                                     f" its '<': '{tail}' after it is ignored")
+                    return rest[1:i]
+            i += 1
+        if self.pass_num == 2:
+            self.warning(f"{operator} list has no closing '>' (M80: Q)")
+        return rest[1:]
+
     def _line_invokes_macro(self, line):
-        """Return True if this line's operator is a defined macro name.
+        """Return True if this line's operator is a defined macro name, IRP or IRPC.
 
         Used to suppress DRI '!' statement-splitting on macro-call lines, where
-        '!' is instead the M80 argument-quote operator (issue #3). The '!' check
-        is a cheap guard so we only parse lines that could be affected.
+        '!' is instead the M80 argument-quote operator (issue #3), and on IRP
+        and IRPC lines. The '!' check is a cheap guard so we only parse lines
+        that could be affected.
         """
         if '!' not in line:
             return False
         operator = self.parse_line(line)[1]
-        return operator is not None and operator in self.macros
+        if operator is None:
+            return False
+        # IRP and IRPC lists too: '!' quotes a character in an IRP list and
+        # is an ordinary character in an IRPC list (`IRPC C,<A!B>').
+        return operator in self.macros or operator.upper() in ('IRP', 'IRPC')
 
     def process_line(self, line):
         """Process a single source line."""
@@ -4024,9 +4072,9 @@ class Assembler:
 
         elif rept_type == 'IRP':
             for value in param_or_count:
-                # M80 strips one level of angle brackets from each list item.
-                if len(value) >= 2 and value.startswith('<') and value.endswith('>'):
-                    value = value[1:-1]
+                # An item is read like a macro argument: M80 strips one level
+                # of angle brackets from it, and '!' quotes a character.
+                value = self.process_macro_argument(value)
                 if self._run_repeat_iteration(body, iter_var, value):
                     break
 
