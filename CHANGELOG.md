@@ -67,8 +67,8 @@ LINK-80 3.44 under cpmemu, and each has a regression test that fails on
 - um80 assembler: `PUSH A` and `POP A` are an error without `--dri`, as M80
   flags them (`A`); with `--dri` they are `PUSH PSW` and `POP PSW`, as in MAC
   and RMAC, which also take `PUSH 7`. um80 took `PUSH A` for `PUSH PSW` in
-  either mode (and rejected `PUSH 7`). MP/M II's `BNKBDOS.ASM` and
-  `BDOS30.ASM` need `--dri`.
+  either mode (and rejected `PUSH 7`). MP/M II's `BNKBDOS.ASM`,
+  `RESBDOS1.ASM` and `BDOS30.ASM` need `--dri`.
 - ul80 linker: a global that a second module defines is now LINK-80's
   warning, with its message, `%Mult. Def. Global FOO`, and ul80 says which
   modules define it and whose definition every reference uses: the first one

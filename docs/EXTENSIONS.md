@@ -321,7 +321,7 @@ operand whose value is A's 7 - for `PUSH PSW` and `POP PSW`, and so does
         POP A                       ; Same as POP PSW, with --dri
 ```
 
-MP/M II's `BNKBDOS.ASM` and `BDOS30.ASM` use them. M80 flags them `A` (and
+MP/M II's `BNKBDOS.ASM`, `RESBDOS1.ASM` and `BDOS30.ASM` use them. M80 flags them `A` (and
 pushes PSW), and without `--dri` they are an error in um80, as they are in
 M80. Up to 0.3.50 um80 took `PUSH A` for `PUSH PSW` without `--dri` and
 rejected `PUSH 7`. The other odd numbers (`PUSH 1`, `DAD 7`, `DAD A`) are
