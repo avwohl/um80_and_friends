@@ -2,7 +2,7 @@
 
 All notable changes to the um80 toolchain are documented here.
 
-## [Unreleased]
+## [0.3.52] - 2026-09-26
 
 The 0.3.51 release gate found the differences below between um80 and the
 genuine MACRO-80 3.44, DRI's MAC 2.0 and RMAC 1.1, three of them the
@@ -203,6 +203,21 @@ genuine tools under cpmemu, and each has a regression test that fails on
   ORG LL / LL: DB 2` puts the 02 at 0101H, flagging nothing; um80 puts it at
   0000H, the value that holds when read again. (With `--dri` a label on
   such an `ORG` is an error, as MAC flags it; see Fixed.) As in 0.3.51.
+
+- um80 assembler: with `--dri`, the summary um80 prints gives the data
+  size pass 2 reached, so a `MACLIB` library that reserves data (`DSEG /
+  BUF: DS 10 / CSEG`) shows "Data segment: 0 bytes" although the object
+  file's data size is 10, as RMAC's is. Only the printed line is wrong.
+- um80 assembler: with `--dri`, MAC and RMAC flag S, and leave out the rest
+  of the line, where a `!` is followed directly by a keyword (`NOP!INX H`)
+  or has a blank before it (`NOP !INX H`); um80 assembles both statements,
+  as 0.3.51 did. `NOP ! INX H` is clean in all three.
+- um80 assembler: a `LOCAL` at the start of a line in a macro defined inside
+  another macro is taken by the outer one (`QQ?0001 multiply defined`),
+  where M80, MAC and RMAC give it to the inner one. It stops with an error.
+- um80 assembler: MAC and RMAC flag `HIGH`, `LOW` (E) and `NOT` (U) inside a
+  macro body and assemble 00; um80 applies them as at the top level, as
+  0.3.51 did. DRI's own sources never do this.
 
 ## [0.3.51] - 2026-09-26
 
