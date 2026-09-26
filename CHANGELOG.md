@@ -46,8 +46,12 @@ genuine tools under cpmemu, and each has a regression test that fails on
   `LL: DB 1`, `DW LL` is 00 01 at 0100H, as in MAC; um80 --dri assembled
   the library as an `INCLUDE` file (01 02, 01 00 01), without a word. A
   `SET` in a library gives the symbol its value at the end of pass 1. The
-  program's size is the most pass 1 reached, as RMAC writes it, and a label
-  a library's code moved is a phase error, as MAC and RMAC flag it (P).
+  size of each segment and `COMMON` block is the most pass 1 reached in it,
+  which counts the library's code and data wherever the library leaves the
+  location counter: with a library of `DSEG / BUF: DS 10 / CSEG` the data is
+  10 bytes long, as in RMAC and 0.3.51, and another module's data is linked
+  after `BUF` (see Known issues for RMAC's own reckoning). A label a
+  library's code moved is a phase error, as MAC and RMAC flag it (P).
   DRI's libraries hold macros and `EQU`s only, which are read as before.
 - um80 assembler: a `LOCAL` after a `!` in a macro body declares its names,
   as in MAC and RMAC: `NOP! LOCAL QQ`, `LOCAL QQ! NOP`, `LOCAL QQ,RR! NOP`
@@ -142,6 +146,14 @@ genuine tools under cpmemu, and each has a regression test that fails on
   MAC and RMAC do not (a symbol it defines is U there), and an `EQU` in a
   library of a symbol the source defines further down is its value, where
   MAC, which reads the library once, gives 0 (`docs/EXTENSIONS.md`).
+- um80 assembler: with `--dri`, the size of a segment or a `COMMON` block
+  is the most reached in it, as M80 writes it, where RMAC writes its
+  location counter at the end of pass 1, at the first `END` it reads, a
+  library's too: `ORG 180H / DB 9 / ORG 100H / DB 2` is 101H long in RMAC
+  and 181H here, `DSEG / DS 10 / ORG 2 / DB 1` gives a data size of 3 in
+  RMAC and 10 here, and with a library that ends in `END` the program after
+  it is left out of RMAC's size (`ORG 100H / MACLIB INC / DB 2,3,4,5` is
+  100H long in RMAC, 104H here). As in 0.3.51.
 
 ## [0.3.51] - 2026-09-26
 

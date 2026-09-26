@@ -427,8 +427,17 @@ keeps the value pass 1 gave it. With a library of `DB 1`, `DB 2` after the
 the address pass 1 gave `LL`, the `DW`'s own; a `SET` in a library gives the
 symbol the value it has at the end of pass 1 (`X SET 1` there, then `DB X / X
 SET 2 / DB X` in the source, is 02 02). The size of the program, and of the
-data and each `COMMON` block, is the most pass 1 reached, which counts the
-library's code, as RMAC writes it. A label or an `EQU $` after a `MACLIB`
+data and each `COMMON` block, is the most pass 1 reached in it, which counts
+the library's code and data wherever the library leaves the location
+counter: with a library of `DB 1`, a `DB 2` after the `MACLIB` makes the
+program 2 bytes long, one of them loaded, as in RMAC, and with `DSEG / BUF:
+DS 10 / CSEG` the data is 10 bytes long, as in RMAC, so that another
+module's data is linked after `BUF`. (RMAC writes a segment's location
+counter at the end of pass 1, at the first `END` it reads, a library's too,
+where um80 writes the most reached, as M80 does: after an `ORG` back RMAC's
+size is less - `ORG 180H / DB 9 / ORG 100H / DB 2` is 101H long in RMAC
+and 181H here - and with a library that ends in `END` RMAC leaves the
+program after the `MACLIB` out of it.) A label or an `EQU $` after a `MACLIB`
 whose code moved it is where pass 1 put it in MAC and RMAC, which flag it
 `P`; um80 reports a phase error. DRI's libraries hold macros and `EQU`s
 only, which are read alike in all three. M80 reads a `MACLIB` file as an

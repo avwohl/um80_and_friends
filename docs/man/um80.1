@@ -125,7 +125,9 @@ An IF is true when bit 0 of its value is set, as in MAC: \fBIF 2\fR and
 \fBIF NOT 1\fR are false (MACRO-80 takes any value but 0 as true); IFT,
 IFE, IFDEF and the other IFs MAC does not have keep MACRO-80's meaning.
 A MACLIB library is read in pass 1 only, as in MAC: none of its code or
-data is assembled, and a symbol it defines keeps its value of pass 1.
+data is assembled, and a symbol it defines keeps its value of pass 1; the
+size of each segment and COMMON block is the most pass 1 reached in it,
+which counts the library's code and data.
 .TP
 .BI \-D " SYMBOL" [= VALUE ]
 Define a symbol before assembly begins. If no value is given, the symbol is

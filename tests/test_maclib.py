@@ -21,6 +21,7 @@ import tempfile
 import pytest
 
 from um80.relformat import RELReader
+from um80.ul80 import Linker
 from um80.um80 import Assembler
 
 BOTH = {'INC.LIB': "x\tequ\t1\n", 'INC.MAC': "x\tequ\t2\n"}
@@ -193,6 +194,56 @@ def test_dri_the_segment_sizes_are_those_of_pass_1():
         assert ok, errors
         assert ('DEFINE_PROG_SIZE', (1, size)) in items, items
         assert [it for it in items if it[0] == 'ABSOLUTE_BYTE'] == [('ABSOLUTE_BYTE', 2)]
+
+
+@pytest.mark.parametrize('lib,main,prog,item', [
+    # A library that reserves data or COMMON space and goes back to the
+    # code segment where it started: RMAC writes the size it reserved.
+    ("\tdseg\n\tdb\t9\n\tcseg\n", "lb:\tdb\t2\n\tdw\tlb\n", 0x103,
+     ('DEFINE_DATA_SIZE', (0, 1))),
+    ("\tdseg\n\tds\t10\n\tcseg\n", "\tdb\t2\n", 0x101,
+     ('DEFINE_DATA_SIZE', (0, 10))),
+    ("\tdseg\nbuf:\tds\t10\nbend:\n\tcseg\n", "\tlxi\th,buf\n\tlxi\td,bend\n",
+     0x106, ('DEFINE_DATA_SIZE', (0, 10))),
+    ("\tcommon\t/cb/\ncbuf:\tds\t6\n\tcseg\n", "\tlxi\th,cbuf\n", 0x103,
+     ('DEFINE_COMMON_SIZE', (0, 6), 'CB')),
+])
+def test_dri_a_library_that_goes_back_keeps_its_data_and_common_sizes(lib, main, prog, item):
+    # um80 --dri wrote 0: the library had not moved the location counter of
+    # the segment it started in, so pass 1's sizes were not used.  0.3.51,
+    # which assembled the library in both passes, wrote RMAC's sizes.
+    ok, items, errors = _rel(f"\torg\t100h\n\tmaclib\tinc\n{main}\tend\n",
+                             _lib(lib), dri=True)
+    assert ok, errors
+    assert item in items, items
+    assert ('DEFINE_PROG_SIZE', (1, prog)) in items, items
+
+
+def test_dri_data_a_library_reserves_is_not_linked_over():
+    # A library reserves 10 bytes of data, and another module has a byte of
+    # data.  LINK-80 puts that byte at 0110H with RMAC's RELs, after the 10;
+    # um80 --dri wrote a data size of 0, and ul80 put it at 0106H, on BUF.
+    with tempfile.TemporaryDirectory() as d:
+        sources = {
+            'INC.LIB': "\tdseg\nbuf:\tds\t10\n\tcseg\n",
+            'a.asm': "\tmaclib\tinc\n\tlxi\th,buf\n\tend\n",
+            'b.asm': "\tdseg\nx:\tdb\t55h\n\tcseg\n\tlxi\td,x\n\tend\n",
+        }
+        for name, text in sources.items():
+            with open(os.path.join(d, name), 'w') as f:
+                f.write(text)
+        linker = Linker()
+        linker.code_base = 0x100
+        for stem in ('a', 'b'):
+            asm = Assembler(dri=True)
+            assert asm.assemble(os.path.join(d, stem + '.asm')), asm.errors
+            rel = os.path.join(d, stem + '.rel')
+            with open(rel, 'wb') as f:
+                f.write(asm.output.get_bytes())
+            linker.load_rel(rel)
+        assert linker.link()
+        image = bytes(linker.output[0x100 - linker.output_base:])
+    assert image == bytes.fromhex('210601111001') + bytes(10) + b'\x55', image.hex()
 
 
 def test_dri_public_and_extrn_in_a_library():

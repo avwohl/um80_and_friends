@@ -517,8 +517,9 @@ class Assembler:
 
         # Include file handling
         self.include_stack = []  # Stack of (filename, line_num) for nested includes
-        # --dri: the MACLIB libraries that assembled code or data, or moved
-        # the location counter, in pass 1 (process_include_file()).
+        # --dri: the MACLIB libraries that assembled code or data, reserved
+        # space or moved a location counter, in any segment or COMMON block,
+        # in pass 1 (process_include_file()).
         self.library_code = set()
         self.base_path = None  # Base path for resolving relative includes
         self.include_paths = []  # Additional search paths for includes
@@ -6137,6 +6138,23 @@ class Assembler:
                         return path
         return None
 
+    def whereabouts(self):
+        """The segment or COMMON block the location counter is in, and the
+        location counter and the most reached of each segment and COMMON
+        block.
+
+        A MACLIB library that changes any of them in pass 1 has code or
+        data, which --dri reads in pass 1 only (process_include_file()), and
+        the sizes of pass 1 are written (assemble()).  um80 compared only
+        the segment and the location it was in, so a library of `DSEG /
+        BUF: DS 10 / CSEG', which goes back to where it started, left the
+        data size 0 (RMAC: 10), and the next module's data was linked over
+        BUF; so did `COMMON /CB/ / CBUF: DS 6 / CSEG' the size of CB.
+        """
+        return (self.current_seg, self.current_common,
+                tuple((name, seg.loc, seg.size) for name, seg in self.segments.items()),
+                tuple((name, com.loc, com.size) for name, com in self.common_blocks.items()))
+
     def process_include_file(self, filepath, library=False):
         """Process an include file.
 
@@ -6165,7 +6183,7 @@ class Assembler:
         # Save current state
         saved_line_num = self.line_num
         saved_entry_point = self.entry_point
-        where = (self.current_seg, self.current_common, self.loc)
+        where = self.whereabouts()
 
         # Push onto include stack
         self.include_stack.append((filepath, saved_line_num))
@@ -6192,8 +6210,7 @@ class Assembler:
             self.include_stack.pop()
             self.line_num = saved_line_num
 
-        if library and self.dri and (self.current_seg, self.current_common,
-                                     self.loc) != where:
+        if library and self.dri and self.whereabouts() != where:
             self.library_code.add(os.path.basename(filepath))
         if library and self.ended:
             if self.dri:
@@ -6515,11 +6532,15 @@ class Assembler:
         # and LINK-80 stops with '?Loading Error' at the SELECT_COMMON of a
         # block it was never given a size for.
         #
-        # RMAC writes the sizes pass 1 reached, and those count the code and
-        # data of a MACLIB library, which pass 2 does not assemble
+        # RMAC writes the sizes of pass 1, and those count the code and data
+        # of a MACLIB library, which pass 2 does not assemble
         # (process_include_file()): with a library `DB 1' and `DB 2' after
         # the MACLIB the program is 2 bytes long, and one byte of it is
-        # loaded.  So does um80 with --dri.
+        # loaded; with `DSEG / BUF: DS 10 / CSEG' the data is 10 bytes long.
+        # um80 --dri writes the most pass 1 reached in each segment and
+        # COMMON block where a library changed any (whereabouts()).  (RMAC
+        # writes the location counter at the end of pass 1, not the most
+        # reached, which is less after an ORG back; see EXTENSIONS.md.)
         library = self.dri and self.library_code
         for cname, com in self.common_blocks.items():
             size = max(com.size, pass1_sizes[2].get(cname, 0)) if library \
