@@ -2,7 +2,7 @@
 
 All notable changes to the um80 toolchain are documented here.
 
-## [Unreleased]
+## [0.3.51] - 2026-09-26
 
 Building MP/M II (https://github.com/avwohl/mpm2) from Digital Research's
 unmodified sources found the defects below, and so did assembling DRI's
@@ -14,7 +14,9 @@ on 0.3.50.
 
 ### Added
 - um80 assembler: `--dri` reads a source as DRI's MAC and RMAC read it where
-  they differ from MACRO-80. It ignores a `$` inside a name, as MAC and RMAC
+  they differ from MACRO-80, in the ways this section and
+  `docs/EXTENSIONS.md` list; three it does not follow yet are under Known
+  issues. It ignores a `$` inside a name, as MAC and RMAC
   do: `NMB$LST` and `NMBLST` are one symbol, and `PUBLIC A$BC` writes `ABC`. A
   `$` that starts a word (the location counter), and one in a quoted string or
   a comment, are kept, and so is one in the arguments of a macro call or the
@@ -82,8 +84,8 @@ on 0.3.50.
   is how, once mpm2 cut names to six characters, four calls to `PRINTB` in
   MP/M II's CLI and ATTACH went to the wrong routine (a patch-area
   `PRINTBrlsfile` had become a second `PRINTB`). The exit status is still 0,
-  as in LINK-80, which links the program, and link lines rely on it (MP/M
-  II's GENSYS link overrides ten runtime names with `X0100.ASM`'s); a script
+  as in LINK-80, which links the program, and link lines rely on it (uc80's
+  `__sret_buf` link does); a script
   that must not link such a program passes `--fatal-mult-def`.
 
 ### Fixed
@@ -482,6 +484,26 @@ on 0.3.50.
   lines, and RESBDOS.SPR for V2.1 comes out 10 bytes longer, 0D00H, until
   they are rewritten; with them rewritten every file of the V2.0 and V2.1
   builds is what it was.
+
+### Known issues
+- um80 assembler: three things MAC and RMAC do that `--dri` does not do yet.
+  Each gives different bytes without a word; none is in any DRI source in
+  the tests, all 38 of which assemble to MAC's bytes.
+  - A two-character string used as a value has its first character in the
+    low byte in MAC and RMAC (`DW 'AB'` is 41 42, `LXI H,'AB'` is 21 41 42);
+    `--dri` values it as M80 does (42 41).
+  - MAC and RMAC take an `IF` as true only when bit 0 of its value is set
+    (`IF 2` and `IF NOT 1` are false); `--dri` takes any value but 0 as
+    true, as M80 does.
+  - MAC and RMAC read a `MACLIB` library in pass 1 only, so its code and
+    data are not assembled and its labels keep their pass-1 values; `--dri`
+    assembles it as an `INCLUDE` file (library `DB 1` then `DB 2` is 02 in
+    MAC and 01 02 here).
+- um80 assembler: with `--dri`, `MACLIB NAME` looks for `NAME.MAC`, where
+  MAC and RMAC read `NAME.LIB`; `LOCAL` after a `!` on the line is not
+  honoured (`NOP! LOCAL QQ`); and `END START` with START defined after the
+  `END` is reported undefined, where MAC takes no start address. Each stops
+  with an error.
 
 ## [0.3.50] - 2026-09-25
 

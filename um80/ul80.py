@@ -1864,8 +1864,7 @@ def main():
     # A global defined twice is LINK-80's warning, and the status stays 0:
     # LINK-80 keeps the first definition and writes the program, and link
     # lines rely on that - uc80's documented one passes runtime.lib beside
-    # a module that has the runtime in it, so __sret_buf arrives twice, and
-    # MP/M II's GENSYS link overrides ten runtime names with X0100.ASM's.
+    # a module that has the runtime in it, so __sret_buf arrives twice.
     # A script that must not link such a program passes --fatal-mult-def.
     sys.exit(0)
 

@@ -142,7 +142,14 @@ The `$` characters are stripped during parsing and do not affect the numeric val
 ### DRI sources (`--dri`)
 
 `um80 --dri` reads a source the way DRI's MAC and RMAC read it where they
-differ from MACRO-80. It changes these things:
+differ from MACRO-80, in the ways listed here. It does not yet follow MAC in
+three: a two-character string used as a value (`DW 'AB'` is 41 42 in MAC and
+RMAC, 42 41 in M80 and here), `IF` (MAC and RMAC take it as true only when
+bit 0 of the value is set, so `IF 2` is false; here, as in M80, any value but
+0 is true), and a `MACLIB` library (MAC and RMAC read it in pass 1 only and
+assemble none of its code or data; here it is assembled as an `INCLUDE`
+file). No DRI source in the tests depends on any of them. It changes these
+things:
 
 **A `$` inside a name is ignored.** DRI's manuals: "All characters are
 significant in an identifier, except for the embedded dollar sign ($) which

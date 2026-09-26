@@ -105,6 +105,10 @@ An END in a MACLIB library ends the library, as in MAC and RMAC; MACRO-80
 reads a MACLIB file as an INCLUDE file, whose END ends the source.
 \fB\-\-dri\fR does not imply \fB\-\-aseg\fR (MAC's absolute sources) or
 \fB\-t\fR (RMAC's six-character names).
+It does not yet follow MAC in three things: a two-character string used as
+a value (MAC puts the first character in the low byte), IF (MAC takes it as
+true only when bit 0 is set), and a MACLIB library (MAC assembles none of
+its code or data); see the EXTENSIONS document.
 .TP
 .BI \-D " SYMBOL" [= VALUE ]
 Define a symbol before assembly begins. If no value is given, the symbol is
