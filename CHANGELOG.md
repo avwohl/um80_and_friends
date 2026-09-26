@@ -125,6 +125,24 @@ genuine tools under cpmemu, and each has a regression test that fails on
   `docs/external/m80.pdf` and its neighbours, which moved to the retro_docs
   archive in 0.3.46; they now point there.
 
+### Known issues
+- um80 assembler: what M80, MAC or RMAC flag and um80 takes, each with the
+  bytes the tool assembles or MAC's reading, and without a word: MAC and
+  RMAC flag a sign right after another operator (`2+-1`, `7/-2`, `--1`: E)
+  and a shift by more than 16 (`1 SHL 17`: E); M80 flags a sign before
+  `HIGH`, `LOW`, `NOT` or `TYPE` (`-HIGH 100H`: O); M80 flags a byte that is
+  not 00H-0FFH or 0FF00H-0FFFFH (`MVI A,300H`, `DB 300H`: A) and MAC one
+  that is not -128 to 255 (`DB 0FF00H`, `DB -129`: V), and um80 assembles
+  the low byte.
+- um80 assembler: M80's `.COMMENT` of more than one line is not read (the
+  lines after the first are errors); `DS` with no operand, which M80
+  assembles as `DS 0`, is an error; and M80 assembles `DB 1,'',2` as 01 and
+  flags it Q, where um80 assembles 01 02, as MAC does.
+- um80 assembler: with `--dri`, a `MACLIB` inside a library is read, which
+  MAC and RMAC do not (a symbol it defines is U there), and an `EQU` in a
+  library of a symbol the source defines further down is its value, where
+  MAC, which reads the library once, gives 0 (`docs/EXTENSIONS.md`).
+
 ## [0.3.51] - 2026-09-26
 
 Building MP/M II (https://github.com/avwohl/mpm2) from Digital Research's
