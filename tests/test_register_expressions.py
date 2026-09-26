@@ -15,6 +15,9 @@ Where the two differ, M80 is the default and MAC is --dri:
 * M80 flags `PUSH A', `POP A' and `PUSH 7' A, and pushes PSW; MAC and RMAC
   take them for PSW without a flag (and flag the other odd numbers R).
   um80 took `PUSH A' for PSW and rejected `PUSH 7'.
+* M80 flags `MOV M,M' (and `MOV 6,M') A, and assembles 76H, HLT's opcode;
+  MAC and RMAC assemble 76H without a flag.  um80 reported it in either
+  mode.
 * A program may define a symbol named like a register (MAC flags it S), and
   M80 then reads the name as the symbol, in a register operand too: after
   `C EQU 2', `MOV A,C' is MOV A,D and `DB C' 02; after `H EQU 2', `DAD H'
@@ -105,6 +108,17 @@ def test_push_a_is_an_error_without_dri(line):
     ok, _, errors = _assemble(f"{line}\n\tend\n")
     assert not ok
     assert any('not a register pair' in e and '--dri' in e for e in errors), errors
+
+
+@pytest.mark.parametrize('line', ['\tmov\tm,m', '\tmov\t6,m', '\tmov\tm,3*2'])
+def test_mov_m_m(line):
+    # MAC and RMAC: 76.  M80: A (76).
+    ok, items, errors = _assemble(f"{line}\n\tend\n", dri=True)
+    assert ok, errors
+    assert _fields(items) == ['76']
+    ok, _, errors = _assemble(f"{line}\n\tend\n")
+    assert not ok
+    assert any('MOV M,M' in e and '--dri' in e for e in errors), errors
 
 
 @pytest.mark.parametrize('expr', ['a*256+b', 'a-b', 'c-b', 'a eq b', '(a)*(b)', 'sp+psw'])

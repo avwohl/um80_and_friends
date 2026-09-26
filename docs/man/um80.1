@@ -94,9 +94,9 @@ An 8AH (a line feed with bit 7 set) inside a line is a line feed, the byte
 0AH in a string, and an 8DH a carriage return that ends the statement, after
 which the next item is taken for its line feed, as MAC reads them; MACRO-80
 leaves out an 8AH and ends the line at an 8DH.
-\fBPUSH A\fR and \fBPOP A\fR are PUSH PSW and POP PSW, and an expression may
-have two register names in it; MACRO-80 flags both, and so does um80 without
-\fB\-\-dri\fR.
+\fBPUSH A\fR and \fBPOP A\fR are PUSH PSW and POP PSW, \fBMOV M,M\fR is
+76H, and an expression may have two register names in it; MACRO-80 flags
+each, and so does um80 without \fB\-\-dri\fR.
 MAC's relational operators \fB=\fR, \fB<\fR, \fB<=\fR, \fB>\fR, \fB>=\fR and
 \fB<>\fR are EQ, LT, LE, GT, GE and NE, and HIGH and LOW apply to all that
 follows them (\fBHIGH(X)+1\fR is HIGH(X+1)), as in MAC; MACRO-80 has no such

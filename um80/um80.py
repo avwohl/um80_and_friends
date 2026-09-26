@@ -2664,8 +2664,10 @@ class Assembler:
             if dst is None or src is None:
                 self.error(f"Invalid register for MOV: {ops[0]}, {ops[1]}")
                 return True
-            if dst == 'M' and src == 'M':
-                self.error("MOV M,M is invalid (HLT)")
+            if dst == 'M' and src == 'M' and not self.dri:
+                # M80 flags it A (and assembles 76H, HLT); MAC and RMAC
+                # (--dri) assemble 76H without a flag.
+                self.error("MOV M,M is HLT's opcode, 76H (M80: A; MAC takes it: --dri)")
                 return True
             code = encode_mov(dst, src)
             for b in code:

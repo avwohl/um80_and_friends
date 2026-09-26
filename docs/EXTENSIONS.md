@@ -313,6 +313,10 @@ with a macro call for its statements as any other (`MM ;c! ENDM` ends the
 body), and in a false `IF` too (`MM ;c ! ENDIF` ends the `IF`), and so does
 um80.
 
+**`MOV M,M` is 76H,** HLT's opcode, as MAC and RMAC assemble it without a
+flag; M80 flags it `A` (and assembles 76H), and without `--dri` it is an
+error.
+
 **`PUSH A` is `PUSH PSW`, and an expression may have two register names in
 it,** as in MAC and RMAC (M80 flags both); see
 [PUSH A / POP A](#push-a--pop-a) and

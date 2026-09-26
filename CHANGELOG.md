@@ -88,6 +88,9 @@ genuine tools under cpmemu, and each has a regression test that fails on
 - um80 assembler: M80's `.CREF` and `.XCREF` (cross-reference listing on
   and off) are accepted and assemble nothing, as in M80; um80 reported
   them as "Unknown instruction or directive".
+- um80 assembler: with `--dri`, `MOV M,M` (and `MOV 6,M`) is 76H, HLT's
+  opcode, as MAC and RMAC assemble it without a flag. um80 reported it in
+  either mode; M80 flags it A, and without `--dri` it is still an error.
 
 ## [0.3.51] - 2026-09-26
 

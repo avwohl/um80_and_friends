@@ -434,7 +434,7 @@ For more details on these extensions and compatibility notes, see [docs/EXTENSIO
 
 ## Testing
 
-The test suite (1248 tests) runs under `pytest`:
+The test suite (1251 tests) runs under `pytest`:
 
 ```bash
 pip install -e ".[dev]"
@@ -477,7 +477,7 @@ Digital Research's MAC 2.0 and RMAC 1.1:
 | `test_dri_names.py` | (DRI) `--dri` ignores a `$` inside a name, as MAC and RMAC do, but not in a macro call's arguments or an `IRP`/`IRPC` list; without it `$` is part of the name, as in M80 |
 | `test_operator_names.py` | A name that ends in an operator's letters (`X1EQ+2`) is read whole; a symbol named like an operator (`EQ:`, `TYPE EQU 5`) is that symbol, as in M80; an operator with nothing on one side is an error; `TYPE` of an expression |
 | `test_condition_names.py` | In Z80 code a label named like a condition (`P:`, `NZ:`) is `JP`'s address, as in M80 |
-| `test_register_expressions.py` | (DRI) A register name is its number in any 8080 expression (`DB B`, `X EQU D+1`); M80 flags two in one expression and `PUSH A`, MAC takes them (`--dri`); a symbol named like a register is that symbol, as in M80 |
+| `test_register_expressions.py` | (DRI) A register name is its number in any 8080 expression (`DB B`, `X EQU D+1`); M80 flags two in one expression, `PUSH A` and `MOV M,M`, MAC takes them (`--dri`); a symbol named like a register is that symbol, as in M80 |
 | `test_dri_relations.py` | (DRI) `--dri` takes MAC's `=`, `<`, `<=`, `>`, `>=`, `<>`, and applies `HIGH`/`LOW` to all that follows, as MAC and RMAC do; without it, as M80 does |
 | `test_dri_comment_bang.py` | (DRI) With `--dri` a `!` ends a `;` comment and starts the next statement, as in MAC and RMAC (CP/M 2.0's CCP: `nosub: ;no submit file! call del$sub`), in a `*` line, a macro body, a `REPT`/`IRP`/`IRPC` line and before an `ENDM` or `EXITM`; without it a comment runs to the end of the line, as in M80 |
 | `test_dri_after_macro_call.py` | (DRI) With `--dri` what follows a macro call on its line is read as MAC and RMAC read it: `MM ;c! DB 1` assembles the `DB`, `MM A;c! DB 1`, `MM A ! DB 1` and `MM ;c ! DB 1` leave it out (with a warning), and a call reads as many arguments as the macro has parameters; a body line or a false `IF` line that starts with a macro call is read for its `ENDM` or `ENDIF` |
