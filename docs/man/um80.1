@@ -101,6 +101,8 @@ MAC's relational operators \fB=\fR, \fB<\fR, \fB<=\fR, \fB>\fR, \fB>=\fR and
 \fB<>\fR are EQ, LT, LE, GT, GE and NE, and HIGH and LOW apply to all that
 follows them (\fBHIGH(X)+1\fR is HIGH(X+1)), as in MAC; MACRO-80 has no such
 operator, and applies HIGH and LOW to the term after them.
+\fBMACLIB\fR \fIname\fR reads \fIname\fR.LIB, as in MAC and RMAC, and
+then \fIname\fR.MAC; MACRO-80 reads \fIname\fR.MAC.
 An END in a MACLIB library ends the library, as in MAC and RMAC; MACRO-80
 reads a MACLIB file as an INCLUDE file, whose END ends the source.
 \fB\-\-dri\fR does not imply \fB\-\-aseg\fR (MAC's absolute sources) or
@@ -277,7 +279,18 @@ Restrict to 8080 instruction set (default).
 .SS Include Files
 .TP
 .B INCLUDE \fIfilename\fR
-Include another source file.
+Include another source file: \fIfilename\fR.MAC if the name has no
+extension.
+.TP
+.B MACLIB \fIname\fR
+Read a macro library: \fIname\fR.MAC, as in MACRO-80, which reads it as an
+INCLUDE file.  With \fB\-\-dri\fR \fIname\fR.LIB, as in MAC and RMAC,
+and then \fIname\fR.MAC.  A name with an extension is read from that file.
+.PP
+A file is looked for where the source is, then in the current directory,
+then in each \fB\-I\fR directory, by its name as written and then in upper
+and in lower case, as a CP/M file name has no case (DRI's sources say
+\fBmaclib diskdef\fR of DISKDEF.LIB).
 .SH EXPRESSIONS
 Expressions can include:
 .IP \(bu 2

@@ -4219,9 +4219,16 @@ class Assembler:
                 filename = filename[1:-1]
 
             # Try to find the include file
-            include_path = self.find_include_file(filename)
+            library = operator == 'MACLIB'
+            include_path = self.find_include_file(filename, library=library)
             if include_path is None:
-                self.error(f"Cannot find include file: {filename}")
+                names = self.include_names(filename, library)
+                names = '' if names == [filename] else ', as ' + ' or '.join(names)
+                hint = ''
+                if library and not self.dri and os.path.splitext(filename)[1] == '':
+                    hint = (" (M80 reads MACLIB NAME from NAME.MAC; MAC and RMAC"
+                            " read NAME.LIB: --dri)")
+                self.error(f"Cannot find include file: {filename}{names}{hint}")
                 return True
 
             # Check for infinite recursion
@@ -5828,34 +5835,46 @@ class Assembler:
                                      if level <= depth}
             self.cond_false_depth = 0
 
-    def find_include_file(self, filename):
-        """Find an include file, searching in various locations."""
-        # Add default extension if none present
-        if '.' not in filename:
-            filename = filename + '.MAC'
+    def include_names(self, filename, library=False):
+        """The file names an INCLUDE, a MACLIB (`library') or a --pre file
+        `filename' is looked for as, in order.
 
-        # Try the filename as-is if absolute
-        if os.path.isabs(filename):
-            if os.path.exists(filename):
-                return filename
-            return None
+        A name with no extension gets one: .MAC, as MACRO-80 gives an
+        INCLUDE and a MACLIB file.  With --dri a MACLIB library is NAME.LIB,
+        as in MAC and RMAC, and then NAME.MAC, which um80 --dri read
+        before: DRI's `maclib diskdef' (MP/M II's CONTROL/RESXIOS.ASM, CP/M
+        2.0's os4bios.asm) is DISKDEF.LIB.  MAC reads NAME.LIB whatever
+        extension follows the name (`MACLIB X.MAC' is X.LIB, and flagged
+        S); um80 reads the file named.
+        """
+        if os.path.splitext(filename)[1]:
+            return [filename]
+        if library and self.dri:
+            return [filename + '.LIB', filename + '.MAC']
+        return [filename + '.MAC']
 
-        # Try relative to base path (source file directory)
-        if self.base_path:
-            path = os.path.join(self.base_path, filename)
-            if os.path.exists(path):
-                return path
+    def find_include_file(self, filename, library=False):
+        """The path of an include file (include_names()), or None.
 
-        # Try relative to current directory
-        if os.path.exists(filename):
-            return filename
-
-        # Try additional include paths
-        for inc_path in self.include_paths:
-            path = os.path.join(inc_path, filename)
-            if os.path.exists(path):
-                return path
-
+        Each name is looked for as written, and then in upper and in lower
+        case - a CP/M file name has no case, and DRI's sources say `maclib
+        diskdef' of DISKDEF.LIB - where the source is, then in the current
+        directory, then in each -I directory; an absolute name only as
+        written.
+        """
+        for name in self.include_names(filename, library):
+            if os.path.isabs(name):
+                if os.path.exists(name):
+                    return name
+                continue
+            places = ([self.base_path] if self.base_path else []) + [''] \
+                + list(self.include_paths)
+            head, base = os.path.split(name)
+            for place in places:
+                for spelling in dict.fromkeys((base, base.upper(), base.lower())):
+                    path = os.path.join(place, head, spelling)
+                    if os.path.exists(path):
+                        return path
         return None
 
     def process_include_file(self, filepath, library=False):

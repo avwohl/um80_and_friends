@@ -21,6 +21,15 @@ genuine tools under cpmemu, and each has a regression test that fails on
   NOT 1` are false. um80 --dri took any value but 0 as true, as M80 does,
   without a word. `IFT`, `IFE`, `IF1`, `IFDEF` and the other `IF`s MAC does
   not have (MAC reads `IFT 2` as a label) keep M80's meaning with `--dri`.
+- um80 assembler: with `--dri`, `MACLIB NAME` reads `NAME.LIB`, as MAC and
+  RMAC do, and then `NAME.MAC`, which um80 --dri read before: DRI's
+  `maclib diskdef` (MP/M II's `CONTROL/RESXIOS.ASM`, CP/M 2.0's
+  `os4bios.asm`) was "Cannot find include file". Without `--dri` it is
+  `NAME.MAC`, as in M80, and the error says MAC reads `NAME.LIB`. A file
+  that `INCLUDE`, `MACLIB` or `--pre` names is looked for as written, and
+  then in upper and in lower case, as a CP/M file name has no case; the
+  error names the files looked for. `RESXIOS.ASM` with `--dri -t` now
+  assembles to RMAC 1.1's object.
 
 ## [0.3.51] - 2026-09-26
 

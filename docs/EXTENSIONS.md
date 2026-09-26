@@ -361,6 +361,19 @@ M80 gives 01 02 for both. An 8DH 8AH or CR 8AH is a line end in all three. A
 line whose CR MAC takes for that line feed makes the next line start with a
 line feed, which MAC flags (`S`), and so does um80.
 
+**`MACLIB NAME` reads `NAME.LIB`,** as in MAC and RMAC, and then
+`NAME.MAC`, where um80 --dri looked before: DRI's `maclib diskdef`
+(`CONTROL/RESXIOS.ASM` in MP/M II, `os4bios.asm` in CP/M 2.0) reads
+`DISKDEF.LIB`. MAC reads `NAME.LIB` whatever extension follows the name, and
+flags `MACLIB NAME.MAC` `S`; um80 reads the file named. M80 reads a `MACLIB`
+file as an `INCLUDE` file, `NAME.MAC`, and so does um80 without `--dri`. In
+either mode a file is looked for by its name as written, and then in upper
+and in lower case, as a CP/M file name has no case: `maclib diskdef` finds
+`DISKDEF.LIB`, and `include inc` finds `INC.MAC`, on a file system where
+case matters. With `--dri -t`, MP/M II's `CONTROL/RESXIOS.ASM` assembles to
+RMAC 1.1's object, and with `--dri --aseg` CP/M 2.0's `os4bios.asm`, with
+MP/M II's `DISKDEF.LIB`, to MAC 2.0's bytes.
+
 **An `END` in a `MACLIB` library ends the library.** MAC and RMAC stop
 reading a library at its `END` and go on with the source after the `MACLIB`,
 and the address on that `END` is not the start address. M80 reads a `MACLIB`
