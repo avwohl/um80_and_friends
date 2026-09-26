@@ -116,7 +116,9 @@ genuine tools under cpmemu, and each has a regression test that fails on
   and `DW` is 00 00 and `DW 1,` 01 00 00 00; `DW ''` is 00 00. um80
   assembled nothing for `DB`, `DW` or a comma at the end, so every address
   after it moved, without a word, and `DW ''` was an error. um80 warns. With
-  `--dri` each is an error, as MAC and RMAC flag it E.
+  `--dri` each is an error, as MAC and RMAC flag it E; in M80's `DEFB` or
+  `DEFW`, which MAC and RMAC take for a label (they assemble nothing on the
+  line, and flag nothing), it is an error that says so.
 - um80 assembler: with `--dri`, an 8AH in the arguments of a macro call, or
   the list of an `IRP` or `IRPC`, is a LF there, which MAC and RMAC pass on
   as text: `MM A`, 8AH, `B` with a body of `DB '&P'` is 41 0A 42, and so is

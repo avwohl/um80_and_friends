@@ -36,26 +36,35 @@ def _assemble(source, **kw):
     return ok, code, [str(e) for e in asm.errors], asm.warnings
 
 
-@pytest.mark.parametrize('line,m80', [
-    ('\tdb', '0005'),
-    ('\tdb\t1,', '010005'),
-    ('\tdb\t1,,2', '01000205'),
-    ('\tdb\t;c', '0005'),
-    ('\tdw', '000005'),
-    ('\tdw\t1,', '0100000005'),
-    ('\tdw\t1,,2', '01000000020005'),
-    ('\tdefb\t1,', '010005'),
-    ('\tdefw', '000005'),
+# MAC and RMAC have no DEFB or DEFW: they take the word for a label and
+# assemble nothing on the line, flagging nothing (`DEFB', `DEFW' and `DEFB
+# 1' before `DB 5' are 05).  um80 --dri, which reads them as M80 does, said
+# that MAC flags an empty operand E there too.
+DRI_E = 'MAC and RMAC flag an empty operand'
+DRI_LABEL = 'MAC and RMAC have no DEF'
+
+
+@pytest.mark.parametrize('line,m80,dri', [
+    ('\tdb', '0005', DRI_E),
+    ('\tdb\t1,', '010005', DRI_E),
+    ('\tdb\t1,,2', '01000205', DRI_E),
+    ('\tdb\t;c', '0005', DRI_E),
+    ('\tdw', '000005', DRI_E),
+    ('\tdw\t1,', '0100000005', DRI_E),
+    ('\tdw\t1,,2', '01000000020005', DRI_E),
+    ('\tdefb\t1,', '010005', DRI_LABEL),
+    ('\tdefb', '0005', DRI_LABEL),
+    ('\tdefw', '000005', DRI_LABEL),
 ])
-def test_empty_operand(line, m80):
+def test_empty_operand(line, m80, dri):
     source = f"{line}\n\tdb\t5\n\tend\n"
     ok, code, errors, warnings = _assemble(source)
     assert ok, errors
     assert code.hex() == m80
     assert any('as M80 assembles it' in w for w in warnings), warnings
     ok, _, errors, _ = _assemble(source, dri=True)
-    assert not ok                                   # MAC and RMAC: E
-    assert any('MAC and RMAC flag an empty operand' in e for e in errors), errors
+    assert not ok
+    assert any(dri in e for e in errors), errors
 
 
 def test_an_empty_string():

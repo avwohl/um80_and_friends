@@ -389,7 +389,10 @@ it `E`: `DB` or `DW` with none, `DB 1,` and `DB 1,,2` (they assemble 00 for
 each, and `DB 1,,2` is 01 00 00 there). M80 assembles 0 for each - `DB` is
 00, `DB 1,` 01 00, `DW` 00 00 - and flags the `DB`s `Q`, and so does um80
 without `--dri`, with a warning. An empty string (`DB ''`) is nothing in all
-three.
+three. M80's `DEFB` and `DEFW`, which um80 reads with `--dri` too, are not
+MAC's: MAC and RMAC take the word for a label and assemble nothing on the
+line, flagging nothing (`DEFB`, `DEFW`, and `DEFB 1` too); an empty operand
+in one is an error with `--dri`, which says so.
 
 **A two-character string used as a value has its first character in the
 low byte,** as in MAC and RMAC: `'AB'` is 4241H, so `DW 'AB'` is 41 42, `LXI

@@ -3763,14 +3763,21 @@ class Assembler:
         assembled nothing for `DB', `DW' or a comma at the end, without a
         word.  MAC and RMAC (--dri) assemble 00 for each too, and flag it E,
         and um80 --dri reports it.  (An empty string, `DB ''', is nothing in
-        all three.)
+        all three.)  They have no DEFB or DEFW: `DEFB' is a label to them,
+        and the line assembles nothing, flagging nothing (`DEFB 1' too);
+        um80 --dri reads M80's DEFB and DEFW, and reports an empty operand
+        in one, where it said MAC flags it E.
         """
         ops = self.split_operands(operands or '', angles=not self.dri,
                                   keep_empty=True) or ['']
         if '' in ops:
             what = (f"{operator} with no operand" if ops == [''] else
                     f"an empty operand in {operator} {operands.strip()}")
-            if self.dri:
+            if self.dri and operator not in ('DB', 'DW'):
+                self.error(f"{what}: MAC and RMAC have no {operator}, and take"
+                           " it for a label, with nothing assembled; M80"
+                           " assembles 0 there")
+            elif self.dri:
                 self.error(f"{what}: MAC and RMAC flag an empty operand in a DB"
                            " or a DW E")
             elif self.pass_num == 2:
