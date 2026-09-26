@@ -74,6 +74,17 @@ genuine tools under cpmemu, and each has a regression test that fails on
   um80 defined none of them (a use of one was "Undefined symbol"). A label
   on an `ELSE` or `ENDIF` after a false `IF`, or on any line inside one, is
   still not defined, as in all three.
+- um80 assembler: a unary minus or plus applies to the term after it,
+  before `*`, `/`, `MOD`, `SHL` and `SHR`, as in M80 3.44: `-1 SHR 8` is
+  00FFH and `-2 SHR 1` 7FFFH (um80: 0 and 0FFFFH, MAC's reading, without a
+  word). `/` and `MOD` divide signed, as in M80: 8000H/2 is 0C000H, 0FFFEH/2
+  0FFFFH, 7/-2 0FFFDH (the quotient rounds toward 0), and the remainder has
+  the sign of the quotient, so 4 MOD -3 and -4 MOD 3 are 0FFFFH and -4 MOD -3
+  is 1 (um80: 4000H, 7FFFH, 0, 4, 0FFFFH, 0FFFCH). With `--dri` both are
+  MAC's and RMAC's: the sign applies to all that follows it, and division is
+  unsigned. `x MOD 0` is `x`, as in all three, where um80 reported a
+  division by zero; with `--dri` `x/0` is 0FFFFH, as in MAC and RMAC, which
+  flag neither (um80 warns); without it `x/0` is still an error (M80: O).
 
 ## [0.3.51] - 2026-09-26
 

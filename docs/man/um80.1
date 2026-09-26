@@ -315,6 +315,13 @@ Current location counter ($)
 .PP
 Operators: + \- * / MOD AND OR XOR NOT SHL SHR HIGH LOW
 .PP
+A unary minus or plus applies to the term after it, before * / MOD SHL
+SHR, as in MACRO-80 3.44 (\fB\-1 SHR 8\fR is 00FFH), and / and MOD divide
+signed (\fB8000H/2\fR is 0C000H; the remainder has the sign of the
+quotient).  With \fB\-\-dri\fR the sign applies to all of them and
+division is unsigned, as in MAC (0 and 4000H).  \fIx\fR MOD 0 is \fIx\fR;
+\fIx\fR/0 is an error, and with \fB\-\-dri\fR 0FFFFH, as in MAC.
+.PP
 An expression whose value depends on where the linker places a segment or on
 an external symbol, and that is not simply an address plus a constant (for
 example HIGH or LOW of a relocatable label, or any relocatable or external

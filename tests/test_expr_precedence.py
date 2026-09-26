@@ -1,7 +1,9 @@
 """Expression operator precedence, validated against real MACRO-80 3.44.
 
 M80 precedence (lowest binding first): OR/XOR < AND < NOT < relational
-(EQ/NE/LT/LE/GT/GE) < binary +/- < unary +/- < * / MOD SHL SHR < HIGH/LOW.
+(EQ/NE/LT/LE/GT/GE) < binary +/- < * / MOD SHL SHR < unary +/- < HIGH/LOW.
+(M80's manual puts the unary sign below * / MOD SHL SHR, as MAC has it; M80
+3.44 applies it to the term after it: see test_m80_arithmetic.py.)
 
 Previously the unary operators (NOT, unary minus, HIGH/LOW) were evaluated at
 the top of parse_expression, giving them the LOWEST precedence, so e.g.

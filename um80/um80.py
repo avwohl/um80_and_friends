@@ -1456,48 +1456,20 @@ class Assembler:
                 right = self.eval_operand(right_text, allow_undefined)
                 return self._add_sub(op, left, right)
 
-        # Unary minus / plus: binds tighter than binary +/- but looser than
-        # the multiplicative operators (so 3*-2 = 3*(-2), -2*3 = -(2*3)).
-        if expr.startswith('-') and len(expr) > 1:
-            operand = self.eval_operand(expr[1:], allow_undefined)
-            return self._link_unary(EXT_OP_NEG, operand, (-operand.value) & 0xFFFF,
-                                    operand.seg, operand.ext, operand.name)
-        if expr.startswith('+') and len(expr) > 1:
-            return self.eval_operand(expr[1:], allow_undefined)
-
-        # Multiplication, division, MOD, SHL, SHR
-        idx, oplen = self.find_op_at_level0(expr, ['*', '/', 'MOD', 'SHL', 'SHR'])
-        if idx >= 0:
-            op = expr[idx:idx+oplen].strip().upper()
-            if self.missing_operand(expr, expr[:idx], expr[idx+oplen:], op):
-                return ExprValue(0)
-            left = self.eval_operand(expr[:idx], allow_undefined)
-            right = self.eval_operand(expr[idx+oplen:], allow_undefined)
-            # The offset beside an external may be negative (EXT-1).
-            left_val, right_val = left.value & 0xFFFF, right.value & 0xFFFF
-            if op == '*':
-                result = (left_val * right_val) & 0xFFFF
-            elif op in ('/', 'MOD'):
-                if right_val == 0:
-                    # Only a constant 0 is a division by zero.  A divisor
-                    # read before its definition is 0 the first time pass 1
-                    # sees it, and an external or relocatable divisor is 0
-                    # at assembly time whatever the linker makes of it.
-                    if right.kind == 'abs' and self.pass_num == 2:
-                        self.error("Division by zero")
-                        return ExprValue(0)
-                    return self._link_binary(op, left, right, 0)
-                if op == '/':
-                    result = (left_val // right_val) & 0xFFFF
-                else:
-                    result = (left_val % right_val) & 0xFFFF
-            elif right_val > 15:
-                result = 0  # every bit shifted out
-            elif op == 'SHL':
-                result = (left_val << right_val) & 0xFFFF
-            else:
-                result = (left_val >> right_val) & 0xFFFF
-            return self._link_binary(op, left, right, result)
+        # Unary minus and plus, and *, /, MOD, SHL and SHR.  MACRO-80 3.44
+        # applies a unary sign to the term after it, before any of those:
+        # `-1 SHR 8' is (-1) SHR 8, 00FFH, and `-2 SHR 1' 7FFFH.  MAC and
+        # RMAC (--dri) apply it to all of them, as MAC's manual has it:
+        # -(1 SHR 8), 0, and -(2 SHR 1), 0FFFFH.  um80 read MAC's order in
+        # either mode.  (For + - * and a sign it is the same number.)
+        if self.dri:
+            order = (self._unary_sign, self._multiplicative)
+        else:
+            order = (self._multiplicative, self._unary_sign)
+        for step in order:
+            ev = step(expr, allow_undefined)
+            if ev is not None:
+                return ev
 
         # Highest-precedence operators (bind tightest, just below parentheses):
         # HIGH/LOW, the DRI HIGH(...)/LOW(...) function form, NUL and TYPE.
@@ -1632,6 +1604,80 @@ class Assembler:
 
         self.error(f"Cannot parse expression: '{expr}'")
         return ExprValue(0)
+
+    def _unary_sign(self, expr, allow_undefined):
+        """A unary minus or plus that starts `expr' (_evaluate()), or None."""
+        if expr.startswith('-') and len(expr) > 1:
+            operand = self.eval_operand(expr[1:], allow_undefined)
+            return self._link_unary(EXT_OP_NEG, operand, (-operand.value) & 0xFFFF,
+                                    operand.seg, operand.ext, operand.name)
+        if expr.startswith('+') and len(expr) > 1:
+            return self.eval_operand(expr[1:], allow_undefined)
+        return None
+
+    def _multiplicative(self, expr, allow_undefined):
+        """*, /, MOD, SHL or SHR, the rightmost at level 0 of `expr'
+        (_evaluate()), or None.
+
+        MACRO-80 3.44 divides signed: 8000H/2 is 0C000H, 0FFFEH/2 0FFFFH, and
+        7/-2 0FFFDH (the quotient rounds toward 0), and the remainder of MOD
+        has the sign the quotient has: 4 MOD -3 and -4 MOD 3 are 0FFFFH, -4
+        MOD -3 is 1.  MAC and RMAC (--dri) divide unsigned: 8000H/2 is
+        4000H.  um80 divided unsigned in either mode.  x MOD 0 is x in all
+        three, without a flag; x/0 is 0FFFFH in MAC and RMAC, without a
+        flag, and M80 flags it O (an error here).  um80 warns where it takes
+        such a value.
+        """
+        idx, oplen = self.find_op_at_level0(expr, ['*', '/', 'MOD', 'SHL', 'SHR'])
+        if idx < 0:
+            return None
+        op = expr[idx:idx+oplen].strip().upper()
+        if self.missing_operand(expr, expr[:idx], expr[idx+oplen:], op):
+            return ExprValue(0)
+        left = self.eval_operand(expr[:idx], allow_undefined)
+        right = self.eval_operand(expr[idx+oplen:], allow_undefined)
+        # The offset beside an external may be negative (EXT-1).
+        left_val, right_val = left.value & 0xFFFF, right.value & 0xFFFF
+        if op == '*':
+            result = (left_val * right_val) & 0xFFFF
+        elif op in ('/', 'MOD') and right_val == 0:
+            # Only a constant 0 is a division by zero.  A divisor read
+            # before its definition is 0 the first time pass 1 sees it, and
+            # an external or relocatable divisor is 0 at assembly time
+            # whatever the linker makes of it.
+            constant = right.kind == 'abs' and self.pass_num == 2
+            if op == 'MOD':
+                result = left_val
+                if constant:
+                    self.warning(f"'{expr.strip()}': MOD 0 is the value divided,"
+                                 " as in M80, MAC and RMAC")
+            elif self.dri:
+                result = 0xFFFF
+                if constant:
+                    self.warning(f"'{expr.strip()}': division by 0 is 0FFFFH in"
+                                 " MAC and RMAC, which flag nothing (M80: O)")
+            elif constant:
+                self.error("Division by zero")
+                return ExprValue(0)
+            else:
+                result = 0
+        elif op in ('/', 'MOD'):
+            if self.dri:
+                quotient, remainder = divmod(left_val, right_val)
+            else:
+                a = left_val - 0x10000 if left_val & 0x8000 else left_val
+                b = right_val - 0x10000 if right_val & 0x8000 else right_val
+                quotient, remainder = divmod(abs(a), abs(b))
+                if (a < 0) != (b < 0):
+                    quotient, remainder = -quotient, -remainder
+            result = (quotient if op == '/' else remainder) & 0xFFFF
+        elif right_val > 15:
+            result = 0  # every bit shifted out
+        elif op == 'SHL':
+            result = (left_val << right_val) & 0xFFFF
+        else:
+            result = (left_val >> right_val) & 0xFFFF
+        return self._link_binary(op, left, right, result)
 
     # MAC's relational operators (--dri), longest first: at the end of `<=',
     # `<=' is found before `='.

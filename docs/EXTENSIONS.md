@@ -340,6 +340,16 @@ the same everywhere; `IF X AND 2` does not. MAC has no `IFT`, `IFE`, `IFF`,
 reads `IFT 2` as a label, and flags the `ELSE` and `ENDIF` after it `B`); um80
 keeps them with `--dri`, with M80's meaning (`IFT 2` is true).
 
+**A unary sign applies to all that `*`, `/`, `MOD`, `SHL` and `SHR` make of
+it, and division is unsigned,** as in MAC and RMAC: `-1 SHR 8` is -(1 SHR 8),
+0, `-2 SHR 1` 0FFFFH, 8000H/2 4000H and 0FFFEH/2 7FFFH, and `x/0` is 0FFFFH,
+which MAC flags nothing for (um80 warns). M80 applies a sign to the term
+after it (00FFH, 7FFFH), divides signed, rounding toward 0 (0C000H, 0FFFFH),
+gives the remainder of `MOD` the sign of the quotient (4 MOD -3 and -4 MOD 3
+are 0FFFFH), and flags `x/0` `O`; so does um80 without `--dri` (`x/0` is an
+error there). `x MOD 0` is `x` in all three. MAC also flags a sign after
+another operator (`2+-1`, `7/-2`: `E`), which um80 takes.
+
 **A two-character string used as a value has its first character in the
 low byte,** as in MAC and RMAC: `'AB'` is 4241H, so `DW 'AB'` is 41 42, `LXI
 H,'AB'` 21 41 42, `X EQU 'AB'` then `DW X` 41 42, `DB ('AB') SHR 8` 42, and
@@ -1030,6 +1040,7 @@ defined global" but wrote the output and exited 0.
 | `'AB'` is 4241H (first character in the low byte) | ✗ | `--dri` | ✓ | ? |
 | `IF` true only when bit 0 is set (`IF 2` false) | ✗ | `--dri` | ✓ | ? |
 | `MACLIB` reads `NAME.LIB`, in pass 1 only | ✗ | `--dri` | ✓ | ✗ |
+| Signed `/` and `MOD`, a unary sign before `* / MOD SHL SHR` | ✓ | ✓ (not `--dri`) | ✗ | ? |
 | Statement of values (`LAB: 5,6` is `DB`) | ✓ | ✓ | ✗ | ✗ |
 | EQU external+offset | ✗ | ✓ | ✗ | ✓ |
 | `__END__` symbol | ✗ | ✓ | ✗ | ✗ |
