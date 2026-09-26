@@ -391,6 +391,33 @@ on 0.3.50.
   goes round 0 and A for `IRP X,<%,A>`, without a flag; um80 passed `%`,
   without a word. MAC and RMAC pass 0 and flag it `E`; with `--dri` it is
   now an error.
+- um80 assembler: with `--dri`, a `!` inside a `;` comment now ends the
+  comment and starts the next statement, as in MAC and RMAC: `NOP ;c! DB 1`
+  is 00 01, and `; text! DB 1` is 01. DRI's sources rely on it: CP/M 2.0's
+  CCP has `nosub: ;no submit file! call del$sub` and `mov d,a ;save value!
+  mov a,b ;mult by 10`, and MP/M II's `disk2_files/ldrbios.asm` `;<TAB>in
+  0f5h ! ani 2 ! rz`. um80 `--dri` read the comment to the end of the line
+  and left those statements out, without a word: 1523 of the 1887 bytes MAC
+  assembles from the CCP differed, and 298 of LDRBIOS's 414; both are now
+  MAC's byte for byte. A quote in the comment starts no string (`NOP ;it's!
+  DB 1`), a `*` comment line ends at a `!` whatever is in it (`* it's! DB 1`,
+  `* a;b! DB 1`), and a `;;` comment in a macro body is left out only up to
+  its `!` (`NOP ;;c! DB 7` is stored as `NOP! DB 7`). What follows the `!` is
+  a statement like any other: an `IF` or an `ENDIF`, the first statement of
+  the body of a `REPT`, `IRP` or `IRPC` on that line (`IRPC X,AB ;c! DB
+  '&X'`), or, in a line of a body being defined, the `MACRO`, `REPT`,
+  `IRP`, `IRPC` or `ENDM` that nests in it: `NOP! ENDM` and `NOP ;c! ENDM`
+  end the body after the `NOP`, as in MAC, where um80 went on to the end of
+  the file ("Unterminated MACRO"). And with `--dri` a macro call ends the
+  line, as in MAC and RMAC, which leave out what follows its arguments:
+  `NOP! MM 1! DB 6` is 00 and MM's bytes, and um80 warns (it assembled `DB
+  6` too, without a word). With or without `--dri`, an `EXITM` after a `!`
+  now ends the macro expansion or the repetition, as one at the start of a
+  line does (`NOP! EXITM! DB 5`, and `IF 1! EXITM! ENDIF`): um80 read on
+  after it, without a word, where MAC ends there. Without `--dri` a comment
+  runs to the end of the line, as in M80 (`NOP ;c! DB 1` is 00). A `!` at the
+  end of a line, or of a comment there, no longer adds an empty line to the
+  listing.
 
 ## [0.3.50] - 2026-09-25
 

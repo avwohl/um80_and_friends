@@ -80,12 +80,18 @@ Multiple instructions can be placed on a single line, separated by `!`:
         XRA A! RET                  ; Clear A and return
 ```
 
-This is commonly used in DRI source code to group related operations. The comment applies to the entire line.
+This is commonly used in DRI source code to group related operations.
+Without `--dri` a comment runs to the end of the line, so a `!` in it is
+text. With `--dri` a `!` ends a comment too, as in MAC and RMAC, and the next
+statement starts after it: `NOP ;save! INX H` is two statements (see
+[DRI sources](#dri-sources---dri)).
 
 **Implementation notes:**
 - The `!` separator is recognized outside of string literals
 - Each statement after the first is processed as if it had no label
-- Works with all instructions and most directives
+- Works with all instructions and most directives. An `EXITM` after a `!`
+  ends the macro expansion or the repetition there, as one at the start of
+  a line does (`NOP! EXITM! DB 5` assembles the `NOP` only).
 - A macro-invocation line is **not** split on `!`. There, `!` retains its M80
   meaning of quoting the next character in the argument list (e.g.
   `head FOO,!!CF` passes the name `!CF`, and `!,` passes a literal comma), so
@@ -233,9 +239,34 @@ label `ENTRY`, which is no MAC directive; um80 reads the `ENTRY` directive.
 **A line number, a `*` comment line and a MAC control are ignored.** A word
 that starts with a digit in front of a statement is a line number (`00010
 LAB: NOP`); a line whose first character, after any blanks, is `*` is a
-comment (a `!` in it still ends the comment, as in MAC: `* TEXT ! NOP` is a
-NOP); and MAC's assembly controls (`$-MACRO`, `$+PRINT`, `$*MACRO`) are left
-out. M80 flags each (`O` or `U`), and so does um80 without `--dri`.
+comment (a `!` in it still ends the comment, as in MAC, whatever is before
+it: `* TEXT ! NOP` and `* it's! NOP` are a NOP); and MAC's assembly controls
+(`$-MACRO`, `$+PRINT`, `$*MACRO`) are left out. M80 flags each (`O` or `U`),
+and so does um80 without `--dri`.
+
+**A `!` ends a comment.** MAC and RMAC read a `;` comment to the end of the
+line or to a `!`, and the `!` then starts the next statement, as it does
+outside a comment: `NOP ;c! DB 1` is 00 01, and `; text! DB 1` is 01. DRI's
+own sources rely on it - CP/M 2.0's CCP has `nosub: ;no submit file! call
+del$sub`, and MP/M II's `disk2_files/ldrbios.asm` `;<TAB>in 0f5h ! ani 2 !
+rz` - and both assemble to MAC's bytes with `--dri --aseg`. A quote in a
+comment starts no string (`NOP ;it's! DB 1` is 00 01). A `;;` comment in a
+macro body is left out of the body only up to its `!` (`NOP ;;c! DB 7` is
+stored as `NOP! DB 7`). What follows the `!` is a statement like any other:
+an `IF` or an `ENDIF`, a statement of the body of the `REPT`, `IRP` or `IRPC`
+on that line (`IRPC X,AB ;c! DB '&X'` puts `DB '&X'` in the body), or an
+`ENDM`. In a line of a body being defined, each statement is read for the
+`MACRO`, `REPT`, `IRP`, `IRPC` and `ENDM` that nest in the body, with a `!` in
+a comment or not: `NOP! ENDM` ends the body after the `NOP`, and what follows
+the `ENDM` is assembled where the body ends (`NOP! ENDM! DB 5` is 05 there).
+M80 has no `!` separator, and without `--dri` a comment runs to the end of
+the line (`NOP ;c! DB 1` is 00).
+
+**A macro call ends the line.** MAC and RMAC leave out what follows a macro
+call's arguments on its line, after a `!` or not: `NOP! MM 1! DB 6` and `NOP
+;c! MM 1 ;d! DB 6` are 00 and MM's bytes. With `--dri` um80 does the same,
+and warns where it leaves out a statement. (A `!` inside the arguments is
+still M80's quote; see [Multi-Statement Lines](#multi-statement-lines--separator).)
 
 **`PUSH A` is `PUSH PSW`, and an expression may have two register names in
 it,** as in MAC and RMAC (M80 flags both); see

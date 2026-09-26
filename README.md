@@ -434,7 +434,7 @@ For more details on these extensions and compatibility notes, see [docs/EXTENSIO
 
 ## Testing
 
-The test suite (1002 tests) runs under `pytest`:
+The test suite (1028 tests) runs under `pytest`:
 
 ```bash
 pip install -e ".[dev]"
@@ -479,6 +479,7 @@ Digital Research's MAC 2.0 and RMAC 1.1:
 | `test_condition_names.py` | In Z80 code a label named like a condition (`P:`, `NZ:`) is `JP`'s address, as in M80 |
 | `test_register_expressions.py` | (DRI) A register name is its number in any 8080 expression (`DB B`, `X EQU D+1`); M80 flags two in one expression and `PUSH A`, MAC takes them (`--dri`); a symbol named like a register is that symbol, as in M80 |
 | `test_dri_relations.py` | (DRI) `--dri` takes MAC's `=`, `<`, `<=`, `>`, `>=`, `<>`, and applies `HIGH`/`LOW` to all that follows, as MAC and RMAC do; without it, as M80 does |
+| `test_dri_comment_bang.py` | (DRI) With `--dri` a `!` ends a `;` comment and starts the next statement, as in MAC and RMAC (CP/M 2.0's CCP: `nosub: ;no submit file! call del$sub`), in a `*` line, a macro body, a `REPT`/`IRP`/`IRPC` line and before an `ENDM` or `EXITM`; a macro call ends the line; without it a comment runs to the end of the line, as in M80 |
 | `test_end_directive.py` | (DRI) Nothing after `END` is assembled - the rest of the file, a macro, a `REPT`, an `INCLUDE` file - as in M80, MAC and RMAC; an `END` in a `MACLIB` file ends the source as in M80, or with `--dri` only the library, as in MAC and RMAC |
 | `test_column_one.py` | (DRI) An instruction, directive or macro in column 1 is one; a statement of values is a `DB` and a label needs a colon, as in M80; with `--dri` a word with no colon is a label and a line number or a `*` line is ignored, as in MAC |
 

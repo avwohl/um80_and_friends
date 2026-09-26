@@ -470,6 +470,9 @@ class Assembler:
         self.repeat_stack = []  # Stack of (type, count/list, body, iter_var)
         self.repeat_nest_depth = 0  # Nesting depth while collecting a repeat body
         self.repeat_line_tail = None  # DRI '!' statements after an IRP/IRPC list
+        self.statement_comment = ''  # the comment of the statement being read
+        self.exitm_pending = False  # an EXITM after a `!' (_process_statements())
+        self.repeat_level = 0  # REPT, IRP and IRPC being repeated
         self.block_open_line = 0  # Line of the MACRO/REPT/IRP/IRPC still open
 
         self.entry_point = None  # END address if specified
@@ -2140,41 +2143,43 @@ class Assembler:
         Returns list of statement strings. Each statement after the first
         should be treated as having no label.
         Example: "PUSH H! PUSH D! PUSH B" -> ["PUSH H", " PUSH D", " PUSH B"]
+
+        A comment runs to the end of the line.  With --dri it runs to a
+        `!' as well, as in MAC and RMAC, and the `!' starts the next
+        statement: `NOP ;c! DB 1' is `NOP ;c' and ` DB 1', and `; text!
+        DB 1' is `; text' and ` DB 1'.  A quote in a comment starts no
+        string (`NOP ;it's! DB 1'), and so a `*' comment line - a line
+        whose first character but blanks is `*' - is text to the `!' too
+        (`* a;b! DB 1').  um80 --dri read a comment to the end of the line
+        and left out the statements after its `!', without a word: CP/M
+        2.0's CCP has `nosub: ;no submit file! call del$sub', and 1523 of
+        MAC's 1887 bytes of it differed.
         """
-        # First, find the comment (if any) and separate it
-        comment = ''
-        in_string = False
-        string_char = None
-        comment_pos = -1
-        for i, ch in enumerate(line):
-            if in_string:
-                if ch == string_char:
-                    in_string = False
-            elif ch in "'\"":
-                in_string = True
-                string_char = ch
-            elif ch == ';':
-                comment = line[i:]  # Include the semicolon
-                comment_pos = i
-                break
-
-        if comment_pos >= 0:
-            line = line[:comment_pos]
-
-        # Now split on '!' while respecting strings
         result = []
         current = ''
         in_string = False
         string_char = None
+        # In a comment: to the end of the line, or with --dri to a `!'.
+        comment = self.dri and line.lstrip().startswith('*')
 
         for ch in line:
-            if in_string:
+            if comment:
+                if ch == '!' and self.dri:
+                    result.append(current)
+                    current = ''
+                    comment = False
+                else:
+                    current += ch
+            elif in_string:
                 current += ch
                 if ch == string_char:
                     in_string = False
             elif ch in "'\"":
                 in_string = True
                 string_char = ch
+                current += ch
+            elif ch == ';':
+                comment = True
                 current += ch
             elif ch == '!':
                 result.append(current)
@@ -2184,11 +2189,6 @@ class Assembler:
 
         # Add the last segment
         result.append(current)
-
-        # Append comment to the last segment
-        if comment and result:
-            result[-1] = result[-1] + comment
-
         return result
 
     def select_common(self, block):
@@ -4210,7 +4210,10 @@ class Assembler:
 
         # EXITM - exit from macro expansion
         if operator == 'EXITM':
-            # Handled during expansion - here it just returns
+            # Handled during expansion, where it starts a body line.  One
+            # after a `!' ends the expansion when the line has been read
+            # to it (exitm_pending).
+            self.exitm_pending = True
             return True
 
         # LOCAL - declare local symbols in macro
@@ -4253,6 +4256,7 @@ class Assembler:
                                  " list O; um80 takes its value")
             self.block_open_line = self.line_num
             self.repeat_stack.append(('IRP', values, [], param, label))
+            self._repeat_comment_tail()
             return True
 
         # IRPC - iterate over characters
@@ -4277,6 +4281,7 @@ class Assembler:
                 chars = ['']
             self.block_open_line = self.line_num
             self.repeat_stack.append(('IRPC', chars, [], param, label))
+            self._repeat_comment_tail()
             return True
 
         # ENDM for REPT/IRP/IRPC
@@ -4433,6 +4438,24 @@ class Assembler:
         elif tail and self.pass_num == 2:
             self.warning(f"{where}: '{tail}' after it is ignored")
 
+    def _repeat_comment_tail(self):
+        """--dri: the statements after a `!' in the comment of an IRP or
+        IRPC line, which go into its body as the ones after a `!' that
+        ends its list do (_repeat_line_tail()).
+
+        MAC and RMAC end a comment at a `!' (split_on_exclamation()):
+        `IRPC X,AB ;c! DB 5' and a body of `DB '&X'' is 05 41 05 42, and
+        `IRP X,<1,2> ! NOP ;c! DB X' 00 01 00 02.  um80 --dri left out
+        what followed the comment's `!' (41 42, 00 00), without a word.
+        """
+        comment = self.statement_comment
+        if not self.dri or not comment or '!' not in comment:
+            return
+        if self.repeat_line_tail is None:
+            self.repeat_line_tail = comment.split('!', 1)[1]
+        else:
+            self.repeat_line_tail += ';' + comment
+
     def _line_invokes_macro(self, line):
         """Return True if this line's operator is a defined macro name, IRP or IRPC.
 
@@ -4505,22 +4528,17 @@ class Assembler:
         # Only do this when not collecting macro or repeat bodies, and not on a
         # macro-invocation line. On a macro call, '!' is the M80 argument-quote
         # operator (e.g. head FOO,!!CF) rather than a DRI statement separator;
-        # splitting here would shred the arguments (issue #3).
-        if (self.collecting_macro is None and not self.repeat_stack
-                and not self._line_invokes_macro(statement)):
+        # splitting here would shred the arguments (issue #3).  With --dri a
+        # line of a body being collected is read for its statements too
+        # (_collect_statements()).
+        if '!' in line and not self._line_invokes_macro(statement):
             statements = self.split_on_exclamation(line)
             if len(statements) > 1:
-                # Process first statement normally (with label if any)
-                self._process_single_statement(read(statements[0]))
-                # Process subsequent statements (they can't have labels from original line)
-                for stmt in statements[1:]:
-                    if self.ended:
-                        break
-                    # Add leading space to prevent treating first word as label
-                    if stmt and not stmt[0].isspace():
-                        stmt = '        ' + stmt.strip()
-                    self._process_single_statement(read(stmt))
-                return
+                if self.collecting_macro is None and not self.repeat_stack:
+                    self._process_statements(statements, read)
+                    return
+                if self.dri and self._collect_statements(line, statements, read):
+                    return
         # Fall through to normal processing (single statement or macro/repeat body)
         self._process_single_statement(statement)
         # DRI statements after an IRP or IRPC list: `IRPC C,AB ! DB '&C' ! ENDM'.
@@ -4530,6 +4548,93 @@ class Assembler:
                 if stmt.strip() and not self.ended:
                     self._process_single_statement(read('        ' + stmt.strip()))
 
+    def _process_statements(self, statements, read, first=0):
+        """Assemble the statements of a line that `!' separates.
+
+        A statement after the first cannot have a label in column one, so
+        it is read with blanks in front (`first' is the index of the first
+        of `statements' in the line).  With --dri a macro call ends the
+        line, as in MAC and RMAC: they leave out what follows the call's
+        arguments, after a `!' or not.  `NOP! MM 1! DB 6' is 00 and MM's
+        bytes there (um80 assembled DB 6 as well, without a word); um80
+        warns.
+
+        An EXITM after a `!' ends the macro expansion or the repetition, as
+        one at the start of a line does, in MACRO-80 syntax as in MAC's:
+        `NOP! EXITM! DB 5' and `NOP ;c! EXITM' in a body are 00 and no
+        more, and `IF 1! EXITM! ENDIF' ends the IF too.  um80 read on after
+        it (00 05 and the lines after), without a word.
+        """
+        for k, stmt in enumerate(statements):
+            if self.ended:
+                break
+            if k + first and not stmt.strip():
+                # Nothing after a `!' - one that ends the line or a comment
+                # there (`RZ ;done!'): no statement, and no listing line.
+                continue
+            # Add leading space to prevent treating first word as label
+            if k + first and stmt and not stmt[0].isspace():
+                stmt = '        ' + stmt.strip()
+            self.exitm_pending = False
+            called = self._process_single_statement(read(stmt))
+            if self.exitm_pending and (self.macro_level or self.repeat_level):
+                # An EXITM, which ends the expansion here: the one that
+                # starts the line was not read as a statement (expand_macro(),
+                # _run_repeat_iteration()).
+                break
+            if called and self.dri:
+                rest = [s.strip() for s in statements[k + 1:]]
+                rest = [s for s in rest if s and not s.startswith(';')]
+                if rest and self.pass_num == 2:
+                    self.warning(f"'{'! '.join(rest)}' after a macro call is"
+                                 " left out, as in MAC and RMAC (--dri): a"
+                                 " macro call ends the line")
+                break
+
+    def _collect_statements(self, line, statements, read):
+        """--dri: a line with more than one statement in a MACRO, REPT, IRP
+        or IRPC body being collected.  Returns whether it was taken here.
+
+        MAC and RMAC read each statement of the line for the MACRO, REPT,
+        IRP, IRPC and ENDM that nest in the body: `NOP! ENDM' and `NOP ;c!
+        ENDM' end it after the NOP, and what follows the ENDM is assembled
+        there (`NOP! ENDM! DB 5' in a MACRO is 05 where it is defined).
+        `NOP ;c! IRPC X,AB' opens an IRPC in the body, which the next ENDM
+        ends.  um80 read only the first statement: the body did not end
+        ("Unterminated MACRO", and nothing after it assembled) or ended at
+        the wrong ENDM.  The line goes into the body as written, up to the
+        ENDM that ends it.
+        """
+        macro = self.collecting_macro is not None
+        openers = ('MACRO', 'REPT', 'IRP', 'IRPC') if macro else ('REPT', 'IRP', 'IRPC')
+        depth = self.macro_nest_depth if macro else self.repeat_nest_depth
+        end = None
+        for k, stmt in enumerate(statements):
+            text = stmt if not k else '        ' + stmt.strip()
+            label, op, _, _ = self.parse_line(text)
+            op = (self._body_statement(label, op, text)[1] or '').upper()
+            if op in openers:
+                depth += 1
+            elif op == 'ENDM':
+                if not depth:
+                    end = k
+                    break
+                depth -= 1
+        body = line if end is None else '!'.join(statements[:end])
+        if body.strip():
+            if macro:
+                self.macro_body.append(self._macro_body_line(body))
+            else:
+                self.repeat_stack[-1][2].append(body)
+        if macro:
+            self.macro_nest_depth = depth
+        else:
+            self.repeat_nest_depth = depth
+        if end is not None:
+            # The ENDM, and what follows it.
+            self._process_statements(statements[end:], read, first=end)
+        return True
+
     def _line_feed_in_statement(self, line):
         """Whether `line' has a LF outside its strings and its comment.
 
@@ -4537,9 +4642,14 @@ class Assembler:
         byte 0AH and in a comment nothing, as in MAC and RMAC.
         """
         i = 0
+        comment = line.lstrip().startswith('*')
         while i < len(line):
-            if line[i] == ';':
-                return False
+            if comment or line[i] == ';':
+                # A comment, which ends at a `!' (split_on_exclamation()).
+                comment = False
+                i = line.find('!', i)
+                if i < 0:
+                    return False
             if line[i] == '\n':
                 return True
             if self._starts_string(line, i):
@@ -4577,23 +4687,22 @@ class Assembler:
         if label and self.dri:
             body.append(label + ':')
 
-    def _process_single_statement(self, line):
-        """Process a single statement (internal helper for ! separator support)."""
-        label, operator, operands, comment = self.parse_line(line)
-        if self.collecting_macro is not None or self.repeat_stack:
-            label, operator = self._body_statement(label, operator, line)
-        upper_op = operator.upper() if operator else ''
+    def _macro_body_line(self, line):
+        """A line of a macro body as it is stored: without its `;;' comment.
 
-        # If collecting macro definition, handle specially
-        if self.collecting_macro is not None:
-            # Strip ;; comments (not preserved in macro expansion)
-            line_for_macro = line
-            dbl_semi_pos = line_for_macro.find(';;')
+        A `;;' comment is not kept in the body.  It runs to the end of the
+        line, and with --dri to a `!', as in MAC and RMAC, where the next
+        statement starts: `NOP ;;c! DB 7' is stored as `NOP! DB 7', and a
+        quote in a comment starts no string there (split_on_exclamation()).
+        um80 --dri dropped the rest of the line with the comment.
+        """
+        if not self.dri:
+            dbl_semi_pos = line.find(';;')
             if dbl_semi_pos >= 0:
                 # Make sure it's not inside a string
                 in_string = False
                 string_char = None
-                for i, ch in enumerate(line_for_macro):
+                for i, ch in enumerate(line):
                     if i >= dbl_semi_pos:
                         break
                     if in_string:
@@ -4603,7 +4712,51 @@ class Assembler:
                         in_string = True
                         string_char = ch
                 if not in_string:
-                    line_for_macro = line_for_macro[:dbl_semi_pos]
+                    line = line[:dbl_semi_pos]
+            return line
+        if ';;' not in line:
+            return line
+        out = []
+        i, n = 0, len(line)
+        quote = None
+        comment = line.lstrip().startswith('*')
+        while i < n:
+            ch = line[i]
+            if quote:
+                if ch == quote:
+                    quote = None
+            elif ch == '!':
+                comment = False
+            elif ch == ';' and line[i + 1:i + 2] == ';':
+                i = line.find('!', i)
+                if i < 0:
+                    break
+                comment = False
+                continue
+            elif comment:
+                pass
+            elif ch == ';':
+                comment = True
+            elif ch in "'\"":
+                quote = ch
+            out.append(ch)
+            i += 1
+        return ''.join(out)
+
+    def _process_single_statement(self, line):
+        """Process a single statement (internal helper for ! separator support).
+
+        Returns True for a macro call (_process_statements()).
+        """
+        label, operator, operands, comment = self.parse_line(line)
+        self.statement_comment = comment  # see _repeat_comment_tail()
+        if self.collecting_macro is not None or self.repeat_stack:
+            label, operator = self._body_statement(label, operator, line)
+        upper_op = operator.upper() if operator else ''
+
+        # If collecting macro definition, handle specially
+        if self.collecting_macro is not None:
+            line_for_macro = self._macro_body_line(line)
 
             if upper_op == 'MACRO':
                 # Nested macro definition
@@ -4698,7 +4851,7 @@ class Assembler:
         if upper_op in self.macros:
             self.expand_macro(upper_op, operands)
             self._save_listing_entry(line)
-            return
+            return True
 
         # Try CPU instruction
         if self.z80_mode:
@@ -4829,12 +4982,24 @@ class Assembler:
         Honors M80 doubled-quote ('') escapes. A "'" preceded by an
         alphanumeric is not treated as a string start (Z80 AF' register, the
         same rule used by parse_line/split_operands).
+
+        With --dri a quote in a comment starts no string, and a comment ends
+        at a `!' (split_on_exclamation()): in `NOP ;a 'b! DB X,'&X'' the
+        string is `'&X'', and X is a parameter in both places.
         """
         spans = []
         i = 0
         n = len(line)
+        comment = self.dri and line.lstrip().startswith('*')
         while i < n:
             c = line[i]
+            if self.dri and (comment or c == ';'):
+                i = line.find('!', i)
+                if i < 0:
+                    break
+                comment = False
+                i += 1
+                continue
             if c == "'" and i > 0 and line[i - 1].isalnum():
                 i += 1
                 continue
@@ -5237,10 +5402,16 @@ class Assembler:
                 and self._irpc_string(self.parse_line(expanded)[2]) in ('', '<>'))
 
             # Process the expanded line
+            self.exitm_pending = False
             try:
                 self.process_line(expanded)
             finally:
                 self.irpc_from_argument = False
+            if self.exitm_pending:
+                # An EXITM after a `!' (_process_statements()).
+                self.exitm_pending = False
+                self.end_conditionals(cond_depth)
+                break
         if self.dri:
             # MAC and RMAC end the IFs a body leaves open at its ENDM (M80
             # carries them on).
@@ -5255,6 +5426,13 @@ class Assembler:
 
     def execute_repeat(self, rept_type, param_or_count, body, iter_var):
         """Execute a REPT/IRP/IRPC block."""
+        self.repeat_level += 1
+        try:
+            self._execute_repeat(rept_type, param_or_count, body, iter_var)
+        finally:
+            self.repeat_level -= 1
+
+    def _execute_repeat(self, rept_type, param_or_count, body, iter_var):
         if rept_type == 'REPT':
             count = param_or_count
             for i in range(count):
@@ -5295,7 +5473,13 @@ class Assembler:
                 if op and op.upper() == 'EXITM':
                     self.end_conditionals(cond_depth)
                     return True
+            self.exitm_pending = False
             self.process_line(expanded)
+            if self.exitm_pending:
+                # An EXITM after a `!' (_process_statements()).
+                self.exitm_pending = False
+                self.end_conditionals(cond_depth)
+                return True
         if self.dri:
             self.end_conditionals(cond_depth)
         return False
@@ -5425,6 +5609,7 @@ class Assembler:
         # swallow this one's lines as well.
         self.repeat_stack = []
         self.repeat_line_tail = None
+        self.exitm_pending = False
         self.collecting_macro = None
         self.macro_params = []
         self.macro_body = []
@@ -5827,7 +6012,8 @@ def main():
                              '(NMB$LST is NMBLST), a macro body is read with '
                              'MAC\'s names, an IF a macro body leaves open '
                              'ends with it, a label needs no colon, PUSH A is '
-                             'PUSH PSW, and = < <= > >= <> are relations')
+                             'PUSH PSW, = < <= > >= <> are relations, and a ! '
+                             'ends a comment and starts a statement')
     parser.add_argument('-s', '--strict', action='store_true',
                         help='Strict mode: error on out-of-range JR/DJNZ instead of promoting to JP')
 
