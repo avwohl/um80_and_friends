@@ -91,6 +91,10 @@ genuine tools under cpmemu, and each has a regression test that fails on
 - um80 assembler: with `--dri`, `MOV M,M` (and `MOV 6,M`) is 76H, HLT's
   opcode, as MAC and RMAC assemble it without a flag. um80 reported it in
   either mode; M80 flags it A, and without `--dri` it is still an error.
+- um80 assembler: with `--dri`, a string in double quotes is an error, as
+  MAC and RMAC quote a string with `'` only and flag `DB "A"`, `DW "A"` and
+  `MVI A,"A"` E (they assemble 00). um80 --dri read it as a string, as M80
+  does, without a word; without `--dri` it still does.
 
 ## [0.3.51] - 2026-09-26
 

@@ -434,7 +434,7 @@ For more details on these extensions and compatibility notes, see [docs/EXTENSIO
 
 ## Testing
 
-The test suite (1251 tests) runs under `pytest`:
+The test suite (1256 tests) runs under `pytest`:
 
 ```bash
 pip install -e ".[dev]"
@@ -484,7 +484,7 @@ Digital Research's MAC 2.0 and RMAC 1.1:
 | `test_end_directive.py` | (DRI) Nothing after `END` is assembled - the rest of the file, a macro, a `REPT`, an `INCLUDE` file - as in M80, MAC and RMAC; an `END` in a `MACLIB` file ends the source as in M80, or with `--dri` only the library, as in MAC and RMAC; with `--dri` `END START`, `START` defined after it, takes no start address, as in MAC and RMAC (M80: U) |
 | `test_column_one.py` | (DRI) An instruction, directive or macro in column 1 is one; a statement of values is a `DB` and a label needs a colon, as in M80; with `--dri` a word with no colon is a label and a line number or a `*` line is ignored, as in MAC |
 | `test_body_word_before_endm.py` | A word with no colon that is no instruction or directive in front of the `ENDM`, `MACRO`, `REPT`, `IRP`, `IRPC` or `LOCAL` of a `MACRO`, `IRP` or `IRPC` body being defined (`LAB ENDM`, `<TAB>LAB<TAB>ENDM`, `L&P ENDM`, `LAB LOCAL QQ`) is read as M80 reads it; not in a `REPT` body, nor after an instruction; with `--dri` a word made with `&` is a label, as in MAC |
-| `test_dri_string_value.py` | (DRI) A two-character string used as a value has its first character in the low byte with `--dri`, as in MAC and RMAC (`DW 'AB'` is 41 42), and in the high byte without, as in M80 (42 41) |
+| `test_dri_string_value.py` | (DRI) A two-character string used as a value has its first character in the low byte with `--dri`, as in MAC and RMAC (`DW 'AB'` is 41 42), and in the high byte without, as in M80 (42 41); with `--dri` `DB "A"` is an error, as MAC and RMAC quote with `'` only |
 | `test_dri_if_value.py` | (DRI) With `--dri` an `IF` is true when bit 0 of its value is set, as in MAC and RMAC (`IF 2` and `IF NOT 1` are false), and without when it is not 0, as in M80; `IFT`, `IFE`, `COND` and the other `IF`s MAC does not have keep M80's meaning |
 | `test_maclib.py` | (DRI) `MACLIB NAME` reads `NAME.MAC`, as in M80, or with `--dri` `NAME.LIB`, as in MAC and RMAC, and then `NAME.MAC`; a file name is looked for as written, then in upper and in lower case; with `--dri` a library is read in pass 1 only, as in MAC and RMAC: its code and data are not assembled, its symbols keep their values of pass 1, and a label its code moved is a phase error |
 | `test_macro_local_bang.py` | (DRI) A `LOCAL` after a `!` in a macro body (`NOP! LOCAL QQ`, `LOCAL QQ! NOP`, with `--dri` `NOP ;c! LOCAL QQ`) declares its names, as in MAC and RMAC |

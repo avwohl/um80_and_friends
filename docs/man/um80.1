@@ -111,6 +111,8 @@ An END in a MACLIB library ends the library, as in MAC and RMAC; MACRO-80
 reads a MACLIB file as an INCLUDE file, whose END ends the source.
 \fB\-\-dri\fR does not imply \fB\-\-aseg\fR (MAC's absolute sources) or
 \fB\-t\fR (RMAC's six-character names).
+A string is quoted with \fB'\fR only, as in MAC: \fBDB "A"\fR is an error
+(MACRO-80 reads a string).
 A two-character string used as a value has its first character in the low
 byte, as in MAC: \fB'AB'\fR is 4241H, and \fBDW 'AB'\fR is 41 42 (MACRO-80:
 4142H, 42 41).

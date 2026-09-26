@@ -354,6 +354,12 @@ are 0FFFFH), and flags `x/0` `O`; so does um80 without `--dri` (`x/0` is an
 error there). `x MOD 0` is `x` in all three. MAC also flags a sign after
 another operator (`2+-1`, `7/-2`: `E`), which um80 takes.
 
+**A string is quoted with `'` only,** as in MAC and RMAC: `DB "A"`, `DW "A"`
+and `MVI A,"A"` are an error, as MAC and RMAC flag them `E` (and assemble
+00). M80 reads `"A"` as a string, and so does um80 without `--dri`. A `"`
+in a macro call's arguments or an `IRP` list is text (see *A macro body is
+read as MAC reads it*), and `DB '"'` is 22 in all three.
+
 **A two-character string used as a value has its first character in the
 low byte,** as in MAC and RMAC: `'AB'` is 4241H, so `DW 'AB'` is 41 42, `LXI
 H,'AB'` 21 41 42, `X EQU 'AB'` then `DW X` 41 42, `DB ('AB') SHR 8` 42, and

@@ -1150,6 +1150,9 @@ class Assembler:
         three.)
         """
         if is_string_literal(s):
+            if s[0] == '"' and self.dri:
+                self.double_quote_error(s)
+                return (0, True)
             chars = s[1:-1].replace(s[0] * 2, s[0])
             if len(chars) == 1:
                 return (ord(chars), True)
@@ -1159,6 +1162,14 @@ class Assembler:
                     return (first | (second << 8), True)
                 return ((first << 8) | second, True)
         return (0, False)
+
+    def double_quote_error(self, text):
+        """--dri: a string in double quotes, which MAC and RMAC do not
+        read as a string: `DB "A"', `DW "A"' and `MVI A,"A"' are flagged E
+        there (and assemble 00).  M80 reads it as a string, as um80 --dri
+        did, without a word."""
+        self.error(f"{text} is no string in MAC and RMAC, which quote with '"
+                   " only: they flag it E (M80 reads it as a string)")
 
     def find_op_at_level0(self, expr, ops):
         """
@@ -3869,6 +3880,9 @@ class Assembler:
                 # A string, not an expression that begins and ends with a
                 # quote: DB 'A'+'B' is the byte 83H.
                 if is_string_literal(op):
+                    if op[0] == '"' and self.dri:
+                        self.double_quote_error(op)
+                        continue
                     s = op[1:-1]
                     # A doubled quote stands for one.
                     s = s.replace(op[0] * 2, op[0])
