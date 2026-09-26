@@ -5157,10 +5157,16 @@ class Assembler:
                 self.repeat_stack[-1][2].append(line)
             return
 
-        # Handle conditional directives even in false blocks
+        # Handle conditional directives even in false blocks.  A label on
+        # one is defined where the line before it was assembled, as in
+        # MACRO-80, MAC and RMAC: `LAB: IF 0', `LAB: ELSE' after a true IF
+        # and `LAB: ENDIF' after one; not `LAB: ELSE' or `LAB: ENDIF' after
+        # a false IF, nor anything inside one.  um80 defined none of them.
         if upper_op in ('IF', 'IFT', 'IFE', 'IFF', 'IFDEF', 'IFNDEF',
                         'IF1', 'IF2', 'IFB', 'IFNB', 'IFIDN', 'IFDIF',
                         'COND', 'ELSE', 'ENDIF', 'ENDC'):
+            if label and self.cond_false_depth == 0:
+                self.define_value(label, self.here())
             self.assemble_pseudo_op(operator, operands, label)
             self._save_listing_entry(line)
             return
@@ -5739,6 +5745,12 @@ class Assembler:
                     local_syms.update(names)
             if has_local and not other:
                 continue
+            # Parameters and LOCAL names, in one pass, as M80 reads a LOCAL
+            # name as a parameter: an argument's text is not read again.
+            names = {sym: sym + local_suffix for sym in local_syms}
+            names.update(subst)
+            expanded = self.substitute_macro_params(body_line, names)
+
             if (op and op.upper() == 'EXITM' and self.cond_false_depth == 0
                     and not self.repeat_stack and self.collecting_macro is None):
                 # Exit macro expansion early. Ignored inside a false conditional
@@ -5746,14 +5758,9 @@ class Assembler:
                 # a REPT/IRP/IRPC body being collected: that EXITM ends the
                 # repeat when it runs, not the macro now.  It ends the IFs
                 # of the expansion too - their ENDIFs are not read.
+                self._exitm_label(expanded)
                 self.end_conditionals(cond_depth)
                 break
-
-            # Parameters and LOCAL names, in one pass, as M80 reads a LOCAL
-            # name as a parameter: an argument's text is not read again.
-            names = {sym: sym + local_suffix for sym in local_syms}
-            names.update(subst)
-            expanded = self.substitute_macro_params(body_line, names)
 
             # M80 goes round an IRPC once, with its parameter empty, when an
             # empty argument made its string empty (`IRPC C,P' with P
@@ -5815,6 +5822,14 @@ class Assembler:
         return [(drop_name_dollars(sym) if self.dri else sym).strip().upper()
                 for sym in (opnds or '').split(',') if sym.strip()]
 
+    def _exitm_label(self, line):
+        """Define the label of an EXITM line (`LAB: EXITM'), which ends a
+        macro expansion or a repetition before it is assembled, where the
+        EXITM is, as MACRO-80, MAC and RMAC define it; um80 did not."""
+        label = self.parse_line(line)[0]
+        if label:
+            self.define_value(label, self.here())
+
     @staticmethod
     def _irpc_string(operands):
         """The text after the comma of an IRPC's operands, stripped."""
@@ -5867,6 +5882,7 @@ class Assembler:
             if not self.repeat_stack and self.cond_false_depth == 0:
                 _, op, _, _ = self.parse_line(expanded)
                 if op and op.upper() == 'EXITM':
+                    self._exitm_label(expanded)
                     self.end_conditionals(cond_depth)
                     return True
             self.exitm_pending = False

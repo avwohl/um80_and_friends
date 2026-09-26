@@ -67,6 +67,13 @@ genuine tools under cpmemu, and each has a regression test that fails on
   `ORG`, as M80 does (01 01 at 0300H), without a word; without `--dri` it
   still does. (MP/M II's `tools/genmod.py` refused a label on an `ORG`
   line for that.)
+- um80 assembler: a label on an `IF`, `ELSE`, `ENDIF` or `EXITM` line is
+  defined, where the line before it was assembled, as in M80, MAC and RMAC:
+  `LAB: IF 0`, `LAB: ELSE` and `LAB: ENDIF` after a true `IF`, and `LAB:
+  EXITM` in a macro, a `REPT`, an `IRP` or an `IRPC`, are the location there.
+  um80 defined none of them (a use of one was "Undefined symbol"). A label
+  on an `ELSE` or `ENDIF` after a false `IF`, or on any line inside one, is
+  still not defined, as in all three.
 
 ## [0.3.51] - 2026-09-26
 
