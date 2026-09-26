@@ -58,7 +58,8 @@ DIRECTIVES = frozenset({
     'DS', 'DEFS', 'CSEG', 'DSEG', 'ASEG', 'COMMON', 'PUBLIC', 'ENTRY', 'GLOBAL',
     'EXTRN', 'EXT', 'EXTERNAL', 'NAME', 'TITLE', 'SUBTTL', '$TITLE', 'PAGE',
     '$EJECT', '*EJECT', '.LIST', '.XLIST', '.RADIX', '.8080', '.Z80', '.SALL',
-    '.LALL', '.XALL', '.SFCOND', '.LFCOND', '.TFCOND', '.PRINTX', '.COMMENT',
+    '.LALL', '.XALL', '.SFCOND', '.LFCOND', '.TFCOND', '.CREF', '.XCREF',
+    '.PRINTX', '.COMMENT',
     '.REQUEST', '.PHASE', '.DEPHASE', 'END', 'IF', 'IFT', 'IFE', 'IFF', 'IFDEF',
     'IFNDEF', 'IF1', 'IF2', 'IFB', 'IFNB', 'IFIDN', 'IFDIF', 'ELSE', 'ENDIF',
     'ENDC', 'COND', 'INCLUDE', '$INCLUDE', 'MACLIB', 'MACRO', 'ENDM', 'EXITM',
@@ -4048,6 +4049,12 @@ class Assembler:
 
         # .SFCOND/.LFCOND/.TFCOND - conditional listing control
         if operator in ('.SFCOND', '.LFCOND', '.TFCOND'):
+            return True
+
+        # .CREF/.XCREF - cross-reference listing on and off, as in M80,
+        # which accepts them with or without a cross-reference file; um80
+        # writes none, and reported both as unknown.
+        if operator in ('.CREF', '.XCREF'):
             return True
 
         # .PRINTX - print message during assembly

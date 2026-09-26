@@ -434,7 +434,7 @@ For more details on these extensions and compatibility notes, see [docs/EXTENSIO
 
 ## Testing
 
-The test suite (1231 tests) runs under `pytest`:
+The test suite (1248 tests) runs under `pytest`:
 
 ```bash
 pip install -e ".[dev]"
@@ -490,6 +490,7 @@ Digital Research's MAC 2.0 and RMAC 1.1:
 | `test_macro_local_bang.py` | (DRI) A `LOCAL` after a `!` in a macro body (`NOP! LOCAL QQ`, `LOCAL QQ! NOP`, with `--dri` `NOP ;c! LOCAL QQ`) declares its names, as in MAC and RMAC |
 | `test_directive_labels.py` | (DRI) A label on an `ORG` is the location before it, as in M80, or with `--dri` the location the `ORG` sets, as in MAC and RMAC; a label on an `IF`, `ELSE`, `ENDIF` or `EXITM` line is defined where the line before it was assembled, as in all three |
 | `test_m80_arithmetic.py` | (DRI) A unary sign applies to the term after it, before `* / MOD SHL SHR`, and `/` and `MOD` divide signed, as in M80 (`-1 SHR 8` is 00FFH, 8000H/2 0C000H); with `--dri` the sign applies to all of them and division is unsigned, as in MAC and RMAC; `x MOD 0` is `x` |
+| `test_listing_controls.py` | M80's listing controls (`.CREF`, `.XCREF`, `.LALL`, `.SFCOND`, `PAGE`, `$EJECT`, ...) assemble nothing |
 
 Further tests cover the toolchain more broadly: `test_ds_org.py` (DS/ORG and
 segment placement), `test_defs_fill.py` (DEFS fill value), `test_end_symbol.py`

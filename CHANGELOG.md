@@ -85,6 +85,9 @@ genuine tools under cpmemu, and each has a regression test that fails on
   unsigned. `x MOD 0` is `x`, as in all three, where um80 reported a
   division by zero; with `--dri` `x/0` is 0FFFFH, as in MAC and RMAC, which
   flag neither (um80 warns); without it `x/0` is still an error (M80: O).
+- um80 assembler: M80's `.CREF` and `.XCREF` (cross-reference listing on
+  and off) are accepted and assemble nothing, as in M80; um80 reported
+  them as "Unknown instruction or directive".
 
 ## [0.3.51] - 2026-09-26
 
