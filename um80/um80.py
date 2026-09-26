@@ -482,6 +482,7 @@ class Assembler:
         self.block_open_line = 0  # Line of the MACRO/REPT/IRP/IRPC still open
 
         self.entry_point = None  # END address if specified
+        self.undefined_reads = 0  # reads of a symbol not defined (_evaluate())
         self.ended = False  # an END was assembled: the source ends there
         self.module_name = None   # from NAME('...')
         self.title_name = None    # from TITLE, which NAME overrides
@@ -1609,6 +1610,7 @@ class Assembler:
                 ev = self.forward_value(sym.name)
                 if ev is not None:
                     return ev
+                self.undefined_reads += 1
                 if not allow_undefined and self.pass_num == 2:
                     self.error(f"Undefined symbol '{expr}'")
                 return ExprValue(0)
@@ -4042,8 +4044,15 @@ class Assembler:
         # END - end of source
         if operator == 'END':
             if ops:
-                ev = self.number_operand(ops[0], 'END')
-                self.entry_point = (ev.value & 0xFFFF, ev.seg)
+                # MAC and RMAC (--dri) take no start address, and flag
+                # nothing, where the operand reads a symbol that is not
+                # defined - one defined after the END, which they never
+                # read, too: `END START' with START below it.  M80 flags it
+                # U.  um80 --dri reported it undefined.
+                undefined = self.undefined_reads
+                ev = self.number_operand(ops[0], 'END', allow_undefined=self.dri)
+                if not (self.dri and self.undefined_reads > undefined):
+                    self.entry_point = (ev.value & 0xFFFF, ev.seg)
             # The end of the source: MACRO-80, MAC and RMAC read no further,
             # from a macro, a REPT or an INCLUDE file too.  um80 went on,
             # and assembled what followed.

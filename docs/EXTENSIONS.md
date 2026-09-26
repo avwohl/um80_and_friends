@@ -395,6 +395,13 @@ further down is its value here, and 0 in MAC, which reads the library once;
 and um80 reads a `MACLIB` inside a library, which MAC and RMAC do not (a
 symbol it defines is `U`; M80 flags the `MACLIB` `O`).
 
+**`END` of a symbol that is not defined takes no start address.** MAC and
+RMAC read nothing after an `END`, so in `END START` with `START` below it
+the symbol is not defined, and they take no start address and flag nothing,
+as for any operand that reads a symbol not defined (`END FOO`, `END
+START+1`): RMAC's REL has no start address. M80 flags it `U`, and so does
+um80 without `--dri` (an error).
+
 **An `END` in a `MACLIB` library ends the library.** MAC and RMAC stop
 reading a library at its `END` and go on with the source after the `MACLIB`,
 and the address on that `END` is not the start address. M80 reads a `MACLIB`

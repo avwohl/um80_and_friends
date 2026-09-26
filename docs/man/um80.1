@@ -101,6 +101,8 @@ MAC's relational operators \fB=\fR, \fB<\fR, \fB<=\fR, \fB>\fR, \fB>=\fR and
 \fB<>\fR are EQ, LT, LE, GT, GE and NE, and HIGH and LOW apply to all that
 follows them (\fBHIGH(X)+1\fR is HIGH(X+1)), as in MAC; MACRO-80 has no such
 operator, and applies HIGH and LOW to the term after them.
+END of a symbol that is not defined, as in \fBEND START\fR with START
+below it, takes no start address and is no error, as in MAC (MACRO-80: U).
 \fBMACLIB\fR \fIname\fR reads \fIname\fR.LIB, as in MAC and RMAC, and
 then \fIname\fR.MAC; MACRO-80 reads \fIname\fR.MAC.
 An END in a MACLIB library ends the library, as in MAC and RMAC; MACRO-80

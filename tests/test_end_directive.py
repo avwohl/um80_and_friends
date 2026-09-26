@@ -133,3 +133,49 @@ def test_m80_end_in_a_maclib_file_is_reported():
         assert asm.assemble(p), [str(e) for e in asm.errors]
         assert any('MACLIB' in w and 'END' in w and '--dri' in w
                    for w in asm.warnings), asm.warnings
+
+
+# The start address.  MAC 2.0 and RMAC 1.1 take none, and flag nothing,
+# where the operand of END reads a symbol that is not defined: one defined
+# after the END, which they never read (`END START' with START below it),
+# or none at all.  RMAC's REL then has no start address, as for no operand.
+# M80 3.44 flags it U.  um80 --dri reported it undefined.
+
+def _entry(source, **kw):
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, 't.asm')
+        with open(p, 'w') as f:
+            f.write(source)
+        asm = Assembler(**kw)
+        ok = asm.assemble(p)
+        items = RELReader(asm.output.get_bytes()).read_all() if ok else []
+    return ok, [it for it in items if it[0] == 'END_PROGRAM'], \
+        [str(e) for e in asm.errors]
+
+
+@pytest.mark.parametrize('operand,tail', [
+    ('start', "start:\tnop\n"),
+    ('start+1', "start:\tnop\n"),
+    ('start', "start\tequ\t200h\n"),
+    ('foo', ''),
+    ('foo*2', ''),
+])
+def test_end_of_an_undefined_symbol(operand, tail):
+    source = f"\torg\t100h\n\tnop\n\tend\t{operand}\n{tail}"
+    ok, end, errors = _entry(source, dri=True)
+    assert ok, errors
+    assert end == [('END_PROGRAM', (0, 0))]          # RMAC's
+    ok, _, errors = _entry(source)
+    assert not ok                                     # M80: U
+    assert any('Undefined symbol' in e for e in errors), errors
+
+
+def test_end_of_a_defined_symbol():
+    # All three: the start address.
+    for dri in (False, True):
+        ok, end, errors = _entry("\torg\t100h\nstart:\tnop\n\tend\tstart\n", dri=dri)
+        assert ok, errors
+        assert end == [('END_PROGRAM', (1, 0x100))]
+    ok, end, errors = _entry("\torg\t100h\n\tnop\n\tend\t105h\n", dri=True)
+    assert ok, errors
+    assert end == [('END_PROGRAM', (0, 0x105))]

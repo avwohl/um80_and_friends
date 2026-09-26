@@ -56,6 +56,11 @@ genuine tools under cpmemu, and each has a regression test that fails on
   statement only, so a second expansion said "QQ multiply defined", and
   `LOCAL QQ! NOP` declared `QQ! NOP` and left out the `NOP`. (M80 has no `!`
   separator: it reads `LOCAL QQ! NOP` as `LOCAL QQ` alone.)
+- um80 assembler: with `--dri`, `END START` with `START` defined after the
+  `END` takes no start address and is no error, as in MAC and RMAC, which
+  read nothing after an `END`; so does any operand that reads a symbol not
+  defined (`END FOO`, `END START+1`). um80 --dri reported it undefined. M80
+  flags it U, and so does um80 without `--dri`.
 
 ## [0.3.51] - 2026-09-26
 
