@@ -91,7 +91,8 @@ blank, as in MAC: \fBMM ;c! DB 1\fR assembles the DB, and \fBMM A;c! DB
 warning.  Without \fB\-\-dri\fR a comment
 runs to the end of the line, as in MACRO-80.
 An 8AH (a line feed with bit 7 set) inside a line is a line feed, the byte
-0AH in a string, and an 8DH a carriage return that ends the statement, after
+0AH in a string and text in a macro call's arguments, and an 8DH a carriage
+return that ends the statement, after
 which the next item is taken for its line feed, as MAC reads them; MACRO-80
 leaves out an 8AH and ends the line at an 8DH.
 \fBPUSH A\fR and \fBPOP A\fR are PUSH PSW and POP PSW, \fBMOV M,M\fR is

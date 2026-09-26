@@ -2004,11 +2004,15 @@ class Assembler:
         operands = line[match.end():].strip()
 
         if operator in self.macros or operator in ('IRP', 'IRPC'):
-            # `line' is the end of `head', which starts `whole'.
-            start = len(head) - len(line) + match.end()
+            # `line' is the end of `head', which starts `whole'.  Only
+            # blanks and tabs go before the arguments: with --dri a LF (an
+            # 8AH) there is their first character (_line_feed_in_statement()).
+            start = len(head) - len(line) + match.end(1)
+            while start < len(whole) and whole[start] in ' \t':
+                start += 1
             self.operands_start = start     # see _dri_macro_call()
             end, semicolon = self.arguments_comment(whole, start, operator)
-            operands = whole[start:end].lstrip()
+            operands = whole[start:end].lstrip(' \t')
             comment = '' if semicolon is None else whole[semicolon + 1:]
         return (label, operator, operands, comment)
 
@@ -4453,8 +4457,8 @@ class Assembler:
             chars = self.repeat_list(operator, operands)
             if chars is None:
                 # No <...>: the string ends at a blank or a comma.
-                text = operands.split(',', 1)[1].strip()
-                chars = re.split(r'[\s,]', text, maxsplit=1)[0]
+                text = operands.split(',', 1)[1].strip(' \t')
+                chars = re.split(r'[ \t,]', text, maxsplit=1)[0]
                 self._repeat_line_tail(text[len(chars):],
                                        "IRPC string ends at a blank or a comma")
             chars = list(chars)
@@ -5053,8 +5057,14 @@ class Assembler:
         """Whether `line' has a LF outside its strings and its comment.
 
         With --dri a LF is a character of a line: in a string it is the
-        byte 0AH and in a comment nothing, as in MAC and RMAC.
+        byte 0AH and in a comment nothing, as in MAC and RMAC.  In the
+        arguments of a macro call, and the list of an IRP or an IRPC, it
+        is text, which MAC and RMAC pass on: `MM A', 8AH, `B' with a body of
+        `DB '&P'' is 41 0A 42, where um80 --dri reported it.
         """
+        _, op, _, _ = self.parse_line(line)
+        if op and (op in self.macros or op in ('IRP', 'IRPC')):
+            line = line[:self.operands_start]
         i = 0
         comment = line.lstrip().startswith('*')
         while i < len(line):

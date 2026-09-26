@@ -380,7 +380,9 @@ a byte's bit 7 and then read it, so an 8AH is a line feed and an 8DH a
 carriage return, where M80 leaves out an 8AH that does not follow a CR and
 reads an 8DH as the end of the line. An 8AH that does not follow a CR is a
 character of the line: in a string it is the byte 0AH (`DB 'A<8AH>B'` is 41
-0A 42; M80 41 42), in a comment nothing, and anywhere else an error (MAC:
+0A 42; M80 41 42), in a comment nothing, in the arguments of a macro call
+and the list of an `IRP` or `IRPC` text, which MAC passes on (`MM A<8AH>B`
+with a body of `DB '&P'` is 41 0A 42), and anywhere else an error (MAC:
 `E`). An 8DH ends the statement, in a comment too, and MAC then takes the next
 item, after any blanks - a word or a number, a string, one other character,
 or a comment to the next CR - for the line feed that should follow a CR; the

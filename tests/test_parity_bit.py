@@ -181,6 +181,33 @@ def test_dri_flags_what_mac_flags():
         assert ok, (src, errors)
 
 
+# An 8AH in the arguments of a macro call, or the list of an IRP or IRPC, is
+# a LF there, which MAC and RMAC pass on as text: with a body of `DB '&P''
+# it is the byte 0AH (um80 --dri reported it).  M80 leaves it out.  The
+# bytes are MAC's, RMAC's and M80's under cpmemu, before a `DB 9'.
+MM = b"mm\tmacro\tp\r\n\tdb\t'&p'\r\n\tendm\r\n"
+ARG_8AH = [
+    (MM + b'\tmm\tA\x8aB\r\n', '410a42', '4142'),
+    (MM + b'\tmm\t<A\x8aB>\r\n', '410a42', '4142'),
+    (MM + b'\tmm\t\x8aAB\r\n', '0a4142', '4142'),
+    (b"mm\tmacro\tp,q\r\n\tdb\t'&p',q\r\n\tendm\r\n\tmm\tA\x8a,2\r\n",
+     '410a02', '4102'),
+    (b"\tirpc\tx,A\x8aB\r\n\tdb\t'&x'\r\n\tendm\r\n", '410a42', '4142'),
+    (b"\tirp\tx,<A\x8aB,C>\r\n\tdb\t'&x'\r\n\tendm\r\n", '410a4243', '414243'),
+]
+
+
+def test_8ah_in_a_macro_argument():
+    for src, mac, m80 in ARG_8AH:
+        src += b'\tdb\t9\r\n\tend\r\n'
+        ok, code, errors = _assemble(src, dri=True)
+        assert ok, (src, errors)
+        assert code.hex() == mac + '09', src
+        ok, code, errors = _assemble(src)
+        assert ok, (src, errors)
+        assert code.hex() == m80 + '09', src
+
+
 def test_dri_source_lines():
     from um80.um80 import source_lines  # pylint: disable=import-outside-toplevel
     # Without --dri, M80's reading.
