@@ -49,6 +49,13 @@ genuine tools under cpmemu, and each has a regression test that fails on
   program's size is the most pass 1 reached, as RMAC writes it, and a label
   a library's code moved is a phase error, as MAC and RMAC flag it (P).
   DRI's libraries hold macros and `EQU`s only, which are read as before.
+- um80 assembler: a `LOCAL` after a `!` in a macro body declares its names,
+  as in MAC and RMAC: `NOP! LOCAL QQ`, `LOCAL QQ! NOP`, `LOCAL QQ,RR! NOP`
+  and `NOP! LOCAL QQ! NOP`, and with `--dri` `LOCAL QQ ;c! NOP`, `NOP ;c!
+  LOCAL QQ` and `MM ;c! LOCAL QQ`. um80 read a body line for its first
+  statement only, so a second expansion said "QQ multiply defined", and
+  `LOCAL QQ! NOP` declared `QQ! NOP` and left out the `NOP`. (M80 has no `!`
+  separator: it reads `LOCAL QQ! NOP` as `LOCAL QQ` alone.)
 
 ## [0.3.51] - 2026-09-26
 

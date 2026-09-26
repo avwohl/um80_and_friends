@@ -211,7 +211,8 @@ Begin macro definition.
 End macro definition.
 .TP
 .B LOCAL \fIsymbol\fR[,\fIsymbol\fR]...
-Declare local symbols within a macro.
+Declare local symbols within a macro.  A LOCAL after a \fB!\fR declares them
+too (\fBNOP! LOCAL QQ\fR, \fBLOCAL QQ! NOP\fR), as in MAC.
 .TP
 .B EXITM
 Exit macro expansion early.

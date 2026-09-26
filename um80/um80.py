@@ -5709,20 +5709,19 @@ class Assembler:
         for body_line in macro.body:
             if self.ended:
                 break
-            # Check for LOCAL directive
+            # The LOCAL statements of the line, which may be any of the
+            # statements a `!' separates (_local_names()).  A line of LOCALs
+            # only is not assembled.
             label, op, opnds, comment = self.parse_line(body_line)
-            word = self._body_word(body_line, ('LOCAL',))
-            if word:
-                # `LAB LOCAL QQ' (_body_word()).
-                op, opnds = 'LOCAL', self.parse_line('\t' + body_line[word[2]:])[2]
-            if op and op.upper() == 'LOCAL':
-                # Add these symbols to local set
-                if opnds:
-                    for sym in opnds.split(','):
-                        # --dri: MAC reads a LOCAL name as a name, and the
-                        # body line is still as written (_dri_statement()).
-                        sym = drop_name_dollars(sym) if self.dri else sym
-                        local_syms.add(sym.strip().upper())
+            has_local = other = False
+            for stmt in self._body_line_statements(body_line):
+                names = self._local_names(stmt)
+                if names is None:
+                    other = other or any(self.parse_line(stmt)[:3])
+                else:
+                    has_local = True
+                    local_syms.update(names)
+            if has_local and not other:
                 continue
             if (op and op.upper() == 'EXITM' and self.cond_false_depth == 0
                     and not self.repeat_stack and self.collecting_macro is None):
@@ -5764,6 +5763,41 @@ class Assembler:
             self.end_conditionals(cond_depth)
 
         self.macro_level -= 1
+
+    def _body_line_statements(self, line):
+        """The statements of a macro body line, as process_line() will read
+        them where it is expanded: the `!' separates them, and with --dri a
+        `!' ends a comment too; a macro call's line is one statement without
+        --dri, where `!' is M80's quote in its arguments.  Each after the
+        first has blanks in front, as _process_statements() reads it."""
+        if '!' not in line or (not self.dri and self._line_invokes_macro(line)):
+            return [line]
+        statements = self.split_on_exclamation(line)
+        return statements[:1] + ['        ' + stmt.strip() for stmt in statements[1:]]
+
+    def _local_names(self, stmt):
+        """The names a LOCAL statement declares, or None if `stmt' is no
+        LOCAL.
+
+        A LOCAL is a statement like any other, after a `!' too, as in MAC
+        and RMAC: `NOP! LOCAL QQ', `LOCAL QQ! NOP', `LOCAL QQ ;c! NOP' and
+        (with --dri) `NOP ;c! LOCAL QQ' and `MM ;c! LOCAL QQ' declare QQ.
+        um80 read a line for its first statement only: QQ was not local, and
+        a second expansion said "QQ multiply defined"; `LOCAL QQ! NOP' took
+        `QQ! NOP' for the name.  M80 has no `!' separator: it reads `LOCAL
+        QQ! NOP' as LOCAL QQ and nothing after it (see EXTENSIONS.md).
+        """
+        _, op, opnds, _ = self.parse_line(stmt)
+        word = self._body_word(stmt, ('LOCAL',))
+        if word:
+            # `LAB LOCAL QQ' (_body_word()).
+            op, opnds = 'LOCAL', self.parse_line('\t' + stmt[word[2]:])[2]
+        if not op or op.upper() != 'LOCAL':
+            return None
+        # --dri: MAC reads a LOCAL name as a name, and the body line is
+        # still as written (_dri_statement()).
+        return [(drop_name_dollars(sym) if self.dri else sym).strip().upper()
+                for sym in (opnds or '').split(',') if sym.strip()]
 
     @staticmethod
     def _irpc_string(operands):

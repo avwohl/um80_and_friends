@@ -91,7 +91,12 @@ statement starts after it: `NOP ;save! INX H` is two statements (see
 - Each statement after the first is processed as if it had no label
 - Works with all instructions and most directives. An `EXITM` after a `!`
   ends the macro expansion or the repetition there, as one at the start of
-  a line does (`NOP! EXITM! DB 5` assembles the `NOP` only).
+  a line does (`NOP! EXITM! DB 5` assembles the `NOP` only). A `LOCAL` in a
+  macro body declares its names wherever it is on the line, as in MAC and
+  RMAC: `NOP! LOCAL QQ`, `LOCAL QQ! NOP` and `NOP! LOCAL QQ! NOP` (and with
+  `--dri`, where a `!` ends a comment, `LOCAL QQ ;c! NOP` and `MM ;c! LOCAL
+  QQ`). M80 reads `LOCAL QQ! NOP` as `LOCAL QQ` and nothing more, and flags
+  `NOP! LOCAL QQ`, where `QQ` is not local.
 - A macro-invocation line is **not** split on `!`. There, `!` retains its M80
   meaning of quoting the next character in the argument list (e.g.
   `head FOO,!!CF` passes the name `!CF`, and `!,` passes a literal comma), so
