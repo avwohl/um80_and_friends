@@ -95,6 +95,12 @@ genuine tools under cpmemu, and each has a regression test that fails on
   MAC and RMAC quote a string with `'` only and flag `DB "A"`, `DW "A"` and
   `MVI A,"A"` E (they assemble 00). um80 --dri read it as a string, as M80
   does, without a word; without `--dri` it still does.
+- um80 assembler: an empty operand in a `DB` or a `DW` is 0, as in M80: `DB`
+  with none is 00, `DB 1,` 01 00 and `DB 1,,2` 01 00 02 (M80 flags them Q),
+  and `DW` is 00 00 and `DW 1,` 01 00 00 00; `DW ''` is 00 00. um80
+  assembled nothing for `DB`, `DW` or a comma at the end, so every address
+  after it moved, without a word, and `DW ''` was an error. um80 warns. With
+  `--dri` each is an error, as MAC and RMAC flag it E.
 
 ## [0.3.51] - 2026-09-26
 

@@ -1154,6 +1154,9 @@ class Assembler:
                 self.double_quote_error(s)
                 return (0, True)
             chars = s[1:-1].replace(s[0] * 2, s[0])
+            if not chars and not self.dri:
+                # M80: `DW ''' is 00 00, without a flag (MAC and RMAC: E).
+                return (0, True)
             if len(chars) == 1:
                 return (ord(chars), True)
             elif len(chars) == 2:
@@ -2071,7 +2074,8 @@ class Assembler:
             end = i
         return end, None
 
-    def split_operands(self, operands, escape_bang=False, angles=True):
+    def split_operands(self, operands, escape_bang=False, angles=True,
+                       keep_empty=False):
         """Split operands by comma, respecting strings, parentheses, and angle brackets.
 
         With `angles' false a < or > is not a bracket but an operator, as
@@ -2079,6 +2083,9 @@ class Assembler:
 
         With escape_bang the operands are a macro call's arguments, which
         macro_call_arguments() reads.
+
+        An empty operand between two commas is ''; so is one after a comma
+        at the end with `keep_empty' (`1,' is 1 and '').
         """
         if not operands:
             return []
@@ -2124,7 +2131,7 @@ class Assembler:
             else:
                 current += ch
 
-        if current.strip():
+        if current.strip() or (keep_empty and result):
             result.append(current.strip())
         return result
 
@@ -3738,6 +3745,32 @@ class Assembler:
         'DB', 'DEFB', 'DEFM', 'DC', 'DW', 'DEFW', 'DS', 'DEFS', 'ORG', 'EQU',
         'SET', 'DEFL', 'ASET', 'IF', 'IFT', 'IFE', 'IFF', 'COND', 'END'})
 
+    def data_operands(self, operator, operands):
+        """The operands of a DB or a DW, an empty one among them ''.
+
+        An empty operand is 0, as in MACRO-80 3.44: `DB' with none is 00,
+        `DB 1,' 01 00 and `DB 1,,2' 01 00 02, which M80 flags Q, and `DW' is
+        00 00 and `DW 1,' 01 00 00 00, which it does not; um80 warns.  um80
+        assembled nothing for `DB', `DW' or a comma at the end, without a
+        word.  MAC and RMAC (--dri) assemble 00 for each too, and flag it E,
+        and um80 --dri reports it.  (An empty string, `DB ''', is nothing in
+        all three.)
+        """
+        ops = self.split_operands(operands or '', angles=not self.dri,
+                                  keep_empty=True) or ['']
+        if '' in ops:
+            what = (f"{operator} with no operand" if ops == [''] else
+                    f"an empty operand in {operator} {operands.strip()}")
+            if self.dri:
+                self.error(f"{what}: MAC and RMAC flag an empty operand in a DB"
+                           " or a DW E")
+            elif self.pass_num == 2:
+                size = 'a 00 byte' if operator in ('DB', 'DEFB', 'DEFM') \
+                    else 'a 0000H word'
+                flag = ', and flags it Q' if size == 'a 00 byte' else ''
+                self.warning(f"{what} is {size}, as M80 assembles it{flag}")
+        return ops
+
     def assemble_pseudo_op(self, operator, operands, label):
         """Assemble a pseudo-operation (directive)."""
         operator = operator.upper()
@@ -3875,7 +3908,7 @@ class Assembler:
 
         # DB - define bytes
         if operator in ('DB', 'DEFB', 'DEFM'):
-            for op in ops:
+            for op in self.data_operands(operator, operands):
                 op = op.strip()
                 # A string, not an expression that begins and ends with a
                 # quote: DB 'A'+'B' is the byte 83H.
@@ -3917,7 +3950,7 @@ class Assembler:
 
         # DW - define words
         if operator in ('DW', 'DEFW'):
-            for op in ops:
+            for op in self.data_operands(operator, operands):
                 ev = self.eval_operand(op.strip())
                 self.emit_word_operand(ev)
             return True

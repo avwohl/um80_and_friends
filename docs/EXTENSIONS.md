@@ -360,6 +360,13 @@ and `MVI A,"A"` are an error, as MAC and RMAC flag them `E` (and assemble
 in a macro call's arguments or an `IRP` list is text (see *A macro body is
 read as MAC reads it*), and `DB '"'` is 22 in all three.
 
+**An empty operand in a `DB` or a `DW` is an error,** as MAC and RMAC flag
+it `E`: `DB` or `DW` with none, `DB 1,` and `DB 1,,2` (they assemble 00 for
+each, and `DB 1,,2` is 01 00 00 there). M80 assembles 0 for each - `DB` is
+00, `DB 1,` 01 00, `DW` 00 00 - and flags the `DB`s `Q`, and so does um80
+without `--dri`, with a warning. An empty string (`DB ''`) is nothing in all
+three.
+
 **A two-character string used as a value has its first character in the
 low byte,** as in MAC and RMAC: `'AB'` is 4241H, so `DW 'AB'` is 41 42, `LXI
 H,'AB'` 21 41 42, `X EQU 'AB'` then `DW X` 41 42, `DB ('AB') SHR 8` 42, and

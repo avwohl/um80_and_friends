@@ -170,6 +170,9 @@ Define bytes. Values can be numbers or quoted strings.
 .TP
 .B DW \fIvalue\fR[,\fIvalue\fR]...
 Define 16-bit words (low byte first).
+An empty operand of a DB or a DW is 0, as in MACRO-80 (\fBDB 1,\fR is 01 00,
+\fBDW\fR 00 00), with a warning; with \fB\-\-dri\fR it is an error, as
+MAC flags it.
 .TP
 .B DS \fIcount\fR
 Define storage (reserve \fIcount\fR bytes).
