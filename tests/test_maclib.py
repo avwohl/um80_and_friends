@@ -1,4 +1,4 @@
-"""MACLIB: which file a library is read from.
+"""MACLIB: which file a library is read from, and how it is read.
 
 MACRO-80 3.44 reads `MACLIB NAME' as `INCLUDE NAME', from NAME.MAC, and a
 name with an extension from that file.  DRI's MAC 2.0 and RMAC 1.1 read
@@ -100,3 +100,105 @@ def test_include_name_in_another_case():
                                      {fname: "x\tequ\t2\n"})
         assert ok, errors
         assert code.hex() == '02'
+
+
+# MAC and RMAC read a library in pass 1 only: its macros and the symbols it
+# defines are there in pass 2, but none of its code or data is assembled,
+# and a symbol it defines keeps the value pass 1 gave it.  M80 reads the
+# file as an INCLUDE file.  um80 --dri assembled it as M80 does.  The
+# values are M80's, MAC's and RMAC's under cpmemu (INC.LIB and INC.MAC hold
+# the same library here).
+
+def _lib(text):
+    return {'INC.LIB': text, 'INC.MAC': text}
+
+
+def _rel(source, files, **kw):
+    """(ok, REL items, error messages)."""
+    with tempfile.TemporaryDirectory() as d:
+        for name, text in files.items():
+            with open(os.path.join(d, name), 'w') as f:
+                f.write(text)
+        p = os.path.join(d, 't.asm')
+        with open(p, 'w') as f:
+            f.write(source)
+        asm = Assembler(**kw)
+        ok = asm.assemble(p)
+        items = RELReader(asm.output.get_bytes()).read_all() if ok else []
+    return ok, items, [str(e) for e in asm.errors]
+
+
+def _image(items):
+    """{address: byte} of an absolute REL."""
+    mem, loc = {}, 0
+    for it in items:
+        if it[0] == 'SET_LOC':
+            loc = it[1][1]
+        elif it[0] == 'ABSOLUTE_BYTE':
+            mem[loc] = it[1]
+            loc += 1
+    return ' '.join(f'{a:04X}:{b:02X}' for a, b in sorted(mem.items()))
+
+
+@pytest.mark.parametrize('main,lib,m80,mac', [
+    # A library's code, data, ORG and macro calls assemble nothing.
+    ("\tdb\t2\n", "\tdb\t1\n", '0100:01 0101:02', '0100:02'),
+    ("\tdb\t2\n", "\torg\t200h\n", '0200:02', '0100:02'),
+    ("\tdb\t2\n", "mx\tmacro\n\tdb\t9\n\tendm\n\tmx\n",
+     '0100:09 0101:02', '0100:02'),
+    # A label it defines keeps its value from pass 1.
+    ("\tdw\tll\n", "ll:\tdb\t1\n", '0100:01 0101:00 0102:01', '0100:00 0101:01'),
+    # A SET: the value at the end of pass 1.
+    ("\tdb\tx\nx\tset\t2\n\tdb\tx\n", "x\tset\t1\n", '0100:01 0101:02',
+     '0100:02 0101:02'),
+    ("\tdb\tx\nx\tset\tx+1\n\tdb\tx\n", "x\tset\t1\n", '0100:01 0101:02',
+     '0100:02 0101:03'),
+    # Macros and EQUs, as DRI's libraries have them, are the same in all.
+    ("\tmx\n\tdb\ty\n", "mx\tmacro\n\tdb\t9\n\tendm\ny\tequ\t5\n",
+     '0100:09 0101:05', '0100:09 0101:05'),
+    ("\tmx\n\tdb\t2\n", "mx\tmacro\n\tlocal\tl\nl:\tdb\t9\n\tdw\tl\n\tendm\n",
+     '0100:09 0101:00 0102:01 0103:02', '0100:09 0101:00 0102:01 0103:02'),
+    ("\tdw\t$\n", "\tdb\t1\n", '0100:01 0101:01 0102:01', '0100:00 0101:01'),
+])
+def test_maclib_is_read_in_pass_1_only(main, lib, m80, mac):
+    source = f"\taseg\n\torg\t100h\n\tmaclib\tinc\n{main}\tend\n"
+    for dri, want in ((False, m80), (True, mac)):
+        ok, items, errors = _rel(source, _lib(lib), dri=dri)
+        assert ok, errors
+        assert _image(items) == want, (dri, _image(items))
+
+
+@pytest.mark.parametrize('main,name,before,after', [
+    ("lab:\tdb\t2\n\tdw\tlab\n", 'LAB', '0101', '0100'),
+    ("lab:\tmvi\ta,5\n\tdw\tlab\n", 'LAB', '0101', '0100'),
+    ("\tnop\nlab:\n\tdb\t8\n\tdw\tlab\n", 'LAB', '0102', '0101'),
+    ("lab\tequ\t$\n\tdw\tlab\n", 'LAB', '0101', '0100'),
+])
+def test_dri_a_label_a_librarys_code_moved_is_a_phase_error(main, name, before, after):
+    # MAC and RMAC flag the label P, and keep its address of pass 1.
+    source = f"\taseg\n\torg\t100h\n\tmaclib\tinc\n{main}\tend\n"
+    ok, _, errors = _rel(source, _lib("\tdb\t1\n"), dri=True)
+    assert not ok
+    # The file is inc.LIB where file names have no case, INC.LIB elsewhere.
+    assert any(f"PHASE ERROR: '{name}' IS {before}H IN PASS 1 AND {after}H IN PASS 2:"
+               " MACLIB INC.LIB HAS CODE OR DATA" in e.upper() for e in errors), errors
+
+
+def test_dri_the_segment_sizes_are_those_of_pass_1():
+    # RMAC writes the size pass 1 reached, which counts the library's code:
+    # 2 bytes, one of them loaded, and with a library `ORG 200H' 201H.
+    for lib, size in (("\tdb\t1\n", 0x102), ("\torg\t200h\n", 0x201)):
+        ok, items, errors = _rel("\torg\t100h\n\tmaclib\tinc\n\tdb\t2\n\tend\n",
+                                 _lib(lib), dri=True)
+        assert ok, errors
+        assert ('DEFINE_PROG_SIZE', (1, size)) in items, items
+        assert [it for it in items if it[0] == 'ABSOLUTE_BYTE'] == [('ABSOLUTE_BYTE', 2)]
+
+
+def test_dri_public_and_extrn_in_a_library():
+    # RMAC: A1 is a public at 0102H, and E1 an external.
+    ok, items, errors = _rel("\torg\t100h\n\tmaclib\tinc\n\tdw\te1\na1:\tdb\t3\n\tend\n",
+                             _lib("\tpublic\ta1\n\textrn\te1\n"), dri=True)
+    assert ok, errors
+    assert any(it[0] == 'DEFINE_ENTRY' and it[2] == 'A1' for it in items), items
+    assert any(it[0] == 'CHAIN_EXTERNAL' and it[2] == 'E1' for it in items), items

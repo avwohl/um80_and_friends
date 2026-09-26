@@ -38,6 +38,17 @@ genuine tools under cpmemu, and each has a regression test that fails on
   01 01, where M80 assembles 01 00 00 01. `IFDEF` of a symbol defined further
   down, which is false in pass 1 and true in pass 2, moved labels so too. (A
   symbol read before it moved was already a phase error.)
+- um80 assembler: with `--dri`, a `MACLIB` library is read in pass 1 only,
+  as MAC and RMAC read it: its macros and the symbols it defines are there,
+  but none of its code or data is assembled, an `ORG` or a macro call in it
+  assembles nothing, and a symbol it defines keeps its value of pass 1.
+  With a library of `DB 1`, `DB 2` after the `MACLIB` is now 02, and with
+  `LL: DB 1`, `DW LL` is 00 01 at 0100H, as in MAC; um80 --dri assembled
+  the library as an `INCLUDE` file (01 02, 01 00 01), without a word. A
+  `SET` in a library gives the symbol its value at the end of pass 1. The
+  program's size is the most pass 1 reached, as RMAC writes it, and a label
+  a library's code moved is a phase error, as MAC and RMAC flag it (P).
+  DRI's libraries hold macros and `EQU`s only, which are read as before.
 
 ## [0.3.51] - 2026-09-26
 

@@ -142,10 +142,7 @@ The `$` characters are stripped during parsing and do not affect the numeric val
 ### DRI sources (`--dri`)
 
 `um80 --dri` reads a source the way DRI's MAC and RMAC read it where they
-differ from MACRO-80, in the ways listed here. It does not yet follow MAC in
-one: a `MACLIB` library (MAC and RMAC read it in pass 1 only and assemble
-none of its code or data; here it is assembled as an `INCLUDE` file). No DRI
-source in the tests depends on it. It changes these things:
+differ from MACRO-80, in the ways listed here. It changes these things:
 
 **A `$` inside a name is ignored.** DRI's manuals: "All characters are
 significant in an identifier, except for the embedded dollar sign ($) which
@@ -373,6 +370,25 @@ and in lower case, as a CP/M file name has no case: `maclib diskdef` finds
 case matters. With `--dri -t`, MP/M II's `CONTROL/RESXIOS.ASM` assembles to
 RMAC 1.1's object, and with `--dri --aseg` CP/M 2.0's `os4bios.asm`, with
 MP/M II's `DISKDEF.LIB`, to MAC 2.0's bytes.
+
+**A `MACLIB` library is read in pass 1 only,** as in MAC and RMAC, for its
+macros and the symbols it defines: none of its code or data is assembled,
+an `ORG` or a macro call in it assembles nothing, and a symbol it defines
+keeps the value pass 1 gave it. With a library of `DB 1`, `DB 2` after the
+`MACLIB` is 02 at the location the `MACLIB` left; with `LL: DB 1`, `DW LL` is
+the address pass 1 gave `LL`, the `DW`'s own; a `SET` in a library gives the
+symbol the value it has at the end of pass 1 (`X SET 1` there, then `DB X / X
+SET 2 / DB X` in the source, is 02 02). The size of the program, and of the
+data and each `COMMON` block, is the most pass 1 reached, which counts the
+library's code, as RMAC writes it. A label or an `EQU $` after a `MACLIB`
+whose code moved it is where pass 1 put it in MAC and RMAC, which flag it
+`P`; um80 reports a phase error. DRI's libraries hold macros and `EQU`s
+only, which are read alike in all three. M80 reads a `MACLIB` file as an
+`INCLUDE` file, in both passes, and so does um80 without `--dri`. Two things
+um80 reads otherwise: an `EQU` in a library of a symbol the source defines
+further down is its value here, and 0 in MAC, which reads the library once;
+and um80 reads a `MACLIB` inside a library, which MAC and RMAC do not (a
+symbol it defines is `U`; M80 flags the `MACLIB` `O`).
 
 **An `END` in a `MACLIB` library ends the library.** MAC and RMAC stop
 reading a library at its `END` and go on with the source after the `MACLIB`,
@@ -995,6 +1011,7 @@ defined global" but wrote the output and exited 0.
 | `HIGH`/`LOW` of all that follows (`HIGH(X)+1` is `HIGH(X+1)`) | ✗ | `--dri` | ✓ | ✗ |
 | `'AB'` is 4241H (first character in the low byte) | ✗ | `--dri` | ✓ | ? |
 | `IF` true only when bit 0 is set (`IF 2` false) | ✗ | `--dri` | ✓ | ? |
+| `MACLIB` reads `NAME.LIB`, in pass 1 only | ✗ | `--dri` | ✓ | ✗ |
 | Statement of values (`LAB: 5,6` is `DB`) | ✓ | ✓ | ✗ | ✗ |
 | EQU external+offset | ✗ | ✓ | ✗ | ✓ |
 | `__END__` symbol | ✗ | ✓ | ✗ | ✗ |

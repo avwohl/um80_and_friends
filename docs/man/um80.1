@@ -113,8 +113,8 @@ byte, as in MAC: \fB'AB'\fR is 4241H, and \fBDW 'AB'\fR is 41 42 (MACRO-80:
 An IF is true when bit 0 of its value is set, as in MAC: \fBIF 2\fR and
 \fBIF NOT 1\fR are false (MACRO-80 takes any value but 0 as true); IFT,
 IFE, IFDEF and the other IFs MAC does not have keep MACRO-80's meaning.
-It does not yet follow MAC in one thing: a MACLIB library (MAC assembles
-none of its code or data); see the EXTENSIONS document.
+A MACLIB library is read in pass 1 only, as in MAC: none of its code or
+data is assembled, and a symbol it defines keeps its value of pass 1.
 .TP
 .BI \-D " SYMBOL" [= VALUE ]
 Define a symbol before assembly begins. If no value is given, the symbol is

@@ -515,6 +515,9 @@ class Assembler:
 
         # Include file handling
         self.include_stack = []  # Stack of (filename, line_num) for nested includes
+        # --dri: the MACLIB libraries that assembled code or data, or moved
+        # the location counter, in pass 1 (process_include_file()).
+        self.library_code = set()
         self.base_path = None  # Base path for resolving relative includes
         self.include_paths = []  # Additional search paths for includes
 
@@ -811,7 +814,7 @@ class Assembler:
         assembled with the wrong value.  Pass 1 is iterated until the table
         stops changing (assemble()), so this should not happen - it is the
         net under that, for whatever makes the two passes differ (an IFDEF
-        of a later symbol, IF1/IF2).
+        of a later symbol, IF1/IF2, a MACLIB library with --dri).
 
         A label or an EQU whose value in pass 2 is not the one pass 1 gave
         it is an error even where nothing read it before: MACRO-80 3.44
@@ -831,9 +834,14 @@ class Assembler:
                        f"passes ({before:04X}H before this line, {here:04X}H"
                        f" here)")
             return
+        why = ''
+        if self.library_code:
+            why = (f": MACLIB {', '.join(sorted(self.library_code))} has code"
+                   " or data, which MAC and RMAC, and um80 --dri, read in pass"
+                   " 1 only")
         self.error(f"Phase error: '{sym.name}' is {before:04X}H in pass 1 and"
-                   f" {here:04X}H in pass 2 (M80: P, or M for an EQU; MAC and"
-                   f" RMAC: P)")
+                   f" {here:04X}H in pass 2{why} (M80: P, or M for an EQU; MAC"
+                   f" and RMAC: P)")
 
     def note_read(self, sym):
         """Record in `reading' which definition of `sym' is read.
@@ -5898,10 +5906,26 @@ class Assembler:
         goes on after the MACLIB; the address on that END is not the start
         address (RMAC's REL has none).  Without --dri um80 warns, as the
         rest of a DRI source is then left out, without a word from M80.
+
+        MAC and RMAC read a library in pass 1 only, for its macros and the
+        symbols it defines, and so does um80 with --dri: none of its code
+        or data is assembled, an ORG or a macro call in it assembles
+        nothing, and a symbol it defines keeps its value from pass 1.  With
+        a library `DB 1', `DB 2' after the MACLIB is 02 at 0100H in MAC;
+        with `LL: DB 1', `DW LL' is 00 01; and a SET in it gives the symbol
+        the value it has at the end of pass 1 (`X SET 1' there, then `DB X
+        / X SET 2 / DB X', is 02 02).  A label after a MACLIB whose code
+        moved it is where pass 1 put it in MAC, which flags it P, and um80
+        reports it (check_phase()).  um80 --dri assembled a library as an
+        INCLUDE file, in both passes, so those were 01 02, 01 00 01 and 01
+        02.
         """
+        if library and self.dri and self.pass_num == 2:
+            return
         # Save current state
         saved_line_num = self.line_num
         saved_entry_point = self.entry_point
+        where = (self.current_seg, self.current_common, self.loc)
 
         # Push onto include stack
         self.include_stack.append((filepath, saved_line_num))
@@ -5928,6 +5952,9 @@ class Assembler:
             self.include_stack.pop()
             self.line_num = saved_line_num
 
+        if library and self.dri and (self.current_seg, self.current_common,
+                                     self.loc) != where:
+            self.library_code.add(os.path.basename(filepath))
         if library and self.ended:
             if self.dri:
                 self.ended = False
@@ -6195,6 +6222,10 @@ class Assembler:
                                  f"stabilize after {iteration} iterations")
             break
 
+        # The sizes pass 1 reached, which RMAC writes (see below).
+        pass1_sizes = (self.segments['CSEG'].extent(), self.segments['DSEG'].extent(),
+                       {name: com.size for name, com in self.common_blocks.items()})
+
         # Report promotions
         if self.promoted_jr and not self.strict_jr:
             self.warnings.append(f"Note: {len(self.promoted_jr)} JR/DJNZ instruction(s) promoted to JP due to range")
@@ -6243,13 +6274,25 @@ class Assembler:
         # An empty block gets its size too: MACRO-80 writes item 5 with 0,
         # and LINK-80 stops with '?Loading Error' at the SELECT_COMMON of a
         # block it was never given a size for.
+        #
+        # RMAC writes the sizes pass 1 reached, and those count the code and
+        # data of a MACLIB library, which pass 2 does not assemble
+        # (process_include_file()): with a library `DB 1' and `DB 2' after
+        # the MACLIB the program is 2 bytes long, and one byte of it is
+        # loaded.  So does um80 with --dri.
+        library = self.dri and self.library_code
         for cname, com in self.common_blocks.items():
-            self.output.write_define_common_size(ADDR_ABSOLUTE, com.size,
+            size = max(com.size, pass1_sizes[2].get(cname, 0)) if library \
+                else com.size
+            self.output.write_define_common_size(ADDR_ABSOLUTE, size,
                                                  cname if cname else ' ')
         cseg = self.segments['CSEG']
         dseg = self.segments['DSEG']
         cseg_size = cseg.extent()
         dseg_size = dseg.extent()
+        if library:
+            cseg_size = max(cseg_size, pass1_sizes[0])
+            dseg_size = max(dseg_size, pass1_sizes[1])
         # Item 10 even for no DSEG at all, as MACRO-80 writes it: without
         # it LINK-80 3.44 drops the constant of an item 9 in ASEG (`DW
         # EXT+1' there linked to EXT).
