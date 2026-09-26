@@ -812,16 +812,28 @@ class Assembler:
         stops changing (assemble()), so this should not happen - it is the
         net under that, for whatever makes the two passes differ (an IFDEF
         of a later symbol, IF1/IF2).
+
+        A label or an EQU whose value in pass 2 is not the one pass 1 gave
+        it is an error even where nothing read it before: MACRO-80 3.44
+        flags such a label P (an EQU M), and MAC and RMAC P, and each keeps
+        the value of pass 1 for it.  um80 took the value of pass 2, without
+        a word: `IF2 / DB 1 / ENDIF / LAB: NOP / DW LAB' was 01 00 01 01,
+        where M80 assembles 01 00 00 01.
         """
-        if (self.pass_num == 2 and sym.defined and sym.defined_pass == 1
-                and sym.read_early and not sym.redefinable
-                and not sym.external
-                and self.value_key(self.symbol_value(sym))
-                != self.value_key(new)):
+        if (self.pass_num != 2 or not sym.defined or sym.defined_pass != 1
+                or sym.redefinable or sym.external
+                or self.value_key(self.symbol_value(sym)) == self.value_key(new)):
+            return
+        before, here = sym.value & 0xFFFF, new.value & 0xFFFF
+        if sym.read_early:
             self.error(f"Phase error: '{sym.name}' is used before it is "
                        f"defined, and its value is not the same in both "
-                       f"passes ({sym.value & 0xFFFF:04X}H before this "
-                       f"line, {new.value & 0xFFFF:04X}H here)")
+                       f"passes ({before:04X}H before this line, {here:04X}H"
+                       f" here)")
+            return
+        self.error(f"Phase error: '{sym.name}' is {before:04X}H in pass 1 and"
+                   f" {here:04X}H in pass 2 (M80: P, or M for an EQU; MAC and"
+                   f" RMAC: P)")
 
     def note_read(self, sym):
         """Record in `reading' which definition of `sym' is read.

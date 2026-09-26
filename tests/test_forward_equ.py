@@ -175,6 +175,39 @@ def test_value_that_differs_between_passes_after_use_is_a_phase_error():
     assert any("Phase error: 'LAB'" in e for e in _errors(asm))
 
 
+def test_a_label_that_moves_between_the_passes_is_a_phase_error():
+    """M80 3.44 flags a label whose address in pass 2 is not the one pass
+    1 gave it P, and keeps the address of pass 1: `IF2 / DB 1 / ENDIF /
+    LAB: NOP / DW LAB' is 01 00 00 01 there.  um80 used the address of pass
+    2 without a word (01 00 01 01), where nothing read LAB before it."""
+    for source in ("\tASEG\n\tORG 100H\n\tIF2\n\tDB 1\n\tENDIF\nLAB:\tNOP\n"
+                   "\tDW LAB\n\tEND\n",
+                   "\tASEG\n\tORG 100H\n\tIFDEF LATER\n\tDS 10\n\tENDIF\n"
+                   "LAB:\tNOP\nLATER\tEQU 1\n\tEND\n"):
+        for dri in (False, True):
+            ok, asm, _ = _asm(source, dri=dri)
+            assert not ok
+            assert any("Phase error: 'LAB' is 0100H in pass 1 and" in e
+                       for e in _errors(asm)), _errors(asm)
+
+
+def test_an_equ_that_changes_between_the_passes_is_an_error():
+    # M80: M.
+    ok, asm, _ = _asm("\tASEG\n\tORG 100H\n\tIF2\n\tDB 1\n\tENDIF\n"
+                      "LAB\tEQU $\n\tDW LAB\n\tEND\n")
+    assert not ok
+    assert any("Phase error: 'LAB' is 0100H in pass 1 and 0101H in pass 2" in e
+               for e in _errors(asm)), _errors(asm)
+
+
+def test_code_only_in_pass_2_without_a_label_after_it_is_no_phase_error():
+    # M80: 01 00, nothing flagged.
+    ok, asm, rel = _asm("\tASEG\n\tORG 100H\n\tIF2\n\tDB 1\n\tENDIF\n"
+                        "\tNOP\n\tEND\n")
+    assert ok, _errors(asm)
+    assert _bytes(rel) == [1, 0]
+
+
 def test_divisor_defined_later_is_not_a_division_by_zero():
     ok, asm, rel = _asm("\tASEG\n\tORG 100H\n\tMVI A,100/COUNT\n"
                         "\tDB 7 MOD COUNT\nCOUNT\tEQU 5\n\tEND\n")

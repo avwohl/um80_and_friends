@@ -30,6 +30,14 @@ genuine tools under cpmemu, and each has a regression test that fails on
   then in upper and in lower case, as a CP/M file name has no case; the
   error names the files looked for. `RESXIOS.ASM` with `--dri -t` now
   assembles to RMAC 1.1's object.
+- um80 assembler: a label whose address in pass 2 is not the one pass 1
+  gave it, or an EQU whose value changed, is an error, a phase error, where
+  nothing read it before: M80 flags such a label P and keeps its address from
+  pass 1 (an EQU M), and so do MAC and RMAC (P). um80 took the address of
+  pass 2, without a word: `IF2 / DB 1 / ENDIF / LAB: NOP / DW LAB` was 01 00
+  01 01, where M80 assembles 01 00 00 01. `IFDEF` of a symbol defined further
+  down, which is false in pass 1 and true in pass 2, moved labels so too. (A
+  symbol read before it moved was already a phase error.)
 
 ## [0.3.51] - 2026-09-26
 
