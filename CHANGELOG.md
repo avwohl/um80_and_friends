@@ -156,6 +156,25 @@ genuine tools under cpmemu, and each has a regression test that fails on
   lines after the first are errors); `DS` with no operand, which M80
   assembles as `DS 0`, is an error; and M80 assembles `DB 1,'',2` as 01 and
   flags it Q, where um80 assembles 01 02, as MAC does.
+- um80 assembler: with `--dri`, what MAC and RMAC flag and um80 takes,
+  without a word: a bare `IF` (E; false in all three); a two-character
+  string in an expression in a `DB` (`DB 'AB'+0`, `DB 'AB' SHR 8`, `DB 'AB'
+  AND 0FFH`, `DB 'BA' EQ 4142H`: D, and they assemble the string, 41 42 or
+  42 41), where um80 assembles the one byte, 41, 42, 41 and FF (0.3.51: 42,
+  41, 42 and 00); a `DB` or a `DW` with a `!` after it on the line (D, and
+  they assemble what follows wrong: `DB 1! DB 2` is 01 00, `DB 1! MVI A,5`
+  01 06 00, `MVI A,1! DB 2! DB 3` 3E 01 02 00, and an inline repetition's
+  last item 00, `IRP X,<1,2>! DB X! ENDM` 01 00 and `IRPC X,AB! DB '&X'!
+  ENDM` 41 00), where um80 assembles what is written (01 02, 01 3E 05, 3E 01
+  02 03, 01 02 and 41 42; 0.3.51 left out the `IRPC` with a warning); and a
+  `!` inside an `IRP` list, which ends the statement in MAC and RMAC (`IRP
+  X,<1!,2,3>`: V and S, and the one item 1), and is M80's quote in um80 (the
+  items `1,2` and 3).
+- um80 assembler: with `--dri`, a `LOCAL` in a `REPT`, `IRP` or `IRPC`
+  body, which MAC and RMAC honour at the start of a line and after a `!`
+  (`REPT 2 / LOCAL QQ / QQ: DB 1 / DW QQ / ENDM` is 01 00 01 01 03 01), is
+  "QQ multiply defined", as in 0.3.51. (M80 has `LOCAL` in a `MACRO` only,
+  and flags it O there.)
 - um80 assembler: with `--dri`, a `MACLIB` inside a library is read, which
   MAC and RMAC do not (a symbol it defines is U there), and an `EQU` in a
   library of a symbol the source defines further down is its value, where
@@ -174,8 +193,11 @@ genuine tools under cpmemu, and each has a regression test that fails on
   RMAC flag `X EQU Y / DW X / Y EQU 5`, and `X EQU LL` of a label further
   down, P and assemble X's value of pass 1 (00 00; M80 05 00, no flag), and
   all three flag the label after `DS N` with `N` defined further down (`DS
-  N / L1: DW L1 / N EQU 4`: M80 00 01, MAC 00 00); um80 assembles 05 00 and
-  04 01, without a word, in either mode. All three leave the location where
+  N / L1: DW L1 / N EQU 4`: M80 00 01, MAC 00 00) and the label after `IF
+  FW` with `FW` defined further down, false in their pass 1 (`IF FW / DB 1
+  / ENDIF / LAB: NOP / DW LAB / FW EQU 1` is 01 00 00 01 in all three); um80
+  assembles 05 00, 04 01 and 01 00 01 01, without a word, in either mode.
+  All three leave the location where
   it is at an `ORG` of a symbol their pass 1 has not read yet, so `DB 1 /
   ORG LL / LL: DB 2` puts the 02 at 0101H, flagging nothing; um80 puts it at
   0000H, the value that holds when read again. (With `--dri` a label on

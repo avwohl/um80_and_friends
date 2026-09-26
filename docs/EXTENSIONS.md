@@ -89,7 +89,9 @@ statement starts after it: `NOP ;save! INX H` is two statements (see
 **Implementation notes:**
 - The `!` separator is recognized outside of string literals
 - Each statement after the first is processed as if it had no label
-- Works with all instructions and most directives. An `EXITM` after a `!`
+- Works with all instructions and most directives. (MAC and RMAC flag `D`
+  a line on which a `DB` or a `DW` has a `!` after it, and assemble what
+  follows it wrong: `DB 1! DB 2` is 01 00 there, and 01 02 here.) An `EXITM` after a `!`
   ends the macro expansion or the repetition there, as one at the start of
   a line does (`NOP! EXITM! DB 5` assembles the `NOP` only). A `LOCAL` in a
   macro body is a statement wherever it is on the line, as in MAC and RMAC:
@@ -251,7 +253,12 @@ matches its `<` and ignores the rest of the line (1 and 2; A; 1; `"A>B"`, a
 string there; and A, `<`, B, `>`, C), and so does um80 without `--dri`, with
 a warning. Text after the blank or the comma that ends the list, but for a
 `!` statement, is an error with `--dri`, as MAC and RMAC flag it `S` (`IRP
-X,<1,2>,3`, `IRP X,1,2`, `IRPC X,AB CD`); M80 ignores it, and um80 warns. An `IRPC` with an
+X,<1,2>,3`, `IRP X,1,2`, `IRPC X,AB CD`); M80 ignores it, and um80 warns. A
+`!` inside the list is M80's quote here, with `--dri` too (`IRP X,<1!,2,3>`
+goes round `1,2` and 3), where MAC and RMAC end the statement at it and flag
+it `V` and `S`. MAC and RMAC honour a `LOCAL` in a `REPT`, `IRP` or `IRPC`
+body; um80 reads one in a `MACRO` only, as M80 does, and a label it names
+is defined again each time round. An `IRPC` with an
 empty string goes round once, with its parameter empty, as in MAC; M80 does so
 only where a macro's empty argument made the string empty. A label on the
 `ENDM` that ends a body is defined where the body ends, each time, as in MAC
@@ -361,7 +368,8 @@ highest first: `* / MOD SHL SHR`, `+ -`, `EQ LT LE GT GE NE` (and `= < <= >
 
 **An `IF` is true when bit 0 of its value is set,** as in MAC and RMAC:
 `IF 2`, `IF 100H`, `IF 0FFFEH` and `IF NOT 1` are false, and `IF 1`, `IF 3`
-and `IF -1` true. M80 takes any value but 0 as true, and so does um80
+and `IF -1` true. (An `IF` with no operand is false in all three; MAC and
+RMAC flag it `E`, and um80 takes it without a word.) M80 takes any value but 0 as true, and so does um80
 without `--dri`. A relation is 0 or 0FFFFH in all three, so `IF X EQ 2` means
 the same everywhere; `IF X AND 2` does not. MAC has no `IFT`, `IFE`, `IFF`,
 `COND`, `IF1`, `IF2`, `IFDEF`, `IFNDEF`, `IFB`, `IFNB`, `IFIDN` or `IFDIF` (it
@@ -400,7 +408,10 @@ H,'AB'` 21 41 42, `X EQU 'AB'` then `DW X` 41 42, `DB ('AB') SHR 8` 42, and
 `IF 'AB' EQ 4241H` is true. M80 makes the first character the high byte,
 `'AB'` = 4142H (42 41, 21 42 41, 41), and so does um80 without `--dri`. A
 string in a `DB` is its characters, in order, in all three (`DB 'AB'` is 41
-42).
+42). An expression in a `DB` that starts with a two-character string is
+not read as MAC reads it: MAC and RMAC flag it `D` and assemble the string
+(`DB 'AB'+0`, `DB 'AB' SHR 8`: 41 42), where um80 assembles the one byte of
+its value (41, 42), without a word.
 
 **An 8AH or an 8DH inside a line is read as MAC reads it.** MAC and RMAC clear
 a byte's bit 7 and then read it, so an 8AH is a line feed and an 8DH a
