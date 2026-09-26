@@ -175,13 +175,19 @@ on 0.3.50.
   19H and `PUSH RD` D5H, as in M80. `X EQU SP` and `X EQU PSW` are 6 (they
   were 3). A register operand may be any expression, as in M80 and MAC:
   `DAD 2`, `MOV A,2`, `PUSH PSW+0` and a register name defined further down
-  now assemble. An odd number for a register pair (`DAD E`, `PUSH 3`), which
-  um80 took for the pair of the register below it, is an error, as in M80
-  and MAC. An address is read as M80 reads it, without a flag: a label's
-  offset in its segment, or an external's constant, is the number, so with
-  `LAB` two bytes into the code `DAD LAB` is `DAD D` (19H), and with `Y`
-  EXTRN `MOV A,Y` is `MOV A,B`; um80 warns, and RMAC flags it V. 0.3.50 took
-  the offset too, as the pair's encoding (`DAD H`), and rejected an external.
+  now assemble, as in M80 one named like an instruction too (`DAD RP` with
+  `RP EQU H` below is 29H, `PUSH RP` with `RP EQU D` D5H, `MOV A,RZ` with `RZ
+  EQU E` 7BH): on pass 1 such a name read as the instruction's opcode, and
+  um80 stopped with "Invalid register pair for DAD: RP". MAC and RMAC take
+  no instruction's name for a symbol (`S`), and read it as the opcode (`V`):
+  with `--dri` it is still an error. An odd number for a register pair
+  (`DAD E`, `PUSH 3`), which um80 took for the pair of the register below
+  it, is an error, as in M80 and MAC. An address is read as M80 reads it,
+  without a flag: a label's offset in its segment, or an external's
+  constant, is the number, so with `LAB` two bytes into the code `DAD LAB`
+  is `DAD D` (19H), and with `Y` EXTRN `MOV A,Y` is `MOV A,B`; um80 warns,
+  and RMAC flags it V. 0.3.50 took the offset too, as the pair's encoding
+  (`DAD H`), and rejected an external.
 - um80 assembler: a macro argument written `%expression` is now the
   expression's value when the macro is called, as in MACRO-80, MAC and RMAC.
   um80 left the `%` in the argument and evaluated each `%` in a body line as

@@ -147,3 +147,53 @@ def test_not_a_register_is_an_error(line):
                               + "\tnop\n" * 6 + f"lab8:\n\t{line}\n\tend\n")
     assert not ok
     assert any('Invalid register' in e for e in errors), errors
+
+
+# A name defined further down that is also an instruction's name: on pass 1
+# it is not a symbol yet, and an instruction's name stands for its opcode
+# there (`DAD RP' read F0H, RP's opcode).  M80 3.44 reads the symbol, and
+# assembles each of these as shown; um80 stopped with "Invalid register
+# pair for DAD: RP" (a register operand was fine with a name like R1).
+OPCODE_NAMES = [
+    ("\tdad\trp\nrp\tequ\th\n", '29'),
+    ("\tpush\trp\nrp\tequ\td\n", 'd5'),
+    ("\tpop\trp\nrp\tequ\tpsw\n", 'f1'),
+    ("\tlxi\trp,1\nrp\tequ\tb\n", '010100'),
+    ("\tinx\trp\nrp\tequ\tsp\n", '33'),
+    ("\tldax\trp\nrp\tequ\td\n", '1a'),
+    ("\tdad\trp\nrp\tset\th\n", '29'),
+    ("\tdad\trp+0\nrp\tequ\th\n", '29'),
+    ("\tmov\ta,rz\nrz\tequ\te\n", '7b'),
+    ("\tmvi\trz,2\nrz\tequ\te\n", '1e02'),
+    ("\tinr\trz\n\tadd\trz\nrz\tequ\te\n", '1c83'),
+    ("\tdcx\trc\n\tstax\trc\nrc\tequ\tb\n", '0b02'),
+    ("\tpush\tjmp\njmp\tequ\th\n", 'e5'),
+    ("\tmov\trnc,rpe\nrnc\tequ\ta\nrpe\tequ\tm\n", '7e'),
+]
+
+
+@pytest.mark.parametrize('source, code', OPCODE_NAMES)
+def test_an_instruction_name_defined_further_down_as_m80(source, code):
+    ok, got, errors = _assemble("\taseg\n\torg\t100h\n" + source + "\tend\n")
+    assert ok, errors
+    assert got.hex() == code
+
+
+@pytest.mark.parametrize('line', ['dad\tcpi', 'mov\ta,rz', 'push\trp'])
+def test_an_instruction_name_that_is_no_symbol_is_still_an_error(line):
+    # M80: DAD CPI is 39 and MOV A,RZ 78, each flagged A.
+    ok, _, errors = _assemble(f"\t{line}\n\tend\n")
+    assert not ok
+    assert any('Invalid register' in e for e in errors), errors
+
+
+def test_with_dri_an_instruction_name_is_its_opcode_as_in_mac():
+    # MAC and RMAC flag `RP EQU H' S (an instruction's name is no symbol)
+    # and `DAD RP' V: F0H is no register.  --dri keeps the error.
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, 't.asm')
+        with open(p, 'w') as f:
+            f.write("\tdad\trp\nrp\tequ\th\n\tend\n")
+        asm = Assembler(dri=True)
+        assert not asm.assemble(p)
+    assert any('Invalid register pair' in str(e) for e in asm.errors)

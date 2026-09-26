@@ -381,7 +381,11 @@ A register pair operand is the number of the pair's first register: 0 is B
 (BC), 2 D (DE), 4 H (HL), and 6 SP or PSW, whichever the instruction takes.
 So `DAD 2` is `DAD D`, `PUSH 6` is `PUSH PSW`, `LXI SP-2,0` is `LXI H,0`,
 and `MOV A,2` is `MOV A,D` - any expression with an absolute value will do,
-including a name defined further down. An odd number for a pair (`DAD E`,
+including a name defined further down, one named like an instruction too:
+`DAD RP` with `RP EQU H` below it is `DAD H` (29H), as in M80 (MAC and RMAC
+take no instruction's name for a symbol: they flag `RP EQU H` `S`, and read
+`RP` in `DAD RP` as its opcode, `V`; with `--dri` it is an error). An odd
+number for a pair (`DAD E`,
 `DAD 1`), `LDAX`/`STAX` of anything but B or D, and a number above 7 for a
 register are errors, as in M80 (`A`) and MAC (`R` or `V`). um80 also takes
 `BC`, `DE` and `HL` for B, D and H.

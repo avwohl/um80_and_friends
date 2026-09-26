@@ -546,6 +546,7 @@ class Assembler:
         # While an 8080 register operand is read (register_value()), a
         # register name in it is its number.
         self.register_operand = False
+        self.opcode_read = False  # pass 1 read an opcode name (register_value())
         # Register names read as values in the expression being evaluated
         # (eval_operand()), and how deep in it the evaluation is.
         self.registers_read = 0
@@ -1561,6 +1562,9 @@ class Assembler:
             if upper in OPCODE_VALUES and not (
                     defined_sym is not None
                     and (defined_sym.defined or defined_sym.external)):
+                if self.pass_num == 1:
+                    # It may be a symbol defined further down (register_value()).
+                    self.opcode_read = True
                 return ExprValue(OPCODE_VALUES[upper])
 
             sym = self.lookup_symbol(expr)
@@ -2452,6 +2456,15 @@ class Assembler:
         DAD D and PUSH PSW.  None if the operand cannot be read, or is a
         symbol the pass cannot read yet (the caller reports it).
 
+        On pass 1 a name defined further down is not a symbol yet, and an
+        instruction's name stands for its opcode there (_evaluate()): `DAD
+        RP' with `RP EQU H' below reads F0H, the opcode of RP.  MACRO-80
+        3.44 reads the symbol - 29H - and so does pass 2; until then
+        _pass_one_register() takes it for B.  um80 stopped with "Invalid
+        register pair for DAD: RP".  MAC and RMAC flag `RP EQU H' S (an
+        instruction's name is no symbol there) and read F0H (V): with --dri
+        it is still an error.
+
         An address is read as M80 reads it: a relocatable value is its
         offset in its segment, an external its constant.  `DAD LAB', LAB two
         bytes into the code, is DAD D, and `MOV A,Y' with Y EXTRN is MOV
@@ -2461,6 +2474,7 @@ class Assembler:
         """
         name = text.strip().upper()
         self.register_number = None
+        self.opcode_read = False
         if name in REG_VALUES and not self.names_symbol(name):
             self.register_number = REG_VALUES[name]
             return self.register_number
@@ -2494,6 +2508,15 @@ class Assembler:
         for reg, num in REGS.items():
             if num == val:
                 return reg
+        return self._pass_one_register('B')
+
+    def _pass_one_register(self, placeholder):
+        """None, or on pass 1 `placeholder' for a register operand that read
+        an instruction's name, which may be a symbol defined further down
+        (register_value()).  Pass 2 reads the operand again, and reports it
+        if it is still no register."""
+        if self.pass_num == 1 and self.opcode_read and not self.dri:
+            return placeholder
         return None
 
     def resolve_regpair_alias(self, name, regpair_dict):
@@ -2512,7 +2535,7 @@ class Assembler:
             return upper
         val = self.register_value(name)
         if val is None or val & 1 or not 0 <= val <= 6:
-            return None
+            return self._pass_one_register('B')
         for rp in ({0: ('B',), 2: ('D',), 4: ('H',), 6: ('SP', 'PSW')}[val]):
             if rp in regpair_dict:
                 return rp

@@ -434,7 +434,7 @@ For more details on these extensions and compatibility notes, see [docs/EXTENSIO
 
 ## Testing
 
-The test suite (1045 tests) runs under `pytest`:
+The test suite (1063 tests) runs under `pytest`:
 
 ```bash
 pip install -e ".[dev]"
@@ -473,7 +473,7 @@ Digital Research's MAC 2.0 and RMAC 1.1:
 | `test_truncate_m80.py` | `-t` cuts names to M80's 6 characters, so a um80 object links with an M80 object's `FBUFP2` |
 | `test_parity_bit.py` | (DRI) A source byte's bit 7 is cleared: a line ending CR 8AH ends the line, C1H in a string is `A`, and an 8AH not after a CR is left out, as in M80; with `--dri` it is a LF (0AH in a string) and an 8DH a CR whose LF is the next item, as MAC and RMAC read them |
 | `test_equ_name_column.py` | (DRI) The name of an `EQU`, `SET`, `DEFL`, `ASET` or `MACRO` may be indented |
-| `test_register_values.py` | (DRI) A register operand is an expression and a register name its number: `RD EQU D` / `DAD RD` is `DAD D`; an odd register pair is an error; an address is its offset, as in M80 |
+| `test_register_values.py` | (DRI) A register operand is an expression and a register name its number: `RD EQU D` / `DAD RD` is `DAD D`, and `DAD RP` with `RP EQU H` further down `DAD H`; an odd register pair is an error; an address is its offset, as in M80 |
 | `test_dri_names.py` | (DRI) `--dri` ignores a `$` inside a name, as MAC and RMAC do, but not in a macro call's arguments or an `IRP`/`IRPC` list; without it `$` is part of the name, as in M80 |
 | `test_operator_names.py` | A name that ends in an operator's letters (`X1EQ+2`) is read whole; a symbol named like an operator (`EQ:`, `TYPE EQU 5`) is that symbol, as in M80; an operator with nothing on one side is an error; `TYPE` of an expression |
 | `test_condition_names.py` | In Z80 code a label named like a condition (`P:`, `NZ:`) is `JP`'s address, as in M80 |
