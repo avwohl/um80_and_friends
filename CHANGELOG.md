@@ -304,11 +304,20 @@ on 0.3.50.
   `IRP P,<Q>` called with `<1;2>` went round once. A blank ends an item too:
   `<A B>` is A and B, and `<A ,B>` and `<A >` have an empty item after A,
   as in M80; um80 took `A B` for one item. MAC and RMAC end an item at a
-  comma only (`<A ,B>` is A and B), and flag a `;` in the list `B`: with
-  `--dri` um80 does the same, and a `;` is an error. A comma at the end of
-  the list is an empty item, in M80, MAC and RMAC: `<A,>` is A and an
-  empty item, and `<,>` two empty items; um80 dropped the last one. A `%`
-  item is an expression to its `,` or `;` (`<%1 + 1,5>` is 2 and 5).
+  comma, and flag a `;` in the list `B`: with `--dri` so does um80, and a
+  `;` is an error. They skip a blank or a tab at the start of an item,
+  before its first character (`<A, B>` and `< A,<TAB>B>` are A and B), and
+  read any other blank otherwise: `<A ,B ,C>` is A, B and an empty item in
+  MAC, `<A ,B,C>` A and C, `<A, ,B>` A and `,`, and `< ,A>` the one item
+  `,` in MAC and RMAC, while RMAC stops at `<A ,B>` and writes nothing,
+  without a word; MAC flags `<A B>` and `<A >`, where RMAC stops too. With
+  `--dri` such a blank is an error; um80 took each list for the items
+  between its commas, without a word. A blank inside a nested `<...>` is
+  text in all three (`<A,<B C>>` is A and `B C`). A comma at the end of the
+  list is an empty item, in M80, MAC and RMAC: `<A,>` is A and an empty
+  item, and `<,>` two empty items; um80 dropped the last one. A `%` item is
+  an expression to its `,` or `;` in M80 (`<%1 + 1,5>` is 2 and 5); MAC
+  flags that list, and with `--dri` its blanks are an error.
 - um80 assembler: with `--dri`, an 8AH or an 8DH inside a line is read as
   MAC and RMAC read it, not as M80 does. An 8AH that does not follow a CR
   is a line feed, a character of the line: in a string the byte 0AH (`DB

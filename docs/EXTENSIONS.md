@@ -209,10 +209,16 @@ or a `>` in it is MAC's relational operator, not a bracket (`MM %1<2,3`
 passes 65535 and 3; M80 flags the `<`). A `%` with no expression after it
 is 0 in M80 (`MM %` passes 0), and MAC and RMAC flag it `E`: with `--dri` it
 is an error. An item of
-an `IRP` list ends at a comma only, as in MAC (`<A ,B>` is A and B), and a `;`
-in the list, outside a nested `<...>`, is an error, as MAC and RMAC flag it
-`B`; M80 ends an item at a `,`, a `;`, a blank or a tab, so there `<A;B>` and
-`<A B>` are A and B, and `<A ,B>` is A, an empty item and B. An `IRPC` with an
+an `IRP` list ends at a comma, as in MAC, and a `;` in the list, outside a
+nested `<...>`, is an error, as MAC and RMAC flag it `B`. MAC and RMAC skip a
+blank or a tab at the start of an item, before its first character (`<A, B>`
+is A and B), and read any other blank outside a nested `<...>` otherwise,
+and not in a way um80 follows: `<A ,B ,C>` is A, B and an empty item in MAC,
+`<A ,B,C>` A and C, `<A, ,B>` A and `,`, and `< ,A>` the one item `,` in MAC
+and RMAC; RMAC stops at `<A ,B>` and writes nothing, without a word; MAC
+flags `<A B>` and `<A >` (RMAC stops), and both flag `<%1 + 1,5>`. So with
+`--dri` such a blank is an error. M80 ends an item at a `,`, a `;`, a blank or a tab, so there `<A;B>`
+and `<A B>` are A and B, and `<A ,B>` is A, an empty item and B. An `IRPC` with an
 empty string goes round once, with its parameter empty, as in MAC; M80 does so
 only where a macro's empty argument made the string empty. A label on the
 `ENDM` that ends a body is defined where the body ends, each time, as in MAC

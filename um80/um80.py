@@ -4342,13 +4342,23 @@ class Assembler:
         A, B (and C), `<A;;B>' and `<A ,B>' A, an empty item and B, and
         `<A;>' and `<A >' A and an empty item.  An item that starts with a
         `%' is an expression, to a ',' or a ';' (`<%1 + 1,5>' is 2 and 5).
-        MAC and RMAC end an item at a comma only, so `<A ,B>' is A and B,
-        and they flag a ';' in the list B: with --dri it is an error.  um80
-        split the list at its commas, and 4558825 made a ';' inside the
-        <...> text, so `<A;B;C>' was the one item `A;B;C', without a word
-        (M80 does read a ';' inside a macro call's <...> as text: `MM
-        <1;2>' passes `1;2', and an `IRP P,<Q>' in the body goes round
-        twice).
+        MAC and RMAC end an item at a comma, and flag a ';' in the list B:
+        with --dri it is an error.  um80 split the list at its commas, and
+        4558825 made a ';' inside the <...> text, so `<A;B;C>' was the one
+        item `A;B;C', without a word (M80 does read a ';' inside a macro
+        call's <...> as text: `MM <1;2>' passes `1;2', and an `IRP P,<Q>'
+        in the body goes round twice).
+
+        MAC and RMAC skip a blank or a tab at the start of an item, before
+        its first character: `<A, B>' and `< A,\tB>' are A and B.  Any
+        other blank they read otherwise, and with --dri it is an error
+        (_irp_blank()): after an item's text, `<A ,B ,C>' is A, B and an
+        empty item in MAC and `<A ,B,C>' A and C, and RMAC stops at `<A ,B>'
+        and writes nothing, without a word; `<A, ,B>' is A and `,', and `<
+        ,A>' the one item `,', in both; MAC flags `<A B>' and `<A >'.
+        um80 --dri took each for A, B (and C), without a word.  A blank in
+        a nested <...> or a quoted string is text: `<A,<B C>>' is A and `B
+        C' in all three.
 
         A nested <...> group, a quoted string and a '!'-quoted character
         are part of an item: `<<A;B>,C>' is `<A;B>' and C (and
@@ -4358,10 +4368,14 @@ class Assembler:
         and `<>' is one empty item.
         """
         items = []
+        blank = False   # --dri: a blank MAC and RMAC do not skip is reported
         i, n = 0, len(inner)
         while True:
+            lead = i
             while i < n and inner[i] in ' \t':
                 i += 1
+            if self.dri and i > lead and (i >= n or inner[i] == ',') and not blank:
+                blank = self._irp_blank(inner, lead)
             start, depth = i, 0
             ends = ',;' if self.dri or inner.startswith('%', i) else ',; \t'
             while i < n:
@@ -4381,12 +4395,27 @@ class Assembler:
                         break
                     self.error(f"';' in the list of an IRP, <{inner}>: MAC and"
                                " RMAC flag it B (M80 ends the item there)")
+                elif self.dri and not depth and ch in ' \t' and not blank:
+                    blank = self._irp_blank(inner, i)
                 i += 1
             item = inner[start:i]
             items.append(item.rstrip() if ends == ',;' else item)
             if i >= n:
                 return items
             i += 1
+
+    def _irp_blank(self, inner, i):
+        """--dri: the blank at inner[i] in an IRP list is not one MAC and
+        RMAC skip (irp_items()).  Returns True, once it has said so."""
+        where = ("before a comma or the end of the list"
+                 if inner[i:].lstrip(' \t')[:1] in (',', '')
+                 else "inside an item")
+        self.error(f"A blank {where} in the list of an IRP, <{inner}>: MAC"
+                   " and RMAC skip one only at the start of an item, and read"
+                   " this one otherwise (MAC takes <A ,B,C> for A and C, and"
+                   " <A, ,B> for A and ','; RMAC stops at <A ,B> and writes"
+                   " nothing; MAC flags <A B> and <A >)")
+        return True
 
     @staticmethod
     def _starts_string(text, i):

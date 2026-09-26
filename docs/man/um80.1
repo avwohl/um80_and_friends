@@ -65,7 +65,9 @@ A macro body is matched to its parameters with MAC's names, which end at a
 string; only an argument that starts with \fB%\fR is a value, a
 \fB<\fR or \fB>\fR in it is an operator, and a \fB%\fR with nothing
 after it is an error (MACRO-80 passes 0); an item of
-an IRP list ends at a comma only, and a \fB;\fR in the list is an error
+an IRP list ends at a comma, a blank or a tab is skipped at the start of
+an item, and one anywhere else, or a \fB;\fR, in the list is an error, as
+MAC and RMAC read it otherwise or flag it
 (MACRO-80 ends an item at a comma, a \fB;\fR, a blank or a tab); the
 arguments of a macro call end at a blank after one, and text after it
 other than a comma is an error (MACRO-80 reads the blank as a comma); a

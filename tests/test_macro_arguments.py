@@ -660,13 +660,48 @@ def test_a_comma_at_the_end_of_an_irp_list(dri, lst, items):
 
 
 @pytest.mark.parametrize('lst, items', [
-    ('<A ,B>', [b'A', b'B']),
+    # MAC and RMAC end an item at a comma, and skip a blank or a tab at the
+    # start of one.
+    ('<A,B>', [b'A', b'B']),
     ('< A>', [b'A']),
+    ('<A, B>', [b'A', b'B']),
+    ('<A,  B>', [b'A', b'B']),
+    ('<A,\tB,\tC>', [b'A', b'B', b'C']),
+    ('<\tA,B>', [b'A', b'B']),
+    # A blank in a nested <...> is text.
     ('<<A;B>,C>', [b'A;B', b'C']),
+    ('<<A B>,C>', [b'A B', b'C']),
+    ('<A, <B C>>', [b'A', b'B C']),
 ])
 def test_mac_ends_an_irp_item_at_a_comma(lst, items):
     body = "\tDB\t0EEH\n\tDB\t'&P'\n\tENDM\n"
     assert _code(f"\tIRP\tP,{lst}\n" + body, dri=True) == _items(*items)
+
+
+@pytest.mark.parametrize('lst', [
+    # A blank MAC and RMAC do not skip: they read the list otherwise, and
+    # um80 --dri took each for the items around its commas, without a
+    # word.  In MAC and RMAC: A, B and an empty item; A and `,'; `,'; 1, 1
+    # and an empty item.
+    '<A ,B ,C>',
+    '<A, ,B>',
+    '< ,A>',
+    '<1\t,1 ,A>',
+    # MAC: A and C, and RMAC stops and writes nothing, without a word; MAC:
+    # A and B, and RMAC stops.
+    '<A ,B,C>',
+    '<A ,B>',
+    # MAC flags these S or B, and RMAC stops.
+    '<A B>',
+    '<A >',
+    '< >',
+    '<A,B >',
+    '<%1 + 1,5>',
+])
+def test_mac_reads_any_other_blank_in_an_irp_list_otherwise(lst):
+    ok, _, errors, _ = _assemble(f"\tIRP\tP,{lst}\n\tDB\t0EEH\n\tDB\t'&P'\n"
+                                 "\tENDM\n", dri=True)
+    assert not ok and any('blank' in e and 'IRP' in e for e in errors), errors
 
 
 @pytest.mark.parametrize('source', [
