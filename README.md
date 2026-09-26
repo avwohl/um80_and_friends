@@ -426,11 +426,12 @@ For more details on these extensions and compatibility notes, see [docs/EXTENSIO
 
 - Man pages: `man um80`, `man ul80`, `man ulib80`, `man ucref80`, `man ud80`, `man ux80`
 - [docs/mbasic2025.md](docs/mbasic2025.md): mbasic2025 built with um80/ul80 and with the genuine M80/L80
-- Original Microsoft manuals in `docs/external/`:
-  - `m80.pdf` - MACRO-80 assembler
-  - `l80.pdf` - LINK-80 linker
-  - `cref_lib.pdf` - CREF and LIB-80
-  - `8080asm.pdf` - 8080 assembly reference
+- Original Microsoft manuals, in the
+  [retro_docs](https://github.com/avwohl/retro_docs/tree/main/um80_and_friends) archive:
+  - [`m80.pdf`](https://github.com/avwohl/retro_docs/blob/main/um80_and_friends/m80.pdf) - MACRO-80 assembler
+  - [`l80.pdf`](https://github.com/avwohl/retro_docs/blob/main/um80_and_friends/l80.pdf) - LINK-80 linker
+  - [`cref_lib.pdf`](https://github.com/avwohl/retro_docs/blob/main/um80_and_friends/cref_lib.pdf) - CREF and LIB-80
+  - [`8080asm.pdf`](https://github.com/avwohl/retro_docs/blob/main/um80_and_friends/8080asm.pdf) - 8080 assembly reference
 
 ## Testing
 

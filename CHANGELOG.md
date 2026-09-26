@@ -121,7 +121,9 @@ genuine tools under cpmemu, and each has a regression test that fails on
   README and the man pages refer to. `pyproject.toml` listed a package file,
   `um80/py.typed`, that does not exist, and `MANIFEST.in` PDFs in a
   `docs/external` that does not exist, which `python -m build` warned about;
-  both are gone.
+  both are gone. The man pages and the README's list of manuals still named
+  `docs/external/m80.pdf` and its neighbours, which moved to the retro_docs
+  archive in 0.3.46; they now point there.
 
 ## [0.3.51] - 2026-09-26
 
