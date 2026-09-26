@@ -6645,8 +6645,11 @@ def main():
                              '(NMB$LST is NMBLST), a macro body is read with '
                              'MAC\'s names, an IF a macro body leaves open '
                              'ends with it, a label needs no colon, PUSH A is '
-                             'PUSH PSW, = < <= > >= <> are relations, and a ! '
-                             'ends a comment and starts a statement')
+                             'PUSH PSW, = < <= > >= <> are relations, a ! '
+                             'ends a comment and starts a statement, \'AB\' is '
+                             '4241H, IF is true when bit 0 is set, / is '
+                             'unsigned, and MACLIB NAME reads NAME.LIB in pass 1 '
+                             'only')
     parser.add_argument('-s', '--strict', action='store_true',
                         help='Strict mode: error on out-of-range JR/DJNZ instead of promoting to JP')
 

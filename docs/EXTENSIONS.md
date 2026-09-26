@@ -1084,7 +1084,8 @@ defined global" but wrote the output and exited 0.
 
 ## Version History
 
-- **Unreleased** — `--dri` (a `$` inside a name is ignored, a word with no colon may be a label, `PUSH A` is `PUSH PSW`, `=` is `EQ` and `HIGH` binds loosest, as in MAC and RMAC); an instruction or directive in column 1 is one, and a statement of values is a `DB`, as in M80; in 8080 code a register name is its number in any expression, as in M80 and MAC; ul80 `--fatal-mult-def`
+- **Unreleased** — `--dri`: `'AB'` is 4241H, `IF` is true when bit 0 is set, `MACLIB NAME` reads `NAME.LIB` in pass 1 only, a label on an `ORG` is the location it sets, `END` of a symbol not defined takes no start address, `IRP`/`IRPC` lists and division as MAC reads them, `MOV M,M` is 76H, and `"` quotes nothing; M80's unary sign and signed `/` and `MOD`, an empty `DB`/`DW` operand is 0, `.CREF`/`.XCREF`; a label that moves between the passes is a phase error; `LOCAL` after a `!`; a label on `IF`, `ELSE`, `ENDIF` and `EXITM`
+- **0.3.51** — `--dri` (a `$` inside a name is ignored, a word with no colon may be a label, `PUSH A` is `PUSH PSW`, `=` is `EQ` and `HIGH` binds loosest, as in MAC and RMAC); an instruction or directive in column 1 is one, and a statement of values is a `DB`, as in M80; in 8080 code a register name is its number in any expression, as in M80 and MAC; ul80 `--fatal-mult-def`
 - **0.3.50** — MACRO-80 IRP/IRPC lists, 6-character `-t`, mbasic2025 in the test suite
 - **0.3.49** — link-time expressions (REL extension link items), LINK-80 interchange, absolute code in a link
 - **0.3.48** — `--spr`, `--extra` and `--aseg`; `--prl` links a transient at 100H
