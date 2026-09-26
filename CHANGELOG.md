@@ -61,6 +61,12 @@ genuine tools under cpmemu, and each has a regression test that fails on
   read nothing after an `END`; so does any operand that reads a symbol not
   defined (`END FOO`, `END START+1`). um80 --dri reported it undefined. M80
   flags it U, and so does um80 without `--dri`.
+- um80 assembler: with `--dri`, a label on an `ORG` is the location the
+  `ORG` sets, as in MAC and RMAC: `DB 1 / LAB ORG 300H / DW LAB` is 01 at
+  0100H and 00 03 at 0300H. um80 --dri gave it the location before the
+  `ORG`, as M80 does (01 01 at 0300H), without a word; without `--dri` it
+  still does. (MP/M II's `tools/genmod.py` refused a label on an `ORG`
+  line for that.)
 
 ## [0.3.51] - 2026-09-26
 

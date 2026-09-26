@@ -5175,9 +5175,14 @@ class Assembler:
         z80_set = (self.z80_mode and upper_op == 'SET' and label
                    and len(self.split_operands(operands or '')) == 2)
 
-        # Define label if present
-        if label and (z80_set or upper_op not in
-                      ('EQU', 'SET', 'DEFL', 'ASET', 'MACRO')):
+        # Define label if present.  A label on an ORG is the location the
+        # ORG sets in MAC and RMAC (--dri): `LAB ORG 300H' then `DW LAB' is
+        # 00 03 there, and in M80 the location before the ORG, where um80
+        # --dri put it too (01 01 after `DB 1' at 0100H).
+        org_label = (self.dri and upper_op == 'ORG' and label
+                     and upper_op not in self.macros)
+        if label and not org_label and (z80_set or upper_op not in
+                                        ('EQU', 'SET', 'DEFL', 'ASET', 'MACRO')):
             self.define_value(label, self.here())
 
         if not operator:
@@ -5216,6 +5221,8 @@ class Assembler:
 
         # Try pseudo-op
         if self.assemble_pseudo_op(operator, operands, label):
+            if org_label:
+                self.define_value(label, self.here())
             self._save_listing_entry(line)
             return
 

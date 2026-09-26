@@ -395,6 +395,12 @@ further down is its value here, and 0 in MAC, which reads the library once;
 and um80 reads a `MACLIB` inside a library, which MAC and RMAC do not (a
 symbol it defines is `U`; M80 flags the `MACLIB` `O`).
 
+**A label on an `ORG` is the location the `ORG` sets,** as in MAC and RMAC:
+`DB 1 / LAB ORG 300H / DW LAB` puts 0300H at 0300H, and `LAB ORG $+4` is the
+location after the gap. M80 gives such a label the location before the
+`ORG` (0101H), and so does um80 without `--dri`. A label on a `DS` is where
+the `DS` starts in all three.
+
 **`END` of a symbol that is not defined takes no start address.** MAC and
 RMAC read nothing after an `END`, so in `END START` with `START` below it
 the symbol is not defined, and they take no start address and flag nothing,
