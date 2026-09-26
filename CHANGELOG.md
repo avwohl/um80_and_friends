@@ -74,7 +74,11 @@ genuine tools under cpmemu, and each has a regression test that fails on
   0100H and 00 03 at 0300H. um80 --dri gave it the location before the
   `ORG`, as M80 does (01 01 at 0300H), without a word; without `--dri` it
   still does. (MP/M II's `tools/genmod.py` refused a label on an `ORG`
-  line for that.)
+  line for that.) A label on an `ORG` whose operand reads a symbol defined
+  further down is an error: MAC and RMAC flag it P and give it the location
+  before the `ORG`, which their pass 1 gave it (`DB 1 / LAB ORG X / DW LAB /
+  X EQU 200H` is 01 01 01), where um80's pass 1 reads the symbol's value
+  there as pass 2 does.
 - um80 assembler: a label on an `IF`, `ELSE`, `ENDIF` or `EXITM` line is
   defined, where the line before it was assembled, as in M80, MAC and RMAC:
   `LAB: IF 0`, `LAB: ELSE` and `LAB: ENDIF` after a true `IF`, and `LAB:
@@ -158,6 +162,18 @@ genuine tools under cpmemu, and each has a regression test that fails on
   RMAC and 10 here, and with a library that ends in `END` the program after
   it is left out of RMAC's size (`ORG 100H / MACLIB INC / DB 2,3,4,5` is
   100H long in RMAC, 104H here). As in 0.3.51.
+- um80 assembler: um80 reads pass 1 again until every symbol read above the
+  line that defines it reads its final value, where M80, MAC and RMAC read
+  their pass 1 once and flag a value that changed in pass 2 (P). MAC and
+  RMAC flag `X EQU Y / DW X / Y EQU 5`, and `X EQU LL` of a label further
+  down, P and assemble X's value of pass 1 (00 00; M80 05 00, no flag), and
+  all three flag the label after `DS N` with `N` defined further down (`DS
+  N / L1: DW L1 / N EQU 4`: M80 00 01, MAC 00 00); um80 assembles 05 00 and
+  04 01, without a word, in either mode. All three leave the location where
+  it is at an `ORG` of a symbol their pass 1 has not read yet, so `DB 1 /
+  ORG LL / LL: DB 2` puts the 02 at 0101H, flagging nothing; um80 puts it at
+  0000H, the value that holds when read again. (With `--dri` a label on
+  such an `ORG` is an error, as MAC flags it; see Fixed.) As in 0.3.51.
 
 ## [0.3.51] - 2026-09-26
 

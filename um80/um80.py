@@ -484,6 +484,9 @@ class Assembler:
 
         self.entry_point = None  # END address if specified
         self.undefined_reads = 0  # reads of a symbol not defined (_evaluate())
+        # Reads in pass 1 of a symbol defined further down, from the second
+        # time through (forward_value(), _evaluate()).
+        self.forward_reads = 0
         self.ended = False  # an END was assembled: the source ends there
         self.module_name = None   # from NAME('...')
         self.title_name = None    # from TITLE, which NAME overrides
@@ -1597,6 +1600,7 @@ class Assembler:
             if not (sym.defined or sym.external):
                 ev = self.forward_value(sym.name)
                 if ev is not None:
+                    self.forward_reads += 1
                     return ev
                 self.undefined_reads += 1
                 if not allow_undefined and self.pass_num == 2:
@@ -3787,8 +3791,22 @@ class Assembler:
             if len(ops) != 1:
                 self.error("ORG requires one operand")
                 return True
+            forward = self.forward_reads
             ev = self.number_operand(ops[0], 'ORG')
             val = ev.value & 0xFFFF
+            if self.dri and label and self.forward_reads > forward:
+                # MAC and RMAC give a label on an ORG the location the ORG
+                # sets (_process_single_statement()), but one of a symbol
+                # defined further down the location before it, which their
+                # pass 1 gave it, and flag it P: `DB 1 / LAB ORG X / DW LAB
+                # / X EQU 200H' is 01 01 01.  um80's pass 1 reads X's value
+                # there as pass 2 does, and gave LAB 0200H, without a word.
+                # (M80 gives it the location before the ORG, flagging
+                # nothing, and so does um80 without --dri.)
+                self.error(f"The label {label.rstrip(':').upper()} on an ORG"
+                           f" whose operand, {ops[0].strip()}, reads a symbol"
+                           " defined further down: MAC and RMAC flag it P and"
+                           " give the label the location before the ORG")
             if ev.kind == 'rel' and ev.seg != self.seg_type \
                     and self.pass_num == 2:
                 # `ORG $+10' moves within the segment; an address in

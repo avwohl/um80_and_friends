@@ -458,7 +458,16 @@ symbol it defines is `U`; M80 flags the `MACLIB` `O`).
 `DB 1 / LAB ORG 300H / DW LAB` puts 0300H at 0300H, and `LAB ORG $+4` is the
 location after the gap. M80 gives such a label the location before the
 `ORG` (0101H), and so does um80 without `--dri`. A label on a `DS` is where
-the `DS` starts in all three.
+the `DS` starts in all three. A label on an `ORG` whose operand reads a
+symbol defined further down is an error: MAC and RMAC give it the location
+before the `ORG`, which their pass 1 gave it, and flag it `P` (`DB 1 / LAB
+ORG X / DW LAB / X EQU 200H` is 01 01 01). um80 reads pass 1 again until
+such a read has the symbol's final value, and would give it 0200H. An `ORG`
+of such a symbol with no label is no error in MAC, nor here. Other forward
+reads MAC and RMAC flag `P`, and um80 resolves without a word, are under
+Known issues in the CHANGELOG: `X EQU Y` with `Y` further down (MAC: X is
+0), and a label after a `DS` of a symbol further down (M80 flags it `P`
+too).
 
 **`END` of a symbol that is not defined takes no start address.** MAC and
 RMAC read nothing after an `END`, so in `END START` with `START` below it

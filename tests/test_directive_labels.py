@@ -74,6 +74,52 @@ def test_dri_label_with_no_colon_on_org():
     assert image == '0100:01 0300:00 0301:03'
 
 
+# A label on an ORG of a symbol defined further down: MAC and RMAC flag it P
+# and keep the location before the ORG, which their pass 1 gave it (`DB 1 /
+# LAB ORG X / DW LAB / X EQU 200H' is 01 01 01), where um80 --dri, whose
+# pass 1 reads X's value there as pass 2 does, gave LAB 0200H (01 00 02)
+# without a word.  M80 gives LAB the location before the ORG, flagging
+# nothing, and so does um80 without --dri.
+@pytest.mark.parametrize('line,m80', [
+    ("lab:\torg\tx\n", '0100:01 0200:01 0201:01'),
+    ("lab\torg\tx\n", None),
+    ("lab:\torg\tx+10h\n", '0100:01 0210:01 0211:01'),
+])
+def test_dri_label_on_org_of_a_symbol_defined_further_down(line, m80):
+    source = ("\taseg\n\torg\t100h\n\tdb\t1\n" + line
+              + "\tdw\tlab\nx\tequ\t200h\n\tend\n")
+    ok, _, errors = _image(source, dri=True)
+    assert not ok
+    assert any("reads a symbol defined further down: MAC and RMAC flag it P"
+               in e for e in errors), errors
+    if m80:
+        ok, image, errors = _image(source)
+        assert ok, errors
+        assert image == m80
+
+
+def test_dri_label_on_org_of_a_symbol_not_defined():
+    # Undefined, as before (MAC and RMAC: U), not defined further down.
+    ok, _, errors = _image("\taseg\n\torg\t100h\nlab\torg\tfoo\n\tend\n",
+                           dri=True)
+    assert not ok
+    assert errors == ["Error at line 3: Undefined symbol 'foo'"], errors
+
+
+@pytest.mark.parametrize('body,mac', [
+    # MAC and RMAC flag none of these.
+    ("\tdb\t1\n\torg\tx\n\tdb\t2\nx\tequ\t200h\n", '0100:01 0200:02'),
+    ("x\tequ\t200h\n\tdb\t1\nlab:\torg\tx\n\tdw\tlab\n",
+     '0100:01 0200:00 0201:02'),
+    ("\tdb\t1\nlab:\torg\t$+4\n\tdw\tlab\n", '0100:01 0105:05 0106:01'),
+])
+def test_dri_org_that_mac_does_not_flag(body, mac):
+    ok, image, errors = _image("\taseg\n\torg\t100h\n" + body + "\tend\n",
+                               dri=True)
+    assert ok, errors
+    assert image == mac
+
+
 # (lines after `ASEG / ORG 100H', M80's, MAC's and RMAC's image, or None
 # where LAB is U in all three)
 @pytest.mark.parametrize('body,image', [

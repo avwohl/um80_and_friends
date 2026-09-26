@@ -107,7 +107,8 @@ MAC's relational operators \fB=\fR, \fB<\fR, \fB<=\fR, \fB>\fR, \fB>=\fR and
 follows them (\fBHIGH(X)+1\fR is HIGH(X+1)), as in MAC; MACRO-80 has no such
 operator, and applies HIGH and LOW to the term after them.
 A label on an ORG is the location the ORG sets, as in MAC (MACRO-80: the
-location before it).
+location before it); on an ORG of a symbol defined further down it is an
+error, as MAC flags it P.
 END of a symbol that is not defined, as in \fBEND START\fR with START
 below it, takes no start address and is no error, as in MAC (MACRO-80: U).
 \fBMACLIB\fR \fIname\fR reads \fIname\fR.LIB, as in MAC and RMAC, and
