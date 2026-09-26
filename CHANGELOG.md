@@ -2,6 +2,21 @@
 
 All notable changes to the um80 toolchain are documented here.
 
+## [Unreleased]
+
+The 0.3.51 release gate found the differences below between um80 and the
+genuine MACRO-80 3.44, DRI's MAC 2.0 and RMAC 1.1, three of them the
+`--dri` Known issues of 0.3.51. Each expected result was confirmed with the
+genuine tools under cpmemu, and each has a regression test that fails on
+0.3.51.
+
+### Fixed
+- um80 assembler: with `--dri`, a two-character string used as a value has
+  its first character in the low byte, as in MAC and RMAC: `DW 'AB'` is 41
+  42, `LXI H,'AB'` 21 41 42, `DB ('AB') SHR 8` 42, and `IF 'AB' EQ 4241H`
+  is true. um80 --dri gave M80's order (42 41, 21 42 41, 41), without a
+  word. Without `--dri` it is still M80's, `'AB'` = 4142H.
+
 ## [0.3.51] - 2026-09-26
 
 Building MP/M II (https://github.com/avwohl/mpm2) from Digital Research's

@@ -1119,14 +1119,23 @@ class Assembler:
         """Parse character constant like 'A' or 'AB'.
 
         A doubled quote inside stands for one: '''' is 27H, as in M80.
+
+        Of two characters MACRO-80 makes the first the high-order byte,
+        'AB' = 4142H, and DRI's MAC and RMAC (--dri) the low-order one,
+        'AB' = 4241H: `DW 'AB'' is 42 41 in M80 and 41 42 in MAC, `LXI
+        H,'AB'' 21 42 41 and 21 41 42, and `DB ('AB') SHR 8' 41 and 42.
+        um80 --dri gave M80's order.  (DB 'AB' is a string, 41 42, in all
+        three.)
         """
         if is_string_literal(s):
             chars = s[1:-1].replace(s[0] * 2, s[0])
             if len(chars) == 1:
                 return (ord(chars), True)
             elif len(chars) == 2:
-                # M80: first char is the high-order byte ('AB' = 0x4142).
-                return ((ord(chars[0]) << 8) | ord(chars[1]), True)
+                first, second = ord(chars[0]), ord(chars[1])
+                if self.dri:
+                    return (first | (second << 8), True)
+                return ((first << 8) | second, True)
         return (0, False)
 
     def find_op_at_level0(self, expr, ops):

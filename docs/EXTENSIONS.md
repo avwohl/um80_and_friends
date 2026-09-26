@@ -143,13 +143,11 @@ The `$` characters are stripped during parsing and do not affect the numeric val
 
 `um80 --dri` reads a source the way DRI's MAC and RMAC read it where they
 differ from MACRO-80, in the ways listed here. It does not yet follow MAC in
-three: a two-character string used as a value (`DW 'AB'` is 41 42 in MAC and
-RMAC, 42 41 in M80 and here), `IF` (MAC and RMAC take it as true only when
-bit 0 of the value is set, so `IF 2` is false; here, as in M80, any value but
-0 is true), and a `MACLIB` library (MAC and RMAC read it in pass 1 only and
-assemble none of its code or data; here it is assembled as an `INCLUDE`
-file). No DRI source in the tests depends on any of them. It changes these
-things:
+two: `IF` (MAC and RMAC take it as true only when bit 0 of the value is set,
+so `IF 2` is false; here, as in M80, any value but 0 is true), and a `MACLIB`
+library (MAC and RMAC read it in pass 1 only and assemble none of its code
+or data; here it is assembled as an `INCLUDE` file). No DRI source in the
+tests depends on either. It changes these things:
 
 **A `$` inside a name is ignored.** DRI's manuals: "All characters are
 significant in an identifier, except for the embedded dollar sign ($) which
@@ -332,6 +330,14 @@ follows: `HIGH 1234H OR 0F00H` is `HIGH(1F34H)`, 1FH; `HIGH(100H)+1` is
 them (12H OR 0F00H, 2, 03H), and so does um80 without `--dri`. MAC's order,
 highest first: `* / MOD SHL SHR`, `+ -`, `EQ LT LE GT GE NE` (and `= < <= >
 >= <>`), `NOT`, `AND`, `OR XOR`, `HIGH LOW`.
+
+**A two-character string used as a value has its first character in the
+low byte,** as in MAC and RMAC: `'AB'` is 4241H, so `DW 'AB'` is 41 42, `LXI
+H,'AB'` 21 41 42, `X EQU 'AB'` then `DW X` 41 42, `DB ('AB') SHR 8` 42, and
+`IF 'AB' EQ 4241H` is true. M80 makes the first character the high byte,
+`'AB'` = 4142H (42 41, 21 42 41, 41), and so does um80 without `--dri`. A
+string in a `DB` is its characters, in order, in all three (`DB 'AB'` is 41
+42).
 
 **An 8AH or an 8DH inside a line is read as MAC reads it.** MAC and RMAC clear
 a byte's bit 7 and then read it, so an 8AH is a line feed and an 8DH a
@@ -967,6 +973,7 @@ defined global" but wrote the output and exited 0.
 | Label with no colon | ✗ | `--dri` | ✓ | ✗ |
 | `=` `<` `<=` `>` `>=` `<>` relational operators | ✗ | `--dri` | ✓ | ✗ |
 | `HIGH`/`LOW` of all that follows (`HIGH(X)+1` is `HIGH(X+1)`) | ✗ | `--dri` | ✓ | ✗ |
+| `'AB'` is 4241H (first character in the low byte) | ✗ | `--dri` | ✓ | ? |
 | Statement of values (`LAB: 5,6` is `DB`) | ✓ | ✓ | ✗ | ✗ |
 | EQU external+offset | ✗ | ✓ | ✗ | ✓ |
 | `__END__` symbol | ✗ | ✓ | ✗ | ✗ |
