@@ -1,9 +1,9 @@
 include README.md
+include CHANGELOG.md
 include LICENSE
 include pyproject.toml
 
 recursive-include docs *.md *.1
-recursive-include docs/external *.pdf
 
 recursive-include tests *.mac
 

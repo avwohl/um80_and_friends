@@ -52,9 +52,6 @@ ux80 = "um80.ux80:main"
 where = ["."]
 include = ["um80*"]
 
-[tool.setuptools.package-data]
-um80 = ["py.typed"]
-
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0",

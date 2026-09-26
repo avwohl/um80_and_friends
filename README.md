@@ -434,7 +434,7 @@ For more details on these extensions and compatibility notes, see [docs/EXTENSIO
 
 ## Testing
 
-The test suite (1291 tests) runs under `pytest`:
+The test suite (1294 tests) runs under `pytest`:
 
 ```bash
 pip install -e ".[dev]"
@@ -498,7 +498,9 @@ segment placement), `test_defs_fill.py` (DEFS fill value), `test_end_symbol.py`
 (`END` entry symbol and `__END__`), `test_ext_alias.py` (external aliases),
 `test_jr_promotion.py` (JR/DJNZ out-of-range promotion),
 `test_no_operand_strict.py` (an operand on a no-operand instruction is an
-error, the one deliberate divergence from M80), and `test_case_sensitivity.py`.
+error, the one deliberate divergence from M80), `test_case_sensitivity.py`,
+and `test_packaging.py` (the files `MANIFEST.in` and `pyproject.toml` name
+exist, and the source distribution carries `CHANGELOG.md`).
 
 ### mbasic2025: historic binaries, byte for byte
 
