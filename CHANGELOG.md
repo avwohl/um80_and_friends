@@ -393,7 +393,8 @@ on 0.3.50.
   `MM A ,B` passes A, an empty argument and B (um80: A and B). Without
   `--dri` um80 now does the same. MAC and RMAC end the arguments at the
   blanks: a comma after them starts the next argument (`MM A ,B` is A and B,
-  as before), and anything else they flag `S` and leave out (`MM A B` passes
+  as before), a `;` or a `!` there ends the call's statement (see the `!`
+  item below), and anything else they flag `S` and leave out (`MM A B` passes
   A); with `--dri` that is now an error. A `%` expression still runs to its
   comma, blanks and all (`MM %1 + 1,5` passes 2 and 5), and without `--dri`
   a `%` after a `<...>` group is now a value, as in M80: `MM <A>%1+1` passes
@@ -444,20 +445,40 @@ on 0.3.50.
   '&X'`), or, in a line of a body being defined, the `MACRO`, `REPT`,
   `IRP`, `IRPC` or `ENDM` that nests in it: `NOP! ENDM` and `NOP ;c! ENDM`
   end the body after the `NOP`, as in MAC, where um80 went on to the end of
-  the file ("Unterminated MACRO"). And with `--dri` a macro call ends the
-  line, as in MAC and RMAC, which leave out what follows its arguments:
-  `NOP! MM 1! DB 6` is 00 and MM's bytes, and um80 warns (it assembled `DB
-  6` too, without a word). With or without `--dri`, an `EXITM` after a `!`
-  now ends the macro expansion or the repetition, as one at the start of a
-  line does (`NOP! EXITM! DB 5`, and `IF 1! EXITM! ENDIF`): um80 read on
-  after it, without a word, where MAC ends there. Without `--dri` a comment
-  runs to the end of the line, as in M80 (`NOP ;c! DB 1` is 00). A `!` at the
-  end of a line, or of a comment there, no longer adds an empty line to the
-  listing. A line of `!` statements commented out with one `;` in front -
-  `;<TAB>pop h! lxi h,0007! jmp shell$err` - is now assembled from its first
-  `!` on with `--dri`, as MAC and RMAC assemble it; comment out each
-  statement instead. mpm2's V2.1 changes to `NUCLEUS/RESBDOS1.ASM` and
-  `CONBDOS.ASM` (`src/overrides`) keep the code they replace in two such
+  the file ("Unterminated MACRO"). With `--dri` what follows a macro call on
+  its line is read as MAC and RMAC read it: they go on with the statement
+  after the first `!` after the call's arguments that follows a character
+  other than a blank or a tab, where a `;` starts a comment that ends at its
+  `!`, which counts as such a character, and a `!` after a blank is text;
+  when the call has no arguments, the first character after the macro's name
+  is text whatever it is. So a call with no arguments ends at the `!` of its
+  `;` comment, as another statement does: `MM ;c! DB 1` and `NOP! MM ;c! DB
+  1` assemble the `DB`. `MM A;c! DB 1`, `MM A ! DB 1`, `MM ! DB 1`, `MM ;c !
+  DB 1`, `MM ;;c! DB 1` and `NOP! MM 1! DB 1` leave it out (MM with a
+  parameter), and `MM A;c!! DB 1` does not (the statement left out is empty).
+  A call reads as many arguments as the macro has parameters and the rest as
+  text, so `MM A! DB 1` and `NOP! MM A! DB 1` assemble the `DB` where MM has
+  no parameter. um80 `--dri` left out all that followed a call's arguments -
+  `MM ;c! DB 1` was MM's bytes only, without a word, and `NOP! MM ;c! DB 1`
+  warned that MAC leaves the `DB` out, which it does not - and took `MM A !
+  DB 1` and `MM ! DB 1` for arguments it reported; it now does as MAC does,
+  and warns where it leaves out a statement. A `!` right after an argument of
+  a line's first statement is still M80's quote where the macro has
+  parameters, as `docs/EXTENSIONS.md` says. A line of a body being defined
+  that starts with a macro call, an `IRP` or an `IRPC` is read for its
+  statements too (`MM ;c! ENDM`, `IRPC C,AB ! NOP ! ENDM` in a macro), and so
+  is a macro call's line in a false `IF` (`MM ;c ! ENDIF`): um80 went on to
+  the end of the file, or past the `ENDIF`. With or without `--dri`, an
+  `EXITM` after a `!` now ends the macro expansion or the repetition, as one
+  at the start of a line does (`NOP! EXITM! DB 5`, and `IF 1! EXITM! ENDIF`):
+  um80 read on after it, without a word, where MAC ends there. Without
+  `--dri` a comment runs to the end of the line, as in M80 (`NOP ;c! DB 1` is
+  00). A `!` at the end of a line, or of a comment there, no longer adds an
+  empty line to the listing. A line of `!` statements commented out with one
+  `;` in front - `;<TAB>pop h! lxi h,0007! jmp shell$err` - is now assembled
+  from its first `!` on with `--dri`, as MAC and RMAC assemble it; comment
+  out each statement instead. mpm2's V2.1 changes to `NUCLEUS/RESBDOS1.ASM`
+  and `CONBDOS.ASM` (`src/overrides`) keep the code they replace in two such
   lines, and RESBDOS.SPR for V2.1 comes out 10 bytes longer, 0D00H, until
   they are rewritten; with them rewritten every file of the V2.0 and V2.1
   builds is what it was.

@@ -84,8 +84,11 @@ assembly controls (\fB$\-MACRO\fR) are ignored.  Without \fB\-\-dri\fR a
 label needs its colon, as in MACRO-80.
 A \fB!\fR ends a comment and starts the next statement
 (\fBNOP ;c! DB 1\fR is 00 01), and an ENDM after a \fB!\fR ends the
-body being defined; a macro call ends the line, and what follows its
-arguments is left out, with a warning.  Without \fB\-\-dri\fR a comment
+body being defined.  After a macro call the next statement is the one after
+the first \fB!\fR after its arguments that follows a character other than a
+blank, as in MAC: \fBMM ;c! DB 1\fR assembles the DB, and \fBMM A;c! DB
+1\fR, \fBMM A ! DB 1\fR and \fBMM ;c ! DB 1\fR leave it out, with a
+warning.  Without \fB\-\-dri\fR a comment
 runs to the end of the line, as in MACRO-80.
 An 8AH (a line feed with bit 7 set) inside a line is a line feed, the byte
 0AH in a string, and an 8DH a carriage return that ends the statement, after

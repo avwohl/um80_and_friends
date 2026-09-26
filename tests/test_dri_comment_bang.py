@@ -13,9 +13,9 @@ word: 1523 of MAC's 1887 bytes of the CCP differed, and 298 of LDRBIOS.
 A quote in a comment starts no string (`NOP ;it's! DB 1' is 00 01), and a
 `*' comment line ends at a `!' too (`* a;b! DB 1' is 01).  A statement
 after the `!' may be a REPT, IRP or IRPC body line, IF, ENDIF, ENDM or an
-EQU, as after any `!'.  A macro call ends the line in MAC: what follows its
-arguments, after a `!' in its comment or not, is left out (`NOP! MM 1! DB
-6' is 00 and MM's bytes).
+EQU, as after any `!'.  After a macro call's arguments MAC leaves out the
+statement after the `!' (`NOP! MM 1! DB 6' is 00 and MM's bytes); see
+test_dri_after_macro_call.py.
 
 Without --dri a comment runs to the end of the line, as in MACRO-80 3.44
 (`NOP ;c! DB 1' is 00 there).
@@ -232,9 +232,9 @@ def test_an_irpc_line():
 # --- macro calls -----------------------------------------------------------
 
 def test_a_macro_call_ends_the_line():
-    # 01 07 (as before); 00 01 07 twice: MAC leaves out what follows a macro
-    # call's arguments, after a `!' in its comment or not.  um80: 00 01 06
-    # 07 for the second.
+    # 01 07 (as before); 00 01 07 twice: MAC leaves out the statement after
+    # the `!' after a macro call's arguments, in its comment or not.  um80:
+    # 00 01 06 07 for the second.
     assert _code(MM + "\tMM\t1 ;c! DB 6\n\tDB 7\n") == '01 07'
     assert _code(MM + "\tNOP\t;c! MM 1 ;d! DB 6\n\tDB 7\n") == '00 01 07'
     assert _code(MM + "\tNOP! MM 1! DB 6\n\tDB 7\n") == '00 01 07'

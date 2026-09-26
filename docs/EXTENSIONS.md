@@ -97,6 +97,8 @@ statement starts after it: `NOP ;save! INX H` is two statements (see
   `head FOO,!!CF` passes the name `!CF`, and `!,` passes a literal comma), so
   the separator never interferes with macro arguments. Without `--dri` it
   quotes a `;` too, as in M80: `MM A!;B` passes `A;B`, and `MM A!"B;C` `A"B`.
+  With `--dri` a `!` after the arguments is read as MAC reads it: see *What
+  follows a macro call on its line* under [DRI sources](#dri-sources---dri).
 
 ### HIGH and LOW Operators (Function Syntax)
 
@@ -192,8 +194,10 @@ as at a comma, and flags it `Q` (there `MM 1>2,3` passes 1, 2 and 3); without
 `--dri` um80 does the same, and warns. A blank or a tab ends a macro
 argument outside a quoted string and a `<...>` group, in MAC, RMAC and M80,
 and MAC and RMAC end the arguments there: a comma after the blanks starts the
-next argument (`MM A ,B` passes A and B), and anything else is an error, as
-MAC and RMAC flag it `S` and leave it out (`MM A B` passes A there). M80
+next argument (`MM A ,B` passes A and B), a `;` or a `!` ends the call's
+statement (see *What follows a macro call on its line* below), and anything
+else is an error, as MAC and RMAC flag it `S` and leave it out (`MM A B`
+passes A there). M80
 reads the blanks after an argument as a separator, as a comma, so without
 `--dri` `MM A B` passes A and B, `MM 5 GT 2,4` 5, GT, 2 and 4, and `MM A ,B`
 A, an empty argument and B. A `"` in a macro call's arguments or an `IRP`
@@ -271,11 +275,38 @@ with one `;` in front (`;<TAB>pop h! lxi h,7! jmp err`) is assembled from its
 first `!` on with `--dri`, as in MAC and RMAC: put a `;` in front of each
 statement.
 
-**A macro call ends the line.** MAC and RMAC leave out what follows a macro
-call's arguments on its line, after a `!` or not: `NOP! MM 1! DB 6` and `NOP
-;c! MM 1 ;d! DB 6` are 00 and MM's bytes. With `--dri` um80 does the same,
-and warns where it leaves out a statement. (A `!` inside the arguments is
-still M80's quote; see [Multi-Statement Lines](#multi-statement-lines--separator).)
+**What follows a macro call on its line.** MAC and RMAC read what follows a
+macro call's arguments as text, to the first `!` there that follows a
+character other than a blank or a tab, and go on with the statement after
+that `!`. Up to it a `;` starts a comment that ends at its `!`, which counts
+as such a character, and a `!` after a blank is text; when the call has no
+arguments, the first character after the macro's name is text whatever it
+is. With `--dri` um80 does the same, and warns where it leaves out a
+statement:
+
+```asm
+        MM      ;c! DB 1            ; MM, then DB 1: the comment ends at its !
+        NOP! MM ;c! DB 1            ; 00, MM, DB 1
+        MM      A;c! DB 1           ; MM A: DB 1 is left out
+        MM      A ! DB 1            ; MM A: DB 1 is left out
+        MM      A;c!! DB 1          ; MM A, DB 1: the statement left out is empty
+        MM      A ;c! DB 1! DB 2    ; MM A, DB 2
+        MM      ;c ! DB 1           ; MM: a ! after a blank is text
+        MM      ;;c! DB 1           ; MM: the second ; starts a comment
+        MM      ! DB 1              ; MM: the first character is text
+```
+
+A call reads as many arguments as the macro has parameters, and the rest as
+text: `MM A! DB 1` and `NOP! MM A! DB 1` assemble DB 1 where MM has no
+parameter, and `NOP! MM A! DB 1` leaves it out where MM has one. A `!` right
+after an argument of a line's first statement is still M80's quote where the
+macro has parameters (see
+[Multi-Statement Lines](#multi-statement-lines--separator)): MAC ends the
+arguments there, so `MM A!B` passes A in MAC and AB in um80, and `MM A! DB 1`
+is an error in um80. Where MAC defines a body, it reads a line that starts
+with a macro call for its statements as any other (`MM ;c! ENDM` ends the
+body), and in a false `IF` too (`MM ;c ! ENDIF` ends the `IF`), and so does
+um80.
 
 **`PUSH A` is `PUSH PSW`, and an expression may have two register names in
 it,** as in MAC and RMAC (M80 flags both); see

@@ -477,6 +477,7 @@ class Assembler:
         self.repeat_line_tail = None  # DRI '!' statements after an IRP/IRPC list
         self.statement_comment = ''  # the comment of the statement being read
         self.exitm_pending = False  # an EXITM after a `!' (_process_statements())
+        self.operands_start = 0  # where parse_line() found a call's operands
         self.repeat_level = 0  # REPT, IRP and IRPC being repeated
         self.block_open_line = 0  # Line of the MACRO/REPT/IRP/IRPC still open
 
@@ -1913,6 +1914,7 @@ class Assembler:
         if operator in self.macros or operator in ('IRP', 'IRPC'):
             # `line' is the end of `head', which starts `whole'.
             start = len(head) - len(line) + match.end()
+            self.operands_start = start     # see _dri_macro_call()
             end, semicolon = self.arguments_comment(whole, start, operator)
             operands = whole[start:end].lstrip()
             comment = '' if semicolon is None else whole[semicolon + 1:]
@@ -2064,9 +2066,11 @@ class Assembler:
         argument and B.
 
         MAC and RMAC (--dri) end the arguments at the blanks after one: a
-        comma there starts the next (`MM A ,B' passes A and B), and anything
-        else they flag S and leave out, and um80 reports an error (`MM A B'
-        passes A in MAC).  A '>' with no '<' is text: `MM 1>2,3' passes
+        comma there starts the next (`MM A ,B' passes A and B), a `;' or a
+        `!' ends the call's statement (_dri_macro_call(), which leaves such
+        a `!' out of `operands'), and anything else they flag S and leave
+        out, and um80 reports an error (`MM A B' passes A in MAC).  A '>'
+        with no '<' is text: `MM 1>2,3' passes
         `1>2' and 3.  A `"' is text, not a quote (_starts_argument_string()):
         `MM "A,B",C' passes `"A', `B"' and C.  In an argument that starts
         with `%' a `<' or a `>' is MAC's operator, not a bracket: `MM
@@ -4587,15 +4591,27 @@ class Assembler:
         # operator (e.g. head FOO,!!CF) rather than a DRI statement separator;
         # splitting here would shred the arguments (issue #3).  With --dri a
         # line of a body being collected is read for its statements too
-        # (_collect_statements()).
-        if '!' in line and not self._line_invokes_macro(statement):
+        # (_collect_statements()), a macro call's or an IRP's or IRPC's line
+        # as well: MAC and RMAC end a body at `MM ;c! ENDM', and `IRPC C,AB !
+        # NOP ! ENDM' nests in one.  So is a macro call's line in a false IF:
+        # they end one at `MM ;c ! ENDIF' (_dri_macro_call() is for a call
+        # they make).
+        collecting = self.collecting_macro is not None or self.repeat_stack
+        if '!' in line and (not self._line_invokes_macro(statement) or (
+                self.dri and (collecting or (
+                    self.cond_false_depth
+                    and self.parse_line(statement)[1] in self.macros)))):
             statements = self.split_on_exclamation(line)
             if len(statements) > 1:
-                if self.collecting_macro is None and not self.repeat_stack:
+                if not collecting:
                     self._process_statements(statements, read)
                     return
                 if self.dri and self._collect_statements(line, statements, read):
                     return
+        # With --dri a macro call and what MAC and RMAC assemble after it.
+        if (self.dri and '!' in line and not collecting
+                and self._dri_call_line(statement, read, bang_ends=False)):
+            return
         # Fall through to normal processing (single statement or macro/repeat body)
         self._process_single_statement(statement)
         # DRI statements after an IRP or IRPC list: `IRPC C,AB ! DB '&C' ! ENDM'.
@@ -4610,11 +4626,10 @@ class Assembler:
 
         A statement after the first cannot have a label in column one, so
         it is read with blanks in front (`first' is the index of the first
-        of `statements' in the line).  With --dri a macro call ends the
-        line, as in MAC and RMAC: they leave out what follows the call's
-        arguments, after a `!' or not.  `NOP! MM 1! DB 6' is 00 and MM's
-        bytes there (um80 assembled DB 6 as well, without a word); um80
-        warns.
+        of `statements' in the line).  With --dri a macro call there, and
+        what follows it on the line, are read as MAC and RMAC read them
+        (_dri_macro_call()): `NOP! MM 1! DB 6' is 00 and MM's bytes, and
+        `NOP! MM ;c! DB 6' 00, MM's bytes and 06.
 
         An EXITM after a `!' ends the macro expansion or the repetition, as
         one at the start of a line does, in MACRO-80 syntax as in MAC's:
@@ -4632,6 +4647,13 @@ class Assembler:
             # Add leading space to prevent treating first word as label
             if k + first and stmt and not stmt[0].isspace():
                 stmt = '        ' + stmt.strip()
+            if (self.dri and k + first and self.collecting_macro is None
+                    and not self.repeat_stack and not self.cond_false_depth):
+                # The statement to the end of the line, as it was written.
+                tail = '        ' + statements[k].lstrip() + ''.join(
+                    '!' + later for later in statements[k + 1:])
+                if self._dri_call_line(read(tail), read, bang_ends=True):
+                    break
             self.exitm_pending = False
             called = self._process_single_statement(read(stmt))
             if self.exitm_pending and (self.macro_level or self.repeat_level):
@@ -4640,13 +4662,195 @@ class Assembler:
                 # _run_repeat_iteration()).
                 break
             if called and self.dri:
+                # A call whose arguments um80 reports (_dri_macro_call()).
                 rest = [s.strip() for s in statements[k + 1:]]
                 rest = [s for s in rest if s and not s.startswith(';')]
                 if rest and self.pass_num == 2:
                     self.warning(f"'{'! '.join(rest)}' after a macro call is"
-                                 " left out, as in MAC and RMAC (--dri): a"
-                                 " macro call ends the line")
+                                 " left out (--dri)")
                 break
+
+    def _dri_call_line(self, text, read, bang_ends):
+        """--dri: if `text' (a line, from one of its statements on) starts
+        with a macro call, assemble the call, and then the statements MAC
+        and RMAC assemble after it on the line (_dri_macro_call()), and
+        return True.  um80 warns where it leaves a statement out.
+        """
+        found = self._dri_macro_call(text, bang_ends)
+        if found is None:
+            return False
+        call, rest, left = found
+        self.exitm_pending = False
+        self._process_single_statement(read(call))
+        left = [s.strip() for s in self.split_on_exclamation(left)] if left else []
+        left = [s for s in left if s and not s.startswith(';')]
+        if left and self.pass_num == 2:
+            self.warning(f"'{'! '.join(left)}' after a macro call is left out,"
+                         " as in MAC and RMAC (--dri)")
+        if rest is not None and not self.ended:
+            self._process_statements(self.split_on_exclamation(rest), read, first=1)
+        return True
+
+    def _dri_macro_call(self, text, bang_ends):
+        """--dri: the macro call that starts `text' (a line, from one of its
+        statements on) and where MAC and RMAC go on after it: (call, rest,
+        left), the text of the call's statement, the text from the statement
+        they go on with (None if none) and the statements they leave out in
+        between.  None if `text' starts with no macro call, or if um80 reads
+        the call as before: a `!' in the arguments of the first statement of
+        a line (`bang_ends' false) is M80's quote (macro_call_arguments(),
+        and see EXTENSIONS.md), but where the macro has no parameters, and
+        text after the blank that ends them an error, as MAC and RMAC flag
+        it S.
+
+        MAC and RMAC read what follows a macro call's arguments as text, to
+        the first `!' there that follows a character other than a blank or
+        a tab, and go on with the statement after that `!'.  Up to it a `;'
+        starts a comment that ends at the next `!', which counts as such a
+        character, and a `!' after a blank is text; the first character
+        after the macro's name is text whatever it is, when the call has no
+        arguments.  A `!' that ends the arguments ends the call's statement,
+        and the next one is left out the same way.  So `MM ;c! DB 1',
+        `MM;c!DB 1', `LAB: MM ;c! DB 1' and `MM ;c! NOP! DB 1' assemble what
+        follows the comment, as `NOP ;c! DB 1' does, and so do `MM A;c!! DB
+        1' and `MM !! DB 1' (the statement left out is empty); `MM A;c! DB
+        1', `MM A ! DB 1', `MM ! DB 1', `MM ;c ! DB 1' and `MM ;;c! DB 1'
+        leave out DB 1, and `MM A ;c! DB 1! DB 2' assembles DB 2.  With the
+        call after a `!' (`bang_ends'), its arguments end at a `!' too, and
+        after as many as the macro has parameters MAC reads the rest as
+        text: `NOP! MM A! DB 1' is 00, MM's bytes and 01 where MM has no
+        parameter, and leaves out DB 1 where it has one.  So is `MM A! DB
+        1' where MM has none: MAC reads no arguments at all.  um80 --dri
+        left out all that followed a macro call's arguments, without a word
+        where the call started the line (`MM ;c! DB 1' was MM's bytes only),
+        and took `MM A ! DB 1' and `MM ! DB 1' for arguments it reports.
+        """
+        _, operator, _, _ = self.parse_line(text)
+        macro = self.macros.get(operator) if operator else None
+        if macro is None:
+            return None
+        n = len(text)
+        i = self.operands_start
+        while i < n and text[i] in ' \t':
+            i += 1
+        if i >= n:
+            return None
+        bang = None
+        if text[i] in ';!' or not macro.params:
+            # No arguments, or none that MAC reads.
+            resume, first_bang = self._mac_call_rest(text, i, first=True)
+        else:
+            end = self._dri_arguments_end(
+                text, i, len(macro.params) if bang_ends else None)
+            if end is None:
+                return None
+            if end < n and text[end] in '!,':
+                # The `!' that ends the call's statement, or the ',' after
+                # the arguments MAC reads.
+                bang = end if text[end] == '!' else None
+                resume, first_bang = self._mac_call_rest(text, end + 1, after=True)
+            else:
+                resume, first_bang = self._mac_call_rest(text, end)
+        if bang is not None:
+            first_bang = bang
+        # A macro with no parameters is called without the text after its
+        # name, which MAC reads as none (and um80 as arguments to report).
+        call = text[:i] if text[i] not in ';!' and not macro.params else None
+        if first_bang is None:
+            return call or text, None, ''
+        stop = n if resume is None else resume - 1
+        return (call or text[:first_bang], None if resume is None else text[resume:],
+                text[first_bang + 1:stop] if stop > first_bang else '')
+
+    def _dri_arguments_end(self, text, i, params):
+        """Where the arguments of a macro call that start at text[i] end,
+        as macro_call_arguments() reads them with --dri: at the `;' or the
+        blank or tab after them, at len(text), or at a `!' after a `%'
+        expression; None at a `!' in another one, M80's quote there, and
+        where text follows the blank that ends them.  With `params' (the
+        call follows a `!') a `!' ends one too, and the ',' after `params'
+        of them ends them, as in MAC and RMAC (_dri_macro_call()).
+        """
+        n = len(text)
+        count = 0
+        while True:
+            while i < n and text[i] in ' \t':
+                i += 1
+            start, depth, value = i, 0, False
+            while i < n:
+                ch = text[i]
+                if self._starts_argument_string(text, i):
+                    i = self._string_end(text, i)
+                    continue
+                if ch == '!':
+                    if params is None and not value:
+                        return None
+                    break
+                if value and ch in '<>':
+                    pass
+                elif ch == '<':
+                    depth += 1
+                elif ch == '>' and depth:
+                    depth -= 1
+                elif depth:
+                    pass
+                elif ch == '%' and i == start:
+                    value = True
+                elif ch == ';' or ch == ',' or (ch in ' \t' and not value):
+                    break
+                i += 1
+            count += 1
+            k = i
+            while k < n and text[k] in ' \t':
+                k += 1
+            if k < n and text[k] == ',':
+                # A ',' after the blanks after an argument starts the next.
+                if params is not None and count >= params:
+                    return k
+                i = k + 1
+                continue
+            if k < n and k > i and text[k] not in ';!':
+                return None
+            return i
+
+    @staticmethod
+    def _mac_call_rest(text, i, first=False, after=False):
+        """(resume, bang) for what follows a macro call's arguments, from
+        text[i] on, as MAC and RMAC read it (_dri_macro_call()): the index
+        after the `!' where they go on (None if they do not on this line),
+        and that of the first `!' they come to (None if none).  `first':
+        text[i] is the first character after the macro's name; `after':
+        the character before text[i] counts as one other than a blank.
+        """
+        n = len(text)
+        prev = after
+        first_bang = None
+        while i < n:
+            ch = text[i]
+            if ch in ' \t':
+                prev = False
+                i += 1
+                continue
+            if first:
+                first = False
+            elif ch == ';':
+                j = text.find('!', i)
+                if j < 0:
+                    return None, first_bang
+                if first_bang is None:
+                    first_bang = j
+                i, prev = j + 1, True
+                continue
+            elif ch == '!' and prev:
+                return i + 1, i if first_bang is None else first_bang
+            if ch == '!' and first_bang is None:
+                first_bang = i
+            if ch == "'":
+                i = Assembler._string_end(text, i)
+            else:
+                i += 1
+            prev = True
+        return None, first_bang
 
     def _collect_statements(self, line, statements, read):
         """--dri: a line with more than one statement in a MACRO, REPT, IRP
