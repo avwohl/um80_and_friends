@@ -266,7 +266,10 @@ on that line (`IRPC X,AB ;c! DB '&X'` puts `DB '&X'` in the body), or an
 a comment or not: `NOP! ENDM` ends the body after the `NOP`, and what follows
 the `ENDM` is assembled where the body ends (`NOP! ENDM! DB 5` is 05 there).
 M80 has no `!` separator, and without `--dri` a comment runs to the end of
-the line (`NOP ;c! DB 1` is 00).
+the line (`NOP ;c! DB 1` is 00). So a line of `!` statements commented out
+with one `;` in front (`;<TAB>pop h! lxi h,7! jmp err`) is assembled from its
+first `!` on with `--dri`, as in MAC and RMAC: put a `;` in front of each
+statement.
 
 **A macro call ends the line.** MAC and RMAC leave out what follows a macro
 call's arguments on its line, after a `!` or not: `NOP! MM 1! DB 6` and `NOP

@@ -432,7 +432,14 @@ on 0.3.50.
   after it, without a word, where MAC ends there. Without `--dri` a comment
   runs to the end of the line, as in M80 (`NOP ;c! DB 1` is 00). A `!` at the
   end of a line, or of a comment there, no longer adds an empty line to the
-  listing.
+  listing. A line of `!` statements commented out with one `;` in front -
+  `;<TAB>pop h! lxi h,0007! jmp shell$err` - is now assembled from its first
+  `!` on with `--dri`, as MAC and RMAC assemble it; comment out each
+  statement instead. mpm2's V2.1 changes to `NUCLEUS/RESBDOS1.ASM` and
+  `CONBDOS.ASM` (`src/overrides`) keep the code they replace in two such
+  lines, and RESBDOS.SPR for V2.1 comes out 10 bytes longer, 0D00H, until
+  they are rewritten; with them rewritten every file of the V2.0 and V2.1
+  builds is what it was.
 
 ## [0.3.50] - 2026-09-25
 
