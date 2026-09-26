@@ -66,7 +66,9 @@ on 0.3.50.
   starts with `*` (M80: `U`, but for its `*EJECT` in column 1) or with a line
   number (M80: `O`); um80 left both out, without a word. DRI sources that
   have them - `CPM22.ASM`, `GENHEX.ASM`, MP/M II's `BNKBDOS.ASM` - need
-  `--dri`.
+  `--dri`. In a `MACRO`, `IRP` or `IRPC` body being defined a word
+  with no colon in front of its `ENDM` is still read as M80 reads it (see
+  Fixed).
 - um80 assembler: `PUSH A` and `POP A` are an error without `--dri`, as M80
   flags them (`A`); with `--dri` they are `PUSH PSW` and `POP PSW`, as in MAC
   and RMAC, which also take `PUSH 7`. um80 took `PUSH A` for `PUSH PSW` in
@@ -94,6 +96,25 @@ on 0.3.50.
   in the expansion. The name in front of an `EQU`, `SET`, `DEFL`, `ASET` or
   `MACRO` is still a name, in any column (`NOP EQU 5` defines `NOP`, as in
   M80).
+- um80 assembler: in a `MACRO`, `IRP` or `IRPC` body being defined, a word
+  with no colon that is no instruction or directive - a label, in any column,
+  a macro's name, or a word made with `&` - in front of an `ENDM`, `MACRO`,
+  `REPT`, `IRP`, `IRPC` or `LOCAL` does not hide it, as in MACRO-80 3.44:
+  `LAB ENDM`, `<TAB>LAB<TAB>ENDM` and `L&P ENDM` end the body (the word is not
+  defined), `LAB REPT 2` opens a block the next `ENDM` ends, and `LAB LOCAL
+  QQ` declares `QQ`. Once a label needed its colon, um80 took `LAB` for the
+  operation and never saw the `ENDM`: `IRP X,<1,2> / DB X / LAB ENDM / DB 9`
+  stored the rest of the file as the body, warned only "Unterminated IRP ...
+  nothing after it was assembled", and exited 0 with an object without that
+  code, where M80 and 0.3.50 assemble 01 02 09; `LAB LOCAL QQ` was an unknown
+  instruction. 0.3.50 read neither `<TAB>LAB<TAB>ENDM` nor `L&P ENDM`. After
+  an instruction or a directive the word is its operand, as in M80 (`NOP
+  ENDM` and `DB ENDM` end nothing), and so is a third word (`LAB FOO ENDM`);
+  M80 reads a `REPT` body for its first word only, and `LAB ENDM` does not end
+  one, in M80 or um80. With `--dri` a word made with `&` is a label, as in MAC
+  and RMAC: `L&P ENDM` ends the body and defines `L3` where it ends (after `MM
+  3`), `L&P REPT 2` opens a `REPT`, and `L&P LOCAL QQ` declares `QQ`, where
+  um80 --dri did not see them.
 - um80 assembler: a name is read whole where it ends in the letters of a
   word operator (MOD, SHL, SHR, AND, OR, XOR, NOT, EQ, NE, LT, LE, GT, GE,
   HIGH, LOW, NUL, TYPE) and a `+` or `-` follows: `X1EQ+2`, `@P$NUL-1` and

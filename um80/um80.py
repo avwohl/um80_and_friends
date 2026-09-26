@@ -84,6 +84,11 @@ NAME_DEFINITION = re.compile(r'([$A-Za-z_@?][A-Za-z0-9_@?$.]*)\s+'
 # ($-MACRO, $+PRINT, ...): see Assembler.parse_line().
 LINE_NUMBER = re.compile(r'\d[0-9A-Za-z$]*(?:\s+|$)')
 DRI_CONTROL = re.compile(r'\$[-+*][A-Za-z]')
+# A word with no colon, and the directive after it that a line of a body
+# being defined is read for (Assembler._body_word()).
+BODY_WORD = re.compile(r'\s*([$A-Za-z_@?&][A-Za-z0-9_@?$.&]*)[ \t]+'
+                       r'(MACRO|REPT|IRPC|IRP|ENDM|LOCAL)(?![A-Za-z0-9_@?$.&])',
+                       re.IGNORECASE)
 
 # Every byte of a source file with its bit 7 cleared (see source_lines()).
 STRIP_PARITY = bytes(b & 0x7F for b in range(256))
@@ -4724,7 +4729,46 @@ class Assembler:
             m = re.match(r'\s*([$A-Za-z_@?&][A-Za-z0-9_@?$.&]*)::?(\s.*)?$', line)
             if m and '&' in m.group(1):
                 return m.group(1), self.parse_line('\t' + (m.group(2) or ''))[1]
+        # M80 reads a REPT body for the first word only (_body_word()).
+        if (self.dri or self.collecting_macro is not None
+                or self.repeat_stack[-1][0] != 'REPT'):
+            word = self._body_word(line, ('MACRO', 'REPT', 'IRP', 'IRPC', 'ENDM'))
+            if word:
+                return word[0], word[1]
         return label, operator
+
+    def _body_word(self, line, directives):
+        """(word, directive, where the directive starts) when `line' starts
+        with a word with no colon that is no instruction or directive and
+        then one of `directives', or None.
+
+        MACRO-80 3.44 reads each line of a MACRO, IRP or IRPC body it
+        defines for the MACRO, REPT, IRP, IRPC and ENDM that nest in it and
+        the LOCAL names, and takes one after such a word, in any column: a
+        label with no colon, a macro's name, or a word made with `&'.  `LAB
+        ENDM', `<TAB>LAB<TAB>ENDM' and `L&P ENDM' end the body, and the word
+        is not defined; `LAB REPT 2' opens a block the next ENDM ends (and
+        is U where it is expanded, as it is no statement there); `LAB LOCAL
+        QQ' declares QQ.  After an instruction or a directive of the
+        processor in use the word after it is an operand (`NOP ENDM', `DB
+        ENDM'), and a third word is not read (`LAB FOO ENDM'); `HALT ENDM'
+        ends a body in 8080 code.  M80 reads a REPT body for its first word
+        only: `LAB ENDM' does not end one.  um80 took the word for the
+        operation, so the body ran to the end of the file, and `LAB LOCAL
+        QQ' was an unknown instruction.  With --dri parse_line() takes the
+        word for a label already, but for one made with `&', and MAC and
+        RMAC read `L&P ENDM', `L&P REPT 2' and `L&P LOCAL QQ' so too.
+        """
+        m = BODY_WORD.match(line)
+        if not m or m.group(2).upper() not in directives:
+            return None
+        word = m.group(1)
+        if '&' not in word:
+            upper = word.upper()
+            if upper in DIRECTIVES or upper in (INSTRUCTIONS_Z80 if self.z80_mode
+                                                else INSTRUCTIONS_8080):
+                return None
+        return word, m.group(2).upper(), m.start(2)
 
     def _endm_label(self, label, body):
         """A label on the ENDM that ends a body being collected.
@@ -5421,6 +5465,10 @@ class Assembler:
                 break
             # Check for LOCAL directive
             label, op, opnds, comment = self.parse_line(body_line)
+            word = self._body_word(body_line, ('LOCAL',))
+            if word:
+                # `LAB LOCAL QQ' (_body_word()).
+                op, opnds = 'LOCAL', self.parse_line('\t' + body_line[word[2]:])[2]
             if op and op.upper() == 'LOCAL':
                 # Add these symbols to local set
                 if opnds:

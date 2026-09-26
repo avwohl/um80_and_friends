@@ -467,6 +467,19 @@ Up to 0.3.50 um80 took any word in column 1 for a label, so `NOP`, `RET`,
 `END` or `DB 7` there assembled nothing, without a word, and an `ENDM` or a
 `LOCAL` in column 1 was never seen.
 
+M80 reads a line of a `MACRO`, `IRP` or `IRPC` body it defines for the
+`ENDM` that ends it, the `MACRO`, `REPT`, `IRP` and `IRPC` that nest in it,
+and its `LOCAL` names, after a word that is no instruction or directive too
+(a label with no colon, in any column, a macro's name, a word made with
+`&`), and so does um80: `LAB ENDM`, `<TAB>LAB<TAB>ENDM` and `L&P ENDM` end the
+body, and the word is not defined; `LAB REPT 2` opens a block the next `ENDM`
+ends (and is an error where the body is expanded, as M80 flags it `U`); `LAB
+LOCAL QQ` declares `QQ`. After an instruction or a directive the word is its
+operand (`NOP ENDM` ends nothing), and a third word is not read (`LAB FOO
+ENDM`). M80 reads a `REPT` body for its first word only: `LAB ENDM` does not
+end one. With `--dri` a word made with `&` is a label as any other, as in MAC
+and RMAC, which define it where the body ends (`L&P ENDM`).
+
 A statement whose first word is no instruction, directive or macro is, in
 M80, a list of values it assembles as `DB`, and so it is in um80, which also
 warns: after `FOO EQU 5`, `FOO` alone is the byte 05, `FOO+1,'AB'` is 06 41 42,
