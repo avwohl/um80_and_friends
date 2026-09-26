@@ -136,10 +136,11 @@ genuine tools under cpmemu, and each has a regression test that fails on
   for a `!` statement, is an error, as MAC and RMAC flag it S (`IRP
   X,<1,2>,3`, `IRPC X,AB CD`; `IRP X,1,2`, which went round 1 and 2).
 - packaging: the source distribution now includes `CHANGELOG.md`, which the
-  README and the man pages refer to. `pyproject.toml` listed a package file,
-  `um80/py.typed`, that does not exist, and `MANIFEST.in` PDFs in a
-  `docs/external` that does not exist, which `python -m build` warned about;
-  both are gone. The man pages and the README's list of manuals still named
+  README and the man pages refer to. `MANIFEST.in` named PDFs in a
+  `docs/external` that does not exist, which `python -m build` warned about
+  four times, and `pyproject.toml` a package file, `um80/py.typed`, that does
+  not exist, which no wheel had and nothing warned about; both are gone. The
+  man pages and the README's list of manuals still named
   `docs/external/m80.pdf` and its neighbours, which moved to the retro_docs
   archive in 0.3.46; they now point there.
 
