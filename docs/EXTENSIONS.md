@@ -101,9 +101,12 @@ statement starts after it: `NOP ;save! INX H` is two statements (see
   outside the macro, `MVI A,QQ! LOCAL QQ! LXI H,QQ` is 3E 07 and the local
   `QQ`'s address; `LXI H,QQ! LOCAL QQ` with no `QQ` outside is an undefined
   symbol (MAC: U), and `QQ: NOP! LOCAL QQ` defines the `QQ` outside, so a
-  second expansion defines it twice (MAC: P). M80 reads `LOCAL QQ! NOP` as
-  `LOCAL QQ` and nothing more, and flags `NOP! LOCAL QQ`, where `QQ` is not
-  local.
+  second expansion defines it twice (MAC: P). With `--dri` a `LOCAL` that
+  MAC and RMAC leave out after a macro call (see *What follows a macro call
+  on its line*) declares nothing, as in MAC: in `NN! LOCAL QQ`, with `NN` a
+  macro of no parameters, the `!` is text of the call, and um80 warns that
+  the `LOCAL` is left out. M80 reads `LOCAL QQ! NOP` as `LOCAL QQ` and
+  nothing more, and flags `NOP! LOCAL QQ`, where `QQ` is not local.
 - A macro-invocation line is **not** split on `!`. There, `!` retains its M80
   meaning of quoting the next character in the argument list (e.g.
   `head FOO,!!CF` passes the name `!CF`, and `!,` passes a literal comma), so

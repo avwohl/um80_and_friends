@@ -6012,16 +6012,47 @@ class Assembler:
         the `!' separates them, and with --dri a `!' ends a comment too; a
         macro call's line is one statement without --dri, where `!' is M80's
         quote in its arguments.  Each after the first has blanks in front,
-        as _process_statements() reads it."""
+        as _process_statements() reads it.
+
+        With --dri the statements MAC and RMAC leave out after a macro call
+        (_dri_macro_call()) are not among them: a LOCAL there declares
+        nothing, as in MAC, where `NN! LOCAL QQ', with NN a macro of no
+        parameters, leaves out the LOCAL, and a second expansion's label QQ
+        is flagged P.  um80 --dri warned that the LOCAL was left out, and
+        made QQ local all the same.
+        """
         if '!' not in line or (not self.dri and self._line_invokes_macro(line)):
             return [(0, line)]
         out = []
-        start = 0
-        for k, stmt in enumerate(self.split_on_exclamation(line)):
-            # split_on_exclamation() drops only the `!' between them.
-            out.append((start, stmt if not k else '        ' + stmt.strip()))
-            start += len(stmt) + 1
-        return out
+        pos, text, first = 0, line, True
+        while True:
+            start = pos
+            statements = self.split_on_exclamation(text)
+            for k, stmt in enumerate(statements):
+                head = first and not k
+                if self.dri:
+                    # The statement to the end of the line, as
+                    # process_line() and _process_statements() hand it to
+                    # _dri_call_line().
+                    tail = line[start:] if head else '        ' + line[start:].lstrip()
+                    found = self._dri_macro_call(tail, bang_ends=not head)
+                    if (found is None and head
+                            and self.parse_line(line)[1] in self.macros):
+                        # A call whose `!' is M80's quote in its arguments:
+                        # the line is one statement.
+                        return [(0, line)]
+                    if found is not None:
+                        call, rest, _ = found
+                        out.append((start, call))
+                        if rest is None:
+                            return out
+                        pos, text, first = len(line) - len(rest), rest, False
+                        break
+                out.append((start, stmt if head else '        ' + stmt.strip()))
+                # split_on_exclamation() drops only the `!' between them.
+                start += len(stmt) + 1
+            else:
+                return out
 
     def _local_names(self, stmt):
         """The names a LOCAL statement declares, or None if `stmt' is no

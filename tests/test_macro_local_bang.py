@@ -122,3 +122,36 @@ def test_a_name_read_before_its_local_on_the_line(body, error):
         ok, _, errors = _assemble(source, dri=dri)
         assert not ok, dri
         assert any(error.upper() in e.upper() for e in errors), (dri, errors)
+
+
+# With --dri a LOCAL that MAC and RMAC leave out after a macro call
+# (_dri_macro_call()) declares nothing: in `NN! LOCAL QQ', with NN a macro
+# of no parameters, the `!' is text of the call and the rest of the line is
+# left out, as it is in `NOP! NN! LOCAL QQ'.  um80 --dri warned that the
+# LOCAL was left out, but made QQ local all the same (09 01 01 01 09 01 05
+# 01), where MAC and RMAC flag the second QQ P.  Expanded once, QQ is the
+# label outside the macro in both (MAC: 09 01 01 01).
+NN = "nn\tmacro\n\tdb\t9\n\tendm\n"
+
+
+@pytest.mark.parametrize('line', ["\tnn! local qq\n", "\tnop! nn! local qq\n"])
+def test_dri_a_local_left_out_after_a_macro_call(line):
+    ok, _, errors = _assemble(_source(line, NN), dri=True)
+    assert not ok
+    assert any("Symbol 'QQ' multiply defined" in e for e in errors), errors
+
+
+def test_dri_a_local_left_out_after_a_macro_call_expanded_once():
+    source = (NN + "mm\tmacro\n\tnn! local qq\nqq:\tdb\t1\n\tdw\tqq\n\tendm\n"
+              "\taseg\n\torg\t100h\n\tmm\n\tend\n")
+    asm = Assembler(dri=True)
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, 't.asm')
+        with open(p, 'w') as f:
+            f.write(source)
+        assert asm.assemble(p), asm.errors
+        code = bytes(it[1] for it in RELReader(asm.output.get_bytes()).read_all()
+                     if it[0] == 'ABSOLUTE_BYTE')
+    assert code.hex() == '09010101'
+    assert any("'local qq' after a macro call is left out" in w.lower()
+               for w in asm.warnings), asm.warnings
