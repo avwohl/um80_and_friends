@@ -215,7 +215,9 @@ Only an argument that starts with `%` is a value, as in MAC; M80 also reads
 `%` in an `IRP` list, which MAC reads as text. A `%` expression runs to its
 comma, blanks and all, in all three (`MM %1 + 1,5` passes 2 and 5), and a `<`
 or a `>` in it is MAC's relational operator, not a bracket (`MM %1<2,3`
-passes 65535 and 3; M80 flags the `<`). A `%` with no expression after it
+passes 65535 and 3; M80 flags the `<`), and `<>` is RMAC's `NE`: `MM %1<>2`
+passes 65535, as RMAC does, where MAC 2.0 flags `<>` `E`, as it does
+everywhere (and passes 0). A `%` with no expression after it
 is 0 in M80 (`MM %` passes 0), and MAC and RMAC flag it `E`: with `--dri` it
 is an error. An item of
 an `IRP` list ends at a comma, as in MAC, and a `;` in the list, outside a
@@ -227,7 +229,19 @@ and not in a way um80 follows: `<A ,B ,C>` is A, B and an empty item in MAC,
 and RMAC; RMAC stops at `<A ,B>` and writes nothing, without a word; MAC
 flags `<A B>` and `<A >` (RMAC stops), and both flag `<%1 + 1,5>`. So with
 `--dri` such a blank is an error. M80 ends an item at a `,`, a `;`, a blank or a tab, so there `<A;B>`
-and `<A B>` are A and B, and `<A ,B>` is A, an empty item and B. An `IRPC` with an
+and `<A B>` are A and B, and `<A ,B>` is A, an empty item and B. MAC and
+RMAC read the list of an `IRP`, and the string of an `IRPC`, as a macro
+call's argument: the `<` that opens a group and the `>` that closes it go,
+wherever they are, what is outside them is text of the list too, to a blank,
+a tab, a comma or a `!` outside any group, and a comma inside the outer
+group separates items. So `IRP X,<1,2>3<4,5>` goes round 1, 234 and 5, `IRP
+X,A<1,2>` A1 and 2, `IRP X,<1>>2` `1>2`, `IRP X,<"A>B">` the one item
+`"AB">`, and `IRPC X,A<B>C` A, B and C. M80 ends the list at the `>` that
+matches its `<` and ignores the rest of the line (1 and 2; A; 1; `"A>B"`, a
+string there; and A, `<`, B, `>`, C), and so does um80 without `--dri`, with
+a warning. Text after the blank or the comma that ends the list, but for a
+`!` statement, is an error with `--dri`, as MAC and RMAC flag it `S` (`IRP
+X,<1,2>,3`, `IRP X,1,2`, `IRPC X,AB CD`); M80 ignores it, and um80 warns. An `IRPC` with an
 empty string goes round once, with its parameter empty, as in MAC; M80 does so
 only where a macro's empty argument made the string empty. A label on the
 `ENDM` that ends a body is defined where the body ends, each time, as in MAC

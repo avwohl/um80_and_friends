@@ -107,6 +107,16 @@ genuine tools under cpmemu, and each has a regression test that fails on
   `IRPC X,A`, 8AH, `B`. um80 --dri reported a line feed outside a string, and
   took a LF right after the macro's name, or in an `IRPC` string, for a
   blank. Without `--dri` an 8AH there is left out, as in M80 (41 42).
+- um80 assembler: with `--dri`, the list of an `IRP` and the string of an
+  `IRPC` are read as MAC and RMAC read them, as a macro call's argument: a
+  group's brackets go wherever they are, what is outside them is text of the
+  list too, and a comma inside the outer group separates items. `IRP
+  X,<"A>B">` is the one item `"AB">`, `IRP X,<1,2>3` goes round 1 and 23,
+  `IRP X,A<1,2>` A1 and 2, and `IRPC X,A<B>C` A, B and C. um80 --dri ended
+  the list at the `>` that matches its `<`, as M80 does, and warned about
+  the rest (`"A`; 1 and 2; A; A, `<`, B, `>`, C). Text after the list, but
+  for a `!` statement, is an error, as MAC and RMAC flag it S (`IRP
+  X,<1,2>,3`, `IRPC X,AB CD`; `IRP X,1,2`, which went round 1 and 2).
 
 ## [0.3.51] - 2026-09-26
 

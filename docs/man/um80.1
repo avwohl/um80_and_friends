@@ -68,7 +68,11 @@ after it is an error (MACRO-80 passes 0); an item of
 an IRP list ends at a comma, a blank or a tab is skipped at the start of
 an item, and one anywhere else, or a \fB;\fR, in the list is an error, as
 MAC and RMAC read it otherwise or flag it
-(MACRO-80 ends an item at a comma, a \fB;\fR, a blank or a tab); the
+(MACRO-80 ends an item at a comma, a \fB;\fR, a blank or a tab); the list
+of an IRP and the string of an IRPC are read as a macro argument, a group's
+brackets going wherever they are (\fBIRP X,<1,2>3\fR is 1 and 23, where
+MACRO-80 ends the list at the \fB>\fR), and text after the list is an
+error; the
 arguments of a macro call end at a blank after one, and text after it
 other than a comma is an error (MACRO-80 reads the blank as a comma); a
 \fB"\fR in a macro call's arguments or an IRP list is text, not a quote; an IF that

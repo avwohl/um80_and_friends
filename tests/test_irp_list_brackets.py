@@ -246,3 +246,61 @@ def test_exitm_in_a_repeat_in_a_macro(source, expect):
     asm, rel = _asm(source)
     assert _bytes(rel).hex() == expect
     assert not any('Unterminated REPT' in w or 'Unterminated IRP' in w for w in asm.warnings)
+
+
+# DRI's MAC 2.0 and RMAC 1.1 read the list as a macro call's argument: the
+# `<' that opens a group and the `>' that closes it go wherever they are,
+# what is outside them is text of the list too, to a blank, a tab, a comma
+# or a `!' outside any group, and a comma inside the outer group separates
+# items.  um80 --dri read it as M80 does, above.  Each body is `DB
+# 0EEH,'&X'', and the bytes are MAC's and RMAC's under cpmemu (M80's in the
+# comment).
+
+def _dri(source):
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "t.asm")
+        with open(p, "w") as f:
+            f.write(source)
+        asm = Assembler(dri=True)
+        ok = asm.assemble(p)
+        return ok, _bytes(asm.output.get_bytes()) if ok else b'', \
+            [e.message for e in asm.errors]
+
+
+MAC_LISTS = [
+    ('irp\tx,<"A>B">', 'ee22414222' '3e'),          # M80: "A>B"
+    ('irp\tx,<"A,B>C">', 'ee2241' 'ee4243223e'),    # M80: "A,B>C"
+    ('irp\tx,<1,2>3', 'ee31' 'ee3233'),             # M80: 1, 2
+    ('irp\tx,<1,2>3<4,5>', 'ee31' 'ee323334' 'ee35'),
+    ('irp\tx,<1>>2', 'ee313e32'),                   # M80: 1
+    ('irp\tx,<1>2>', 'ee31323e'),
+    ('irp\tx,<1><2>', 'ee3132'),
+    ('irp\tx,A<1,2>', 'ee4131' 'ee32'),             # M80: A
+    ('irp\tx,<1,2>3 ;c', 'ee31' 'ee3233'),
+    ('irp\tx,12', 'ee3132'),
+    ('irp\tx,<<1,2>,3>', 'ee312c32' 'ee33'),        # all three
+    ('irp\tx,<1,<2,3>>', 'ee31' 'ee322c33'),
+    ('irpc\tx,<"A>B">', 'ee22' 'ee41' 'ee42' 'ee22' 'ee3e'),   # M80: " A
+    ('irpc\tx,A<B>C', 'ee41' 'ee42' 'ee43'),        # M80: A < B > C
+    ('irpc\tx,<A><B>', 'ee41' 'ee42'),              # M80: A
+    ('irpc\tx,<A>>B', 'ee41' 'ee3e' 'ee42'),
+    ('irpc\tx,<AB>C', 'ee41' 'ee42' 'ee43'),
+    ('irpc\tx,<<A>>', 'ee3c' 'ee41' 'ee3e'),        # all three
+    ('irpc\tx,<A,B>', 'ee41' 'ee2c' 'ee42'),
+]
+
+
+@pytest.mark.parametrize('line,mac', MAC_LISTS)
+def test_dri_list_as_mac_reads_it(line, mac):
+    ok, code, errors = _dri(f"\t{line}\n\tdb\t0eeh,'&x'\n\tendm\n\tend\n")
+    assert ok, errors
+    assert code.hex() == mac
+
+
+@pytest.mark.parametrize('line', ['irp\tx,<1,2>,3', 'irp\tx,<1,2> 3', 'irp\tx,1,2',
+                                  'irpc\tx,AB CD', 'irpc\tx,AB,CD'])
+def test_dri_text_after_the_list_is_an_error(line):
+    # MAC and RMAC flag it S, and leave it out.
+    ok, _, errors = _dri(f"\t{line}\n\tdb\t0eeh,'&x'\n\tendm\n\tend\n")
+    assert not ok
+    assert any('MAC and RMAC flag it S' in e for e in errors), errors

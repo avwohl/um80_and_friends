@@ -4426,13 +4426,16 @@ class Assembler:
                 self.error("IRP requires parameter and list")
                 return True
             param = ops[0].strip().upper()
-            inner = self.repeat_list(operator, operands)
-            if inner is None:
-                # No <...>: the rest of the operands are the list (M80
-                # wants the brackets; um80 takes the list without them).
-                values = ops[1:]
+            if self.dri:
+                values = self.irp_items(self.mac_repeat_list(operator, operands))
             else:
-                values = self.irp_items(inner)
+                inner = self.repeat_list(operator, operands)
+                if inner is None:
+                    # No <...>: the rest of the operands are the list (M80
+                    # wants the brackets; um80 takes the list without them).
+                    values = ops[1:]
+                else:
+                    values = self.irp_items(inner)
             if not self.dri:
                 # M80 reads an item as it reads a macro argument, `%' and
                 # all: `IRP X,<%E,2>' iterates over E's value then, and 2.
@@ -4454,7 +4457,8 @@ class Assembler:
                 self.error("IRPC requires parameter and string")
                 return True
             param = ops[0].strip().upper()
-            chars = self.repeat_list(operator, operands)
+            chars = self.mac_repeat_list(operator, operands) if self.dri \
+                else self.repeat_list(operator, operands)
             if chars is None:
                 # No <...>: the string ends at a blank or a comma.
                 text = operands.split(',', 1)[1].strip(' \t')
@@ -4522,6 +4526,64 @@ class Assembler:
         if self.pass_num == 2:
             self.warning(f"{operator} list has no closing '>' (M80: Q)")
         return rest[1:]
+
+    def mac_repeat_list(self, operator, operands):
+        """--dri: the list of an IRP, or the string of an IRPC, as MAC and
+        RMAC read it: the text of its items, as irp_items() reads the text
+        inside <...>, or the characters of the string.
+
+        They read it as a macro call's argument: a `<' that opens a group
+        and the `>' that closes it go, wherever they are, and what is
+        outside them is text of the list too, to a blank, a tab, a comma or
+        a `!' outside any group; a comma inside the outer group separates
+        items.  `IRP X,<1,2>3<4,5>' goes round 1, 234 and 5, `IRP X,A<1,2>'
+        A1 and 2, `IRP X,<1>>2' 1>2 (a `>' with no `<' is text), `IRP
+        X,<"A>B">' the one item `"AB">' (a `"' is text), `IRPC X,A<B>C' A, B
+        and C, and `IRPC X,<A>>B' A, `>' and B.  MACRO-80 ends the list at
+        the `>' that matches its `<' and ignores the rest of the line
+        (repeat_list()), and so did um80 --dri: `IRP X,<"A>B">' went round
+        `"A'.  Text after the blank or the comma that ends the list, but
+        for a `!' statement, is an error, as MAC and RMAC flag it S (`IRP
+        X,<1,2>,3', `IRP X,1,2', `IRPC X,AB CD'); um80 --dri warned, or
+        went round 1 and 2 for `IRP X,1,2'.
+        """
+        text = operands.split(',', 1)[1].lstrip(' \t') if ',' in operands else ''
+        irp = operator == 'IRP'
+        out, depth, i, n = [], 0, 0, len(text)
+        while i < n:
+            ch = text[i]
+            if irp and depth and ch == '!' and i + 1 < n:
+                out.append(text[i:i + 2])       # M80's quote, as irp_items()
+                i += 2
+                continue
+            if irp and self._starts_argument_string(text, i):
+                j = self._string_end(text, i)
+                out.append(text[i:j])
+                i = j
+                continue
+            if ch == '<':
+                depth += 1
+                if depth == 1:
+                    i += 1
+                    continue
+            elif ch == '>' and depth:
+                depth -= 1
+                if not depth:
+                    i += 1
+                    continue
+            elif not depth and ch in ' \t,!':
+                break
+            out.append(ch)
+            i += 1
+        if depth and self.pass_num == 2:
+            self.warning(f"{operator} list has no closing '>' (MAC: V, M80: Q)")
+        tail = text[i:].lstrip(' \t')
+        if tail.startswith('!'):
+            self.repeat_line_tail = tail[1:]
+        elif tail:
+            self.error(f"'{tail}' after the {operator} list '{text[:i]}': MAC and"
+                       " RMAC flag it S and leave it out")
+        return ''.join(out)
 
     def irp_items(self, inner):
         """The items of an IRP list, from the text inside its <...>.
