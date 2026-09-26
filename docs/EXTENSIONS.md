@@ -143,11 +143,9 @@ The `$` characters are stripped during parsing and do not affect the numeric val
 
 `um80 --dri` reads a source the way DRI's MAC and RMAC read it where they
 differ from MACRO-80, in the ways listed here. It does not yet follow MAC in
-two: `IF` (MAC and RMAC take it as true only when bit 0 of the value is set,
-so `IF 2` is false; here, as in M80, any value but 0 is true), and a `MACLIB`
-library (MAC and RMAC read it in pass 1 only and assemble none of its code
-or data; here it is assembled as an `INCLUDE` file). No DRI source in the
-tests depends on either. It changes these things:
+one: a `MACLIB` library (MAC and RMAC read it in pass 1 only and assemble
+none of its code or data; here it is assembled as an `INCLUDE` file). No DRI
+source in the tests depends on it. It changes these things:
 
 **A `$` inside a name is ignored.** DRI's manuals: "All characters are
 significant in an identifier, except for the embedded dollar sign ($) which
@@ -330,6 +328,15 @@ follows: `HIGH 1234H OR 0F00H` is `HIGH(1F34H)`, 1FH; `HIGH(100H)+1` is
 them (12H OR 0F00H, 2, 03H), and so does um80 without `--dri`. MAC's order,
 highest first: `* / MOD SHL SHR`, `+ -`, `EQ LT LE GT GE NE` (and `= < <= >
 >= <>`), `NOT`, `AND`, `OR XOR`, `HIGH LOW`.
+
+**An `IF` is true when bit 0 of its value is set,** as in MAC and RMAC:
+`IF 2`, `IF 100H`, `IF 0FFFEH` and `IF NOT 1` are false, and `IF 1`, `IF 3`
+and `IF -1` true. M80 takes any value but 0 as true, and so does um80
+without `--dri`. A relation is 0 or 0FFFFH in all three, so `IF X EQ 2` means
+the same everywhere; `IF X AND 2` does not. MAC has no `IFT`, `IFE`, `IFF`,
+`COND`, `IF1`, `IF2`, `IFDEF`, `IFNDEF`, `IFB`, `IFNB`, `IFIDN` or `IFDIF` (it
+reads `IFT 2` as a label, and flags the `ELSE` and `ENDIF` after it `B`); um80
+keeps them with `--dri`, with M80's meaning (`IFT 2` is true).
 
 **A two-character string used as a value has its first character in the
 low byte,** as in MAC and RMAC: `'AB'` is 4241H, so `DW 'AB'` is 41 42, `LXI
@@ -974,6 +981,7 @@ defined global" but wrote the output and exited 0.
 | `=` `<` `<=` `>` `>=` `<>` relational operators | ✗ | `--dri` | ✓ | ✗ |
 | `HIGH`/`LOW` of all that follows (`HIGH(X)+1` is `HIGH(X+1)`) | ✗ | `--dri` | ✓ | ✗ |
 | `'AB'` is 4241H (first character in the low byte) | ✗ | `--dri` | ✓ | ? |
+| `IF` true only when bit 0 is set (`IF 2` false) | ✗ | `--dri` | ✓ | ? |
 | Statement of values (`LAB: 5,6` is `DB`) | ✓ | ✓ | ✗ | ✗ |
 | EQU external+offset | ✗ | ✓ | ✗ | ✓ |
 | `__END__` symbol | ✗ | ✓ | ✗ | ✗ |

@@ -16,6 +16,11 @@ genuine tools under cpmemu, and each has a regression test that fails on
   42, `LXI H,'AB'` 21 41 42, `DB ('AB') SHR 8` 42, and `IF 'AB' EQ 4241H`
   is true. um80 --dri gave M80's order (42 41, 21 42 41, 41), without a
   word. Without `--dri` it is still M80's, `'AB'` = 4142H.
+- um80 assembler: with `--dri`, an `IF` is true only when bit 0 of its
+  value is set, as in MAC and RMAC: `IF 2`, `IF 100H`, `IF 0FFFEH` and `IF
+  NOT 1` are false. um80 --dri took any value but 0 as true, as M80 does,
+  without a word. `IFT`, `IFE`, `IF1`, `IFDEF` and the other `IF`s MAC does
+  not have (MAC reads `IFT 2` as a label) keep M80's meaning with `--dri`.
 
 ## [0.3.51] - 2026-09-26
 

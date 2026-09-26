@@ -4030,14 +4030,20 @@ class Assembler:
             self.ended = True
             return True
 
-        # Conditional assembly
+        # Conditional assembly.  MAC and RMAC (--dri) take an IF as true
+        # only when bit 0 of its value is set: `IF 2', `IF 100H', `IF
+        # 0FFFEH' and `IF NOT 1' are false there, and true in M80, which
+        # takes any value but 0.  A relation is 0 or 0FFFFH in all three.
+        # MAC has no IFT, IFE, IF1, IFDEF, IFB, ... (it reads IFT for a
+        # label, and flags the ELSE and ENDIF after it B); um80 keeps them,
+        # with M80's meaning, with --dri too.
         if operator == 'IF' or operator == 'IFT':
             if self.cond_false_depth > 0:
                 self.cond_false_depth += 1
             else:
                 val = self.number_operand(ops[0] if ops else '0',
                                           operator).value
-                if val == 0:
+                if (not val & 1) if self.dri and operator == 'IF' else val == 0:
                     self.cond_false_depth = 1
             self.cond_stack.append(operator)
             return True
