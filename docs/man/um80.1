@@ -228,7 +228,9 @@ End macro definition.
 .TP
 .B LOCAL \fIsymbol\fR[,\fIsymbol\fR]...
 Declare local symbols within a macro.  A LOCAL after a \fB!\fR declares them
-too (\fBNOP! LOCAL QQ\fR, \fBLOCAL QQ! NOP\fR), as in MAC.
+too (\fBNOP! LOCAL QQ\fR, \fBLOCAL QQ! NOP\fR), as in MAC, for the
+statements after it and the lines after it: in \fBLXI H,QQ! LOCAL QQ\fR the
+LXI reads the QQ outside the macro.
 .TP
 .B EXITM
 Exit macro expansion early.

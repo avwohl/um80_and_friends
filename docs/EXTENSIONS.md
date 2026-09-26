@@ -92,11 +92,18 @@ statement starts after it: `NOP ;save! INX H` is two statements (see
 - Works with all instructions and most directives. An `EXITM` after a `!`
   ends the macro expansion or the repetition there, as one at the start of
   a line does (`NOP! EXITM! DB 5` assembles the `NOP` only). A `LOCAL` in a
-  macro body declares its names wherever it is on the line, as in MAC and
-  RMAC: `NOP! LOCAL QQ`, `LOCAL QQ! NOP` and `NOP! LOCAL QQ! NOP` (and with
+  macro body is a statement wherever it is on the line, as in MAC and RMAC:
+  `NOP! LOCAL QQ`, `LOCAL QQ! NOP` and `NOP! LOCAL QQ! NOP` (and with
   `--dri`, where a `!` ends a comment, `LOCAL QQ ;c! NOP` and `MM ;c! LOCAL
-  QQ`). M80 reads `LOCAL QQ! NOP` as `LOCAL QQ` and nothing more, and flags
-  `NOP! LOCAL QQ`, where `QQ` is not local.
+  QQ`) declare `QQ`. As in MAC and RMAC it declares its names for what
+  follows it, the statements after it on the line and the lines after it: a
+  statement before it on the line reads the name as it was. With `QQ EQU 7`
+  outside the macro, `MVI A,QQ! LOCAL QQ! LXI H,QQ` is 3E 07 and the local
+  `QQ`'s address; `LXI H,QQ! LOCAL QQ` with no `QQ` outside is an undefined
+  symbol (MAC: U), and `QQ: NOP! LOCAL QQ` defines the `QQ` outside, so a
+  second expansion defines it twice (MAC: P). M80 reads `LOCAL QQ! NOP` as
+  `LOCAL QQ` and nothing more, and flags `NOP! LOCAL QQ`, where `QQ` is not
+  local.
 - A macro-invocation line is **not** split on `!`. There, `!` retains its M80
   meaning of quoting the next character in the argument list (e.g.
   `head FOO,!!CF` passes the name `!CF`, and `!,` passes a literal comma), so

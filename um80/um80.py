@@ -5908,23 +5908,25 @@ class Assembler:
                 break
             # The LOCAL statements of the line, which may be any of the
             # statements a `!' separates (_local_names()).  A line of LOCALs
-            # only is not assembled.
+            # only is not assembled.  A LOCAL declares its names for the
+            # statements after it and the lines after it: one before it on
+            # the line reads the name as it was, as in MAC and RMAC (`cuts').
             label, op, opnds, comment = self.parse_line(body_line)
             has_local = other = False
-            for stmt in self._body_line_statements(body_line):
+            cuts = []
+            for start, stmt in self._body_line_statements(body_line):
                 names = self._local_names(stmt)
                 if names is None:
                     other = other or any(self.parse_line(stmt)[:3])
                 else:
                     has_local = True
+                    if other and not local_syms.issuperset(names):
+                        cuts.append((start, set(local_syms)))
                     local_syms.update(names)
             if has_local and not other:
                 continue
-            # Parameters and LOCAL names, in one pass, as M80 reads a LOCAL
-            # name as a parameter: an argument's text is not read again.
-            names = {sym: sym + local_suffix for sym in local_syms}
-            names.update(subst)
-            expanded = self.substitute_macro_params(body_line, names)
+            expanded = self._substitute_body_line(body_line, subst, local_syms,
+                                                  local_suffix, cuts)
 
             if (op and op.upper() == 'EXITM' and self.cond_false_depth == 0
                     and not self.repeat_stack and self.collecting_macro is None):
@@ -5962,16 +5964,46 @@ class Assembler:
 
         self.macro_level -= 1
 
+    def _substitute_body_line(self, line, subst, local_syms, suffix, cuts):
+        """A macro body line with its parameters and LOCAL names replaced.
+
+        Parameters and LOCAL names are replaced in one pass, as M80 reads a
+        LOCAL name as a parameter: an argument's text is not read again.
+        `cuts' are (where, names) for each LOCAL after a `!' that declares
+        a name the line has not: the text before it is read with the LOCAL
+        names declared before it.  In MAC and RMAC `LXI H,QQ! LOCAL QQ' is
+        the QQ outside the macro, and `QQ: NOP! LOCAL QQ' defines it: a
+        second expansion is a label defined twice (P).  um80 read the whole
+        line with the names, so it was the local QQ, without a word.
+        """
+        def table(syms):
+            names = {sym: sym + suffix for sym in syms}
+            names.update(subst)
+            return names
+        pieces = []
+        pos = 0
+        for where, before in cuts:
+            pieces.append(self.substitute_macro_params(line[pos:where], table(before)))
+            pos = where
+        pieces.append(self.substitute_macro_params(line[pos:], table(local_syms)))
+        return ''.join(pieces)
+
     def _body_line_statements(self, line):
         """The statements of a macro body line, as process_line() will read
-        them where it is expanded: the `!' separates them, and with --dri a
-        `!' ends a comment too; a macro call's line is one statement without
-        --dri, where `!' is M80's quote in its arguments.  Each after the
-        first has blanks in front, as _process_statements() reads it."""
+        them where it is expanded, each with where it starts in the line:
+        the `!' separates them, and with --dri a `!' ends a comment too; a
+        macro call's line is one statement without --dri, where `!' is M80's
+        quote in its arguments.  Each after the first has blanks in front,
+        as _process_statements() reads it."""
         if '!' not in line or (not self.dri and self._line_invokes_macro(line)):
-            return [line]
-        statements = self.split_on_exclamation(line)
-        return statements[:1] + ['        ' + stmt.strip() for stmt in statements[1:]]
+            return [(0, line)]
+        out = []
+        start = 0
+        for k, stmt in enumerate(self.split_on_exclamation(line)):
+            # split_on_exclamation() drops only the `!' between them.
+            out.append((start, stmt if not k else '        ' + stmt.strip()))
+            start += len(stmt) + 1
+        return out
 
     def _local_names(self, stmt):
         """The names a LOCAL statement declares, or None if `stmt' is no

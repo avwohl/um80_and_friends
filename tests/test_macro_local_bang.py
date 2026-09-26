@@ -78,3 +78,47 @@ def test_a_line_of_locals_only_is_not_assembled():
                                      dri=dri)
         assert ok, errors
         assert code.hex() == '010001010301'
+
+
+# A LOCAL declares its names for what follows it: the statements after it on
+# the line and the lines after it.  A statement before it on the line reads
+# the name as it was, in MAC and RMAC, which read a LOCAL as they come to it.
+# um80 declared the names for the whole line, so that statement read the
+# local name, without a word.  Each body is expanded twice (once for the
+# label); the bytes are MAC's and RMAC's under cpmemu, which flag none of
+# them, and M80's for the first two, which it flags O (it has no `!'
+# separator).  um80 reads the `!' in either mode.
+@pytest.mark.parametrize('pre,body,calls,mac', [
+    ("qq\tequ\t7\n", "\tlxi\th,qq! local qq\nqq:\tdb\t5\n", 2,
+     '2107000521070005'),
+    ("qq\tequ\t7\n", "\tjmp\tqq! local qq\nqq:\tnop\n", 2, 'c3070000c3070000'),
+    ("qq\tequ\t7\n", "\tmvi\ta,qq! local qq! lxi h,qq\nqq:\tdb\t5\n", 2,
+     '3e07210501053e07210b0105'),
+    ("rr\tequ\t9\n",
+     "\tlxi\th,rr! local qq! local rr! lxi d,qq\nqq:\tdb\t5\nrr:\tdb\t6\n", 2,
+     '2109001106010506210900110e010506'),
+    ('', "qq:\tnop! local qq\nqq:\tdb\t5\n\tlxi\th,qq\n", 1, '0005210101'),
+])
+def test_a_local_after_a_bang_is_not_read_before_it(pre, body, calls, mac):
+    source = (pre + "mm\tmacro\n" + body + "\tendm\n\taseg\n\torg\t100h\n"
+              + "\tmm\n" * calls + "\tend\n")
+    for dri in (True, False):
+        ok, code, errors = _assemble(source, dri=dri)
+        assert ok, (dri, errors)
+        assert code.hex() == mac, dri
+
+
+@pytest.mark.parametrize('body,error', [
+    # MAC and RMAC: U, as QQ is not local yet (M80: O, and QQ M).
+    ("\tlxi\th,qq! local qq\nqq:\tdb\t5\n", "Undefined symbol 'QQ'"),
+    ("\tdw\tqq! local qq\nqq:\tdb\t5\n", "Undefined symbol 'QQ'"),
+    # MAC and RMAC: P, the label QQ defined twice (M80: M).
+    ("qq:\tnop! local qq\n\tlxi\th,qq\n", "Symbol 'QQ' multiply defined"),
+    ("qq:\tnop! local qq\nqq:\tdb\t5\n\tlxi\th,qq\n", "Symbol 'QQ' multiply defined"),
+])
+def test_a_name_read_before_its_local_on_the_line(body, error):
+    source = "mm\tmacro\n" + body + "\tendm\n\taseg\n\torg\t100h\n\tmm\n\tmm\n\tend\n"
+    for dri in (True, False):
+        ok, _, errors = _assemble(source, dri=dri)
+        assert not ok, dri
+        assert any(error.upper() in e.upper() for e in errors), (dri, errors)

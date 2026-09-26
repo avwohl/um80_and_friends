@@ -58,8 +58,12 @@ genuine tools under cpmemu, and each has a regression test that fails on
   and `NOP! LOCAL QQ! NOP`, and with `--dri` `LOCAL QQ ;c! NOP`, `NOP ;c!
   LOCAL QQ` and `MM ;c! LOCAL QQ`. um80 read a body line for its first
   statement only, so a second expansion said "QQ multiply defined", and
-  `LOCAL QQ! NOP` declared `QQ! NOP` and left out the `NOP`. (M80 has no `!`
-  separator: it reads `LOCAL QQ! NOP` as `LOCAL QQ` alone.)
+  `LOCAL QQ! NOP` declared `QQ! NOP` and left out the `NOP`. As in MAC and
+  RMAC the names are declared for what follows the `LOCAL`, the statements
+  after it on the line and the lines after it: in `LXI H,QQ! LOCAL QQ` the
+  `LXI` reads the `QQ` outside the macro, and `QQ: NOP! LOCAL QQ` defines
+  that `QQ` (a second expansion is "QQ multiply defined", MAC's P). (M80 has
+  no `!` separator: it reads `LOCAL QQ! NOP` as `LOCAL QQ` alone.)
 - um80 assembler: with `--dri`, `END START` with `START` defined after the
   `END` takes no start address and is no error, as in MAC and RMAC, which
   read nothing after an `END`; so does any operand that reads a symbol not

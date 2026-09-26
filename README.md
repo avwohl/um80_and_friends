@@ -435,7 +435,7 @@ For more details on these extensions and compatibility notes, see [docs/EXTENSIO
 
 ## Testing
 
-The test suite (1299 tests) runs under `pytest`:
+The test suite (1308 tests) runs under `pytest`:
 
 ```bash
 pip install -e ".[dev]"
@@ -488,7 +488,7 @@ Digital Research's MAC 2.0 and RMAC 1.1:
 | `test_dri_string_value.py` | (DRI) A two-character string used as a value has its first character in the low byte with `--dri`, as in MAC and RMAC (`DW 'AB'` is 41 42), and in the high byte without, as in M80 (42 41); with `--dri` `DB "A"` is an error, as MAC and RMAC quote with `'` only |
 | `test_dri_if_value.py` | (DRI) With `--dri` an `IF` is true when bit 0 of its value is set, as in MAC and RMAC (`IF 2` and `IF NOT 1` are false), and without when it is not 0, as in M80; `IFT`, `IFE`, `COND` and the other `IF`s MAC does not have keep M80's meaning |
 | `test_maclib.py` | (DRI) `MACLIB NAME` reads `NAME.MAC`, as in M80, or with `--dri` `NAME.LIB`, as in MAC and RMAC, and then `NAME.MAC`; a file name is looked for as written, then in upper and in lower case; with `--dri` a library is read in pass 1 only, as in MAC and RMAC: its code and data are not assembled, its symbols keep their values of pass 1, a label its code moved is a phase error, and the sizes are the most pass 1 reached in each segment and `COMMON` block, those of a library that reserves data or `COMMON` space and goes back to the code segment too |
-| `test_macro_local_bang.py` | (DRI) A `LOCAL` after a `!` in a macro body (`NOP! LOCAL QQ`, `LOCAL QQ! NOP`, with `--dri` `NOP ;c! LOCAL QQ`) declares its names, as in MAC and RMAC |
+| `test_macro_local_bang.py` | (DRI) A `LOCAL` after a `!` in a macro body (`NOP! LOCAL QQ`, `LOCAL QQ! NOP`, with `--dri` `NOP ;c! LOCAL QQ`) declares its names, as in MAC and RMAC, for the statements after it on the line and the lines after it: a statement before it reads the name as it was (`LXI H,QQ! LOCAL QQ`) |
 | `test_directive_labels.py` | (DRI) A label on an `ORG` is the location before it, as in M80, or with `--dri` the location the `ORG` sets, as in MAC and RMAC; a label on an `IF`, `ELSE`, `ENDIF` or `EXITM` line is defined where the line before it was assembled, as in all three |
 | `test_m80_arithmetic.py` | (DRI) A unary sign applies to the term after it, before `* / MOD SHL SHR`, and `/` and `MOD` divide signed, as in M80 (`-1 SHR 8` is 00FFH, 8000H/2 0C000H); with `--dri` the sign applies to all of them and division is unsigned, as in MAC and RMAC; `x MOD 0` is `x` |
 | `test_listing_controls.py` | M80's listing controls (`.CREF`, `.XCREF`, `.LALL`, `.SFCOND`, `PAGE`, `$EJECT`, ...) assemble nothing |
