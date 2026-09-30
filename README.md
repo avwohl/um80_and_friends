@@ -44,18 +44,18 @@ ul80 -o program.com main.rel util.rel mylib.lib
 cpm program.com
 ```
 
-Each tool has many more options. [docs/tools.md](docs/tools.md) has a command summary for each tool.
+Each tool has many more options. [docs/tools.md](https://github.com/avwohl/um80_and_friends/blob/main/docs/tools.md) has a command summary for each tool.
 
 ## Documentation
 
-- [docs/tools.md](docs/tools.md): command summary, tools reference, file formats, installing the man pages
-- [docs/compatibility.md](docs/compatibility.md): compatibility notes, extended symbol names, DRI syntax extensions (summary)
-- [docs/EXTENSIONS.md](docs/EXTENSIONS.md): extensions beyond M80/L80, in full detail
-- [docs/testing.md](docs/testing.md): the test suite, the M80 compatibility tests, the mbasic2025 byte-for-byte test
-- [docs/mbasic2025.md](docs/mbasic2025.md): mbasic2025 built with um80/ul80 and with the genuine M80/L80
-- [docs/index.md](docs/index.md): quick reference, examples, troubleshooting
-- [docs/ISSUES.md](docs/ISSUES.md): open issues
-- [CHANGELOG.md](CHANGELOG.md): release history
+- [docs/tools.md](https://github.com/avwohl/um80_and_friends/blob/main/docs/tools.md): command summary, tools reference, file formats, installing the man pages
+- [docs/compatibility.md](https://github.com/avwohl/um80_and_friends/blob/main/docs/compatibility.md): compatibility notes, extended symbol names, DRI syntax extensions (summary)
+- [docs/EXTENSIONS.md](https://github.com/avwohl/um80_and_friends/blob/main/docs/EXTENSIONS.md): extensions beyond M80/L80, in full detail
+- [docs/testing.md](https://github.com/avwohl/um80_and_friends/blob/main/docs/testing.md): the test suite, the M80 compatibility tests, the mbasic2025 byte-for-byte test
+- [docs/mbasic2025.md](https://github.com/avwohl/um80_and_friends/blob/main/docs/mbasic2025.md): mbasic2025 built with um80/ul80 and with the genuine M80/L80
+- [docs/index.md](https://github.com/avwohl/um80_and_friends/blob/main/docs/index.md): quick reference, examples, troubleshooting
+- [docs/ISSUES.md](https://github.com/avwohl/um80_and_friends/blob/main/docs/ISSUES.md): open issues
+- [CHANGELOG.md](https://github.com/avwohl/um80_and_friends/blob/main/CHANGELOG.md): release history
 - Man pages: `man um80`, `man ul80`, `man ulib80`, `man ucref80`, `man ud80`, `man ux80`
 - Original Microsoft manuals, in the
   [retro_docs](https://github.com/avwohl/retro_docs/tree/main/um80_and_friends) archive:
@@ -66,7 +66,7 @@ Each tool has many more options. [docs/tools.md](docs/tools.md) has a command su
 
 ## License
 
-GPL-3.0-or-later. See [LICENSE](LICENSE).
+GPL-3.0-or-later. See [LICENSE](https://github.com/avwohl/um80_and_friends/blob/main/LICENSE).
 
 
 ## Related Projects
