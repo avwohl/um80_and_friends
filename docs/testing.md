@@ -1,6 +1,6 @@
 # Testing
 
-The test suite (1319 tests) runs under `pytest`:
+The test suite (1322 tests) runs under `pytest`:
 
 ```bash
 pip install -e ".[dev]"
@@ -31,6 +31,7 @@ Digital Research's MAC 2.0 and RMAC 1.1:
 | `test_z80_and_charconst.py` | `LD A,I`/`LD A,R` encoding, two-character constant byte order |
 | `test_linker_segments.py` | Absolute ASEG placement, mixed CSEG+ASEG, COMMON-only modules |
 | `test_linker_absolute_code.py` | A module's code placed above the absolute code loaded before it; absolute code overlapping anything is an error, or with `--allow-overlap` a warning and the byte loaded last in the image |
+| `test_ul80_rom.py` | ul80 ROM options: `--data-origin`, `--rom-data` and its `__DATA_*` symbols, `--bin`, `--fill`, `--rom-size`, `--ram-end`, `--ram-size`, `--min-stack`, hex load addresses, ASEG vectors with a CSEG; a full crt0 ROM link |
 | `test_linker_dupglobal.py` | A global two modules define is L80's `%Mult. Def. Global` warning and the first definition is used; with `--fatal-mult-def` an error |
 | `test_linker_loaded_over.py` | A byte loaded over a relocatable word or an item-12 chain word (an ORG back, a COMMON block declared again or shared) replaces that byte, as L80 relocates on loading |
 | `test_irp_list_brackets.py` | (DRI) An `IRP`/`IRPC` `<...>` list ends at its matching `>` (`IRPC C,<>>` is empty), as in M80; with `--dri` it is read as a macro argument, as in MAC and RMAC (`IRP X,<1,2>3` is 1 and 23); `!` in an `IRP`/`IRPC` line |

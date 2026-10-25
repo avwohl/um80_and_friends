@@ -32,6 +32,7 @@ ul80 --prl --extra 1000 program.rel # ...asking MP/M for 1000H more memory
 ul80 --spr program.rel              # MP/M .SPR/.RSP system page (linked at 0)
 ul80 --allow-overlap a.rel patch.rel # Absolute code over other code: a warning
 ul80 --fatal-mult-def a.rel b.rel   # A global defined twice fails the link
+ul80 --bin -p 68 -d F800 --rom-data --rom-size 8000 crt0.rel a.rel  # ROM image (docs/ul80_rom.md)
 ```
 
 ### Disassemble a COM file

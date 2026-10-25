@@ -51,6 +51,7 @@ Each tool has many more options. [docs/tools.md](https://github.com/avwohl/um80_
 - [docs/tools.md](https://github.com/avwohl/um80_and_friends/blob/main/docs/tools.md): command summary, tools reference, file formats, installing the man pages
 - [docs/compatibility.md](https://github.com/avwohl/um80_and_friends/blob/main/docs/compatibility.md): compatibility notes, extended symbol names, DRI syntax extensions (summary)
 - [docs/EXTENSIONS.md](https://github.com/avwohl/um80_and_friends/blob/main/docs/EXTENSIONS.md): extensions beyond M80/L80, in full detail
+- [docs/ul80_rom.md](https://github.com/avwohl/um80_and_friends/blob/main/docs/ul80_rom.md): ul80 options for ROM images (data origin, ROM data copy, raw binary, size checks)
 - [docs/testing.md](https://github.com/avwohl/um80_and_friends/blob/main/docs/testing.md): the test suite, the M80 compatibility tests, the mbasic2025 byte-for-byte test
 - [docs/mbasic2025.md](https://github.com/avwohl/um80_and_friends/blob/main/docs/mbasic2025.md): mbasic2025 built with um80/ul80 and with the genuine M80/L80
 - [docs/index.md](https://github.com/avwohl/um80_and_friends/blob/main/docs/index.md): quick reference, examples, troubleshooting

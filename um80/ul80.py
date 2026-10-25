@@ -115,7 +115,7 @@ class Linker:
 
     # Addresses the linker computes from the layout (absolute values, but
     # program addresses: they move when MP/M relocates the image).
-    LINKER_SYMBOLS = ('__END__', '__BSS_START', '__BSS_END', '__DATA_ROM', '__DATA_RAM', '__DATA_LEN', '__DATA_END')
+    LINKER_SYMBOLS = ('__END__', '__BSS_START', '__BSS_END')
 
     def __init__(self):
         self.modules = []
@@ -136,6 +136,19 @@ class Linker:
         self.code_base = 0x0103  # Default CP/M load address + 3 for JMP
         self.data_base = None  # Will be after code if not specified
         self.common_base = None  # After data
+
+        # ROM targets (--rom-data): the initial bytes of DSEG are stored in
+        # the image right after the code (load address) while every DSEG
+        # symbol is its RAM run address.  The caller sets rom_data.
+        self.rom_data = False
+        # A data origin was given (-d): the image is written as load
+        # segments, a gap is not written as zeros.
+        self.data_origin_given = False
+        self.rom_symbols = ('__DATA_ROM', '__DATA_RAM', '__DATA_LEN',
+                            '__DATA_END')
+        self.code_end = 0    # first address past the code and absolute code
+        self.data_total = 0  # bytes of DSEG of all modules
+        self.bss_end = 0     # first address past COMMON (end of RAM used)
 
         self.output = bytearray()
         self.output_base = 0
@@ -967,17 +980,41 @@ class Linker:
         self.globals['__END__'] = (0, max(end_addr, abs_top), ADDR_ABSOLUTE,
                                    True)
 
-        # ROM-target symbols (PATCH): load address of the initialised data
-        # image is the end of the code; run address is data_base.
+        # ROM-data symbols (--rom-data): the load address of the initial
+        # data image is the end of the code, the run address is data_base.
         self.code_end = max(loc, abs_top)
-        self.globals['__DATA_ROM'] = (0, self.code_end, ADDR_ABSOLUTE, True)
-        self.globals['__DATA_RAM'] = (0, self.data_base, ADDR_ABSOLUTE, True)
-        self.globals['__DATA_LEN'] = (0, total_data, ADDR_ABSOLUTE, True)
-        self.globals['__DATA_END'] = (0, self.data_base + total_data, ADDR_ABSOLUTE, True)
+        self.data_total = total_data
+        self.bss_end = end_addr
+        if self.rom_data:
+            for name, value in (
+                    ('__DATA_ROM', self.code_end),
+                    ('__DATA_RAM', self.data_base),
+                    ('__DATA_LEN', total_data),
+                    ('__DATA_END', self.data_base + total_data)):
+                self.globals[name] = (0, value, ADDR_ABSOLUTE, True)
 
         # BSS region = COMMON area (uninitialized data, zeroed by crt0)
         self.globals['__BSS_START'] = (0, self.common_base, ADDR_ABSOLUTE, True)
         self.globals['__BSS_END'] = (0, end_addr, ADDR_ABSOLUTE, True)
+
+    def _prepare_rom_data(self):
+        """Check what --rom-data needs and declare its linker symbols
+        (program addresses, like __END__).  False after an error."""
+        if self.data_base is None:
+            self.error("--rom-data needs --data-origin: the RAM address "
+                       "the initialised data runs at")
+            return False
+        for module in self.modules:
+            if any(module.common_data.values()):
+                self.error(f"Module {module.name}: a COMMON block with "
+                           "initial bytes cannot be stored in ROM with "
+                           "--rom-data (nothing copies it to RAM); put "
+                           "the initialised data in DSEG")
+                return False
+        for name in self.rom_symbols:
+            self.globals[name] = (0, 0, ADDR_ABSOLUTE, True)
+            self.moving.add(name)
+        return True
 
     def relocate_value(self, module, value, seg_type, block=None):
         """Relocate a value based on its segment type (and COMMON block)."""
@@ -1004,6 +1041,9 @@ class Linker:
     def link(self):
         """Link all loaded modules."""
         if self.load_failed:
+            return False
+
+        if self.rom_data and not self._prepare_rom_data():
             return False
 
         # Resolve aliased public symbols first (EQU external+offset made PUBLIC)
@@ -1193,28 +1233,101 @@ class Linker:
         # are already in the image to be overwritten.
         ok = self.apply_expressions()
         self.store_memry()
-        if getattr(self, 'rom_data', False):
-            self._split_lma()
         return ok
 
-    def _split_lma(self):
-        """PATCH: move the initialised-data bytes from their run address
-        (data_base, RAM) to the load address (end of code, ROM)."""
-        ob = self.output_base
-        n = sum(m.data_size for m in self.modules)
-        d0 = self.data_base - ob
-        code_len = self.code_end - ob
-        if d0 < code_len:
-            self.error('data origin overlaps code'); return
-        data = bytes(self.output[d0:d0 + n]) if d0 + n <= len(self.output) else bytes(self.output[d0:]).ljust(n, b'\0')
-        loaded = bytearray(1 for _ in range(0))
-        mask = bytearray(code_len)
-        for i in range(min(code_len, len(self.owner_mod))):
-            mask[i] = 1 if self.owner_mod[i] >= 0 else 0
-        code = bytes(self.output[:code_len]).ljust(code_len, b'\0')
-        self.output = bytearray(code + data)
-        self.loaded_mask = bytes(mask) + b'\x01' * n
-        self.owner_mod = self.owner_off = None
+    def rom_layout(self):
+        """True when the image is written as load segments (--rom-data
+        or a data origin): a gap is skipped, not written as zeros."""
+        return self.rom_data or self.data_origin_given
+
+    def load_segments(self):
+        """The image as [(load address, bytes)], in address order.
+
+        Every byte a module loaded is a segment byte, runs of them
+        joined; a gap between runs is no segment.  With --rom-data the
+        DSEG bytes move from their run address (RAM) to the load address,
+        the end of the code, as one more segment.  Without it the bytes
+        are where the symbols say.
+        """
+        base = self.output_base
+        data = self.output
+        owner = self.owner_mod
+        skip = None
+        if self.rom_data:
+            skip = (self.data_base, self.data_base + self.data_total)
+        segs = []
+        run = None
+        for i in range(len(data)):
+            addr = base + i
+            if owner[i] < 0 or (skip and skip[0] <= addr < skip[1]):
+                run = None
+                continue
+            if run is None:
+                run = (addr, bytearray())
+                segs.append(run)
+            run[1].append(data[i])
+        if self.rom_data and self.data_total:
+            lo = self.data_base - base
+            blob = bytearray(data[lo:lo + self.data_total]) if lo >= 0 \
+                else bytearray()
+            blob += bytes(self.data_total - len(blob))
+            segs.append((self.code_end, blob))
+            segs.sort(key=lambda seg: seg[0])
+            merged = []  # the data image can touch the run before it
+            for addr, blob in segs:
+                if merged and merged[-1][0] + len(merged[-1][1]) == addr:
+                    merged[-1][1].extend(blob)
+                else:
+                    merged.append((addr, bytearray(blob)))
+            segs = merged
+        return [(a, bytes(b)) for a, b in segs]
+
+    def image_span(self, origin):
+        """(first, end) of the load segments, `first' no higher than
+        `origin' (-p).  None when there is no byte."""
+        segs = self.load_segments()
+        if not segs:
+            return None
+        return min(origin, segs[0][0]), segs[-1][0] + len(segs[-1][1])
+
+    def check_limits(self, origin, rom_size=None, ram_end=None,
+                     min_stack=0):
+        """Error messages for an image bigger than the ROM, or data and
+        BSS (and the stack that must still fit) past the end of RAM."""
+        errors = []
+        span = self.image_span(origin)
+        if rom_size is not None and span:
+            first, end = span
+            if end - first > rom_size:
+                errors.append(
+                    f"ROM overflow: the image is {end - first} bytes "
+                    f"({first:04X}H-{end - 1:04X}H), the ROM is "
+                    f"{rom_size} bytes (ends at {first + rom_size:04X}H)")
+        if ram_end is not None and self.bss_end + min_stack > ram_end:
+            what = f"data and BSS end at {self.bss_end:04X}H"
+            if min_stack:
+                what += f", with a stack of {min_stack} bytes after them"
+            errors.append(
+                f"RAM overflow: {what}, RAM ends at {ram_end:04X}H "
+                f"({self.bss_end + min_stack - ram_end} bytes too many)")
+        return errors
+
+    def usage_summary(self, origin, rom_size=None, ram_end=None):
+        """One line: ROM and RAM use."""
+        span = self.image_span(origin)
+        rom = (span[1] - span[0]) if span else 0
+        text = f"ROM {rom}"
+        text += (f" of {rom_size} bytes, {rom_size - rom} free"
+                 if rom_size is not None else " bytes")
+        if self.rom_data:
+            text += f" (init data {self.data_total})"
+        text += f"; RAM {self.bss_end - self.data_base}"
+        text += (f" of {ram_end - self.data_base} bytes, "
+                 f"{ram_end - self.bss_end} free"
+                 if ram_end is not None else " bytes")
+        text += (f" (data {self.data_total}, bss "
+                 f"{self.bss_end - self.common_base})")
+        return text
 
     def _areas(self):
         """(what, module index or None, first, end) of each relocatable
@@ -1565,22 +1678,43 @@ class Linker:
             if remainder:
                 f.write(bytes(128 - remainder))
 
-    def save_bin(self, filename, fill=0xFF, size=None):
-        """PATCH: raw image, gaps and tail filled with `fill', padded to size."""
-        data = bytearray(self.output)
-        mask = getattr(self, 'loaded_mask', None)
-        if mask is None:
-            mask = bytes(1 if o >= 0 else 0 for o in self.owner_mod)
-        for i in range(len(data)):
-            if i < len(mask) and not mask[i]:
-                data[i] = fill
-        if size is not None:
-            data += bytes([fill]) * (size - len(data))
+    def save_bin(self, filename, origin, fill=0xFF, size=None):
+        """Save the raw image: no CP/M record padding.
+
+        It starts at `origin' (-p), or below it at the lowest byte
+        loaded, and ends at the highest byte of the load segments.  A gap
+        is `fill'.  With `size' the file is exactly that long, padded
+        with `fill'; a larger image is a LinkerError.
+        """
+        span = self.image_span(origin)
+        first, end = span if span else (origin, origin)
+        if size is not None and end - first > size:
+            raise LinkerError(f"ROM overflow: the image is {end - first} "
+                              f"bytes, the ROM is {size} bytes")
+        image = bytearray([fill]) * (size if size is not None
+                                     else end - first)
+        for addr, blob in self.load_segments():
+            image[addr - first:addr - first + len(blob)] = blob
         with open(filename, 'wb') as f:
-            f.write(data)
+            f.write(image)
 
     def save_hex(self, filename):
-        """Save as Intel HEX format."""
+        """Save as Intel HEX format.  With a ROM layout (--rom-data or a
+        data origin) each load segment is written at its load address and
+        a gap is skipped."""
+        if self.rom_layout():
+            with open(filename, 'w') as f:
+                for addr, blob in self.load_segments():
+                    for i in range(0, len(blob), 16):
+                        chunk = blob[i:i + 16]
+                        a = addr + i
+                        total = len(chunk) + (a >> 8) + (a & 0xFF) \
+                            + sum(chunk)
+                        f.write(f":{len(chunk):02X}{a:04X}00"
+                                f"{chunk.hex().upper()}"
+                                f"{(-total) & 0xFF:02X}\n")
+                f.write(':00000001FF\n')
+            return
         with open(filename, 'w') as f:
             addr = self.output_base
             data = bytes(self.output)
@@ -1739,6 +1873,11 @@ class Linker:
                 f.write(f"{addr:04X} {name}\n")
 
 
+def _hex_arg(text):
+    """A hex number as the options give it: E000, 0xE000."""
+    return int(text, 16)
+
+
 def main():
     parser = argparse.ArgumentParser(description='ul80 - LINK-80 compatible linker')
     parser.add_argument('-v', '--version', action='version', version=f'%(prog)s {__version__}')
@@ -1770,22 +1909,62 @@ def main():
     parser.add_argument('-p', '--origin', type=lambda x: int(x, 16) if not x.startswith(('0x', '0X', '0o', '0O', '0b', '0B')) else int(x, 0), default=None,
                        help='Program origin as hex (e.g., E000, 0xE000; default: 0 for SPR, 100 for PRL and COM)')
 
-    parser.add_argument('-d', '--data-origin', type=lambda x: int(x, 16), default=None,
-                       help='PATCH: run address of DSEG (LINK-80 /D:); COMMON follows it')
+    parser.add_argument('-d', '--data-origin', metavar='ADDR', type=_hex_arg,
+                        default=None,
+                        help='Address (hex) where DSEG is placed, COMMON '
+                             'after it (LINK-80 /D:; default: after the '
+                             'code)')
+    parser.add_argument('--common-origin', metavar='ADDR', type=_hex_arg,
+                        default=None,
+                        help='Address (hex) where COMMON (BSS) is placed '
+                             '(default: after DSEG)')
     parser.add_argument('--rom-data', action='store_true',
-                       help='PATCH: store the DSEG image after the code (load address) '
-                            'while symbols use --data-origin; defines __DATA_ROM/RAM/LEN/END')
-    parser.add_argument('--bin', action='store_true', help='PATCH: raw binary (no 128-byte pad), gaps filled')
-    parser.add_argument('--fill', type=lambda x: int(x, 16), default=0xFF, help='PATCH: fill byte (hex)')
-    parser.add_argument('--rom-size', type=lambda x: int(x, 16), default=None,
-                       help='PATCH: ROM size (hex); error if the image is larger; --bin pads to it')
-    parser.add_argument('--ram-end', type=lambda x: int(x, 16), default=None,
-                       help='PATCH: first address past RAM (hex, 10000 for top); error if data+BSS pass it')
+                        help='ROM image: store the initial bytes of DSEG '
+                             'after the code while its symbols are at '
+                             '--data-origin (RAM); defines __DATA_ROM, '
+                             '__DATA_RAM, __DATA_LEN, __DATA_END')
+    parser.add_argument('--bin', action='store_true',
+                        help='Raw binary output from the origin (-p): no '
+                             '128-byte padding, gaps are --fill')
+    parser.add_argument('--fill', metavar='BYTE', type=_hex_arg,
+                        default=0xFF,
+                        help='Fill byte (hex) of gaps and padding with '
+                             '--bin (default: FF)')
+    parser.add_argument('--rom-size', metavar='N', type=_hex_arg,
+                        default=None,
+                        help='ROM size (hex): --bin pads the image to N '
+                             'bytes; a larger image is an error')
+    parser.add_argument('--ram-end', metavar='ADDR', type=_hex_arg,
+                        default=None,
+                        help='First address (hex) past RAM (10000 for the '
+                             'top of memory): data and BSS past it are an '
+                             'error')
+    parser.add_argument('--ram-size', metavar='N', type=_hex_arg,
+                        default=None,
+                        help='Size of RAM (hex) from --data-origin: the '
+                             'same check as --ram-end')
+    parser.add_argument('--min-stack', metavar='N', type=_hex_arg, default=0,
+                        help='Bytes (hex) that must stay free after BSS for '
+                             'the stack (with --ram-end or --ram-size)')
+    parser.add_argument('--verbose', action='store_true',
+                        help='Print a one-line ROM and RAM usage summary')
 
     args = parser.parse_args()
 
+    if args.bin and args.hex:
+        parser.error('--bin and -x cannot be used together')
+    if args.ram_size is not None:
+        if args.data_origin is None:
+            parser.error('--ram-size needs --data-origin')
+        if args.ram_end is None:
+            args.ram_end = args.data_origin + args.ram_size
+    if args.min_stack and args.ram_end is None:
+        parser.error('--min-stack needs --ram-end or --ram-size')
+
     linker = Linker()
     linker.data_base = args.data_origin
+    linker.common_base = args.common_origin
+    linker.data_origin_given = args.data_origin is not None
     linker.rom_data = args.rom_data
     # Page-relocatable output shares one container format but two origins.
     #
@@ -1874,13 +2053,14 @@ def main():
                   "%Overlaying warning)", file=sys.stderr)
         sys.exit(1)
 
-    if args.rom_size is not None and linker.output_base + len(linker.output) > args.origin + args.rom_size:
-        print(f"Error: ROM overflow: image ends at {linker.output_base + len(linker.output):X}h, "
-              f"ROM ends at {args.origin + args.rom_size:X}h", file=sys.stderr)
-        sys.exit(1)
-    if args.ram_end is not None and linker.globals['__END__'][1] > args.ram_end:
-        print(f"Error: RAM overflow: data+BSS end at {linker.globals['__END__'][1]:X}h, "
-              f"RAM ends at {args.ram_end:X}h", file=sys.stderr)
+    limit_errors = linker.check_limits(
+        args.origin, args.rom_size, args.ram_end, args.min_stack)
+    if args.verbose or limit_errors:
+        print(linker.usage_summary(args.origin, args.rom_size, args.ram_end),
+              file=sys.stderr)
+    if limit_errors:
+        for msg in limit_errors:
+            print(f"Error: {msg}", file=sys.stderr)
         sys.exit(1)
 
     # Determine output filename
@@ -1889,6 +2069,8 @@ def main():
     else:
         if args.hex:
             ext = '.hex'
+        elif args.bin:
+            ext = '.bin'
         elif prl_output:
             ext = '.spr' if args.spr else '.prl'
         else:
@@ -1905,7 +2087,12 @@ def main():
             print(e, file=sys.stderr)
             sys.exit(1)
     elif args.bin:
-        linker.save_bin(str(output_path), args.fill, args.rom_size)
+        try:
+            linker.save_bin(str(output_path), args.origin, args.fill,
+                            args.rom_size)
+        except LinkerError as e:
+            print(e, file=sys.stderr)
+            sys.exit(1)
     else:
         linker.save_com(str(output_path))
 

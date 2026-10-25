@@ -73,6 +73,36 @@ ul80 \-S program.sym program.rel
 .fi
 .RE
 .TP
+.BI \-d " addr" ", " \-\-data\-origin " addr"
+Place DSEG at \fIaddr\fR (hex), COMMON after it (LINK-80 /D:).
+.TP
+.BI \-\-common\-origin " addr"
+Place COMMON (BSS) at \fIaddr\fR (hex).
+.TP
+.B \-\-rom\-data
+Store the initial bytes of DSEG in the image after the code; DSEG symbols keep
+their RAM addresses (needs \fB\-d\fR). Defines __DATA_ROM, __DATA_RAM,
+__DATA_LEN and __DATA_END. With \fB\-x\fR, each run of bytes is written at its
+load address and gaps are skipped.
+.TP
+.B \-\-bin
+Write a raw image from the origin, without the 128-byte CP/M padding.
+.TP
+.BI \-\-fill " byte"
+Fill byte (hex) of gaps and padding with \fB\-\-bin\fR (default FF).
+.TP
+.BI \-\-rom\-size " n"
+ROM size (hex). \fB\-\-bin\fR pads the image to \fIn\fR bytes; a larger image is an error.
+.TP
+.BI \-\-ram\-end " addr" ", " \-\-ram\-size " n"
+End (first address after) or size of RAM (hex); data and BSS past it are an error.
+.TP
+.BI \-\-min\-stack " n"
+Bytes (hex) that must stay free in RAM after BSS.
+.TP
+.B \-\-verbose
+Print a one-line ROM and RAM usage summary.
+.TP
 .BI \-p " origin"
 Set the program origin address. Default is 100 (hex), the standard CP/M transient
 program load address. Values are interpreted as hexadecimal by default (e.g., E000),

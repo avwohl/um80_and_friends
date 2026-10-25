@@ -2,6 +2,18 @@
 
 All notable changes to the um80 toolchain are documented here.
 
+## [Unreleased]
+
+### Added
+- ul80 ROM options (details in docs/ul80_rom.md): `-d/--data-origin` (LINK-80
+  `/D:`), `--common-origin`, `--rom-data` (the initial bytes of DSEG are stored
+  after the code, DSEG symbols stay at the RAM address, and `__DATA_ROM`,
+  `__DATA_RAM`, `__DATA_LEN`, `__DATA_END` are defined), `--bin` with `--fill`
+  and `--rom-size` (raw image, no 128-byte padding), `--ram-end`, `--ram-size`
+  and `--min-stack` (RAM overflow check), and `--verbose` (ROM and RAM usage
+  line). With `--rom-data` or `-d`, Intel HEX output uses load addresses and
+  skips gaps. Without these options the output is the same as before.
+
 ## [0.3.52] - 2026-09-26
 
 The 0.3.51 release gate found the differences below between um80 and the
