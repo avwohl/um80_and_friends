@@ -85,6 +85,9 @@ their RAM addresses (needs \fB\-d\fR). Defines __DATA_ROM, __DATA_RAM,
 __DATA_LEN and __DATA_END. With \fB\-x\fR, each run of bytes is written at its
 load address and gaps are skipped.
 .TP
+.B \-\-equ\-file \fIfile\fR
+Write every global as NAME EQU 0xxxxH, for a bank module to INCLUDE.
+.TP
 .B \-\-bin
 Write a raw image from the origin, without the 128-byte CP/M padding.
 .TP

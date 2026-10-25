@@ -146,6 +146,7 @@ class Linker:
         self.data_origin_given = False
         self.rom_symbols = ('__DATA_ROM', '__DATA_RAM', '__DATA_LEN',
                             '__DATA_END')
+        self.ram_end = None  # --ram-end: defines __RAM_END, limits BSS
         self.code_end = 0    # first address past the code and absolute code
         self.data_total = 0  # bytes of DSEG of all modules
         self.bss_end = 0     # first address past COMMON (end of RAM used)
@@ -1045,6 +1046,12 @@ class Linker:
 
         if self.rom_data and not self._prepare_rom_data():
             return False
+        if self.ram_end is not None:
+            # __RAM_END: first address past RAM (the crt0 takes SP from it;
+            # 10000H is the top of memory and reads as 0000H).
+            self.globals['__RAM_END'] = (0, self.ram_end & 0xFFFF,
+                                         ADDR_ABSOLUTE, True)
+            self.moving.add('__RAM_END')
 
         # Resolve aliased public symbols first (EQU external+offset made PUBLIC)
         # These need to be in globals before resolve_externals() checks references
@@ -1295,6 +1302,10 @@ class Linker:
         """Error messages for an image bigger than the ROM, or data and
         BSS (and the stack that must still fit) past the end of RAM."""
         errors = []
+        if self.rom_layout() and self.bss_end > 0x10000:
+            errors.append(
+                f"Address space overflow: data and BSS end at "
+                f"{self.bss_end:04X}H, past 10000H")
         span = self.image_span(origin)
         if rom_size is not None and span:
             first, end = span
@@ -1873,6 +1884,17 @@ class Linker:
                 f.write(f"{addr:04X} {name}\n")
 
 
+def save_equ_text(linker):
+    """EQU lines of every defined global, for a module of another image
+    (INCLUDE the file).  Names are upper case, values four hex digits."""
+    lines = []
+    for name, (_, _, _, is_defined) in sorted(linker.globals.items()):
+        if is_defined and linker.modules:
+            addr = linker._global_address(name)[0] & 0xFFFF
+            lines.append(f"{name}\tEQU\t0{addr:04X}H\n")
+    return ''.join(lines)
+
+
 def _hex_arg(text):
     """A hex number as the options give it: E000, 0xE000."""
     return int(text, 16)
@@ -1909,6 +1931,9 @@ def main():
     parser.add_argument('-p', '--origin', type=lambda x: int(x, 16) if not x.startswith(('0x', '0X', '0o', '0O', '0b', '0B')) else int(x, 0), default=None,
                        help='Program origin as hex (e.g., E000, 0xE000; default: 0 for SPR, 100 for PRL and COM)')
 
+    parser.add_argument('--equ-file', metavar='FILE', default=None,
+                        help='Write every global as NAME EQU 0xxxxH, for a '
+                             'module of another image (a bank) to INCLUDE')
     parser.add_argument('-d', '--data-origin', metavar='ADDR', type=_hex_arg,
                         default=None,
                         help='Address (hex) where DSEG is placed, COMMON '
@@ -1953,11 +1978,24 @@ def main():
 
     if args.bin and args.hex:
         parser.error('--bin and -x cannot be used together')
+    if args.rom_data and not (args.bin or args.hex):
+        parser.error('--rom-data needs --bin or -x: the initial data is '
+                     'stored away from its symbols, which only those '
+                     'outputs write')
+    if args.fill > 0xFF:
+        parser.error('--fill is one byte (00 to FF)')
+    if args.ram_end is not None and args.ram_end > 0x10000:
+        parser.error('--ram-end is at most 10000')
+    if args.bin and args.rom_size is not None and args.origin is None:
+        parser.error('--bin with --rom-size needs -p: the address of the '
+                     'first byte of the ROM (0 for a ROM at 0000H)')
     if args.ram_size is not None:
         if args.data_origin is None:
             parser.error('--ram-size needs --data-origin')
         if args.ram_end is None:
             args.ram_end = args.data_origin + args.ram_size
+            if args.ram_end > 0x10000:
+                parser.error('--data-origin plus --ram-size is past 10000')
     if args.min_stack and args.ram_end is None:
         parser.error('--min-stack needs --ram-end or --ram-size')
 
@@ -1966,6 +2004,7 @@ def main():
     linker.common_base = args.common_origin
     linker.data_origin_given = args.data_origin is not None
     linker.rom_data = args.rom_data
+    linker.ram_end = args.ram_end
     # Page-relocatable output shares one container format but two origins.
     #
     # A .SPR/.RSP is loaded at the base of its memory segment and MP/M adds the
@@ -2095,6 +2134,10 @@ def main():
             sys.exit(1)
     else:
         linker.save_com(str(output_path))
+
+    if args.equ_file:
+        with open(args.equ_file, 'w') as f:
+            f.write(save_equ_text(linker))
 
     # Save symbol file if requested
     if args.sym or args.sym_file:

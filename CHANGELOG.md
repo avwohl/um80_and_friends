@@ -13,6 +13,10 @@ All notable changes to the um80 toolchain are documented here.
   and `--min-stack` (RAM overflow check), and `--verbose` (ROM and RAM usage
   line). With `--rom-data` or `-d`, Intel HEX output uses load addresses and
   skips gaps. Without these options the output is the same as before.
+- ul80 `--equ-file FILE` (all globals as EQU lines for a bank to INCLUDE) and
+  the symbol `__RAM_END` (from `--ram-end` or `--ram-size`). `--rom-data` with
+  .com, .prl or .spr output, `--fill` above FF, `--bin --rom-size` without
+  `-p`, and data past 10000H with `-d` are now errors.
 
 ## [0.3.52] - 2026-09-26
 

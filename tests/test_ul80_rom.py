@@ -326,3 +326,245 @@ def test_default_com_unchanged_by_the_options():
         data = open(out, "rb").read()
         assert len(data) == 128 and data[:3] == bytes([0x3E, 1, 0xC9])
         assert "__data_rom" not in _syms(sym)
+
+
+# ---- repair pass: more cases, a run on a small Z80, bank symbols ----
+
+
+def _run_z80(rom, ram_fill=0xCC, steps=200000):
+    """Run a ROM image from 0000H on a Z80 that knows only the opcodes the
+    test crt0 and APP use.  ROM is read-only at 0000H-7FFFH.  Returns
+    (memory, registers) when HALT executes."""
+    mem = bytearray([ram_fill]) * 0x10000
+    mem[0:len(rom)] = rom
+    for i in range(len(rom), 0x8000):
+        mem[i] = 0xFF
+    rom_end = 0x8000
+    reg = {"A": 0, "B": 0, "C": 0, "H": 0, "L": 0, "D": 0, "E": 0,
+           "SP": 0, "CY": 0, "Z": 0}
+    pc = 0
+
+    def w8(addr, v):
+        addr &= 0xFFFF
+        if addr >= rom_end:
+            mem[addr] = v & 0xFF
+
+    def fetch():
+        nonlocal pc
+        v = mem[pc]
+        pc = (pc + 1) & 0xFFFF
+        return v
+
+    def fetch16():
+        lo = fetch()
+        return lo | (fetch() << 8)
+
+    def hl():
+        return reg["H"] << 8 | reg["L"]
+
+    def set_hl(v):
+        reg["H"], reg["L"] = (v >> 8) & 0xFF, v & 0xFF
+
+    def de():
+        return reg["D"] << 8 | reg["E"]
+
+    def rel():
+        d = fetch()
+        return d - 256 if d > 127 else d
+
+    for _ in range(steps):
+        op = fetch()
+        if op == 0xF3:                      # DI
+            pass
+        elif op == 0x76:                    # HALT
+            return mem, reg
+        elif op == 0xC3:
+            pc = fetch16()
+        elif op == 0xCD:                    # CALL
+            a = fetch16()
+            reg["SP"] = (reg["SP"] - 2) & 0xFFFF
+            w8(reg["SP"], pc & 0xFF)
+            w8(reg["SP"] + 1, pc >> 8)
+            pc = a
+        elif op == 0xC9:                    # RET
+            pc = mem[reg["SP"]] | mem[(reg["SP"] + 1) & 0xFFFF] << 8
+            reg["SP"] = (reg["SP"] + 2) & 0xFFFF
+        elif op == 0x31:
+            reg["SP"] = fetch16()
+        elif op == 0x01:
+            v = fetch16()
+            reg["B"], reg["C"] = v >> 8, v & 0xFF
+        elif op == 0x11:
+            v = fetch16()
+            reg["D"], reg["E"] = v >> 8, v & 0xFF
+        elif op == 0x21:
+            set_hl(fetch16())
+        elif op == 0x78:
+            reg["A"] = reg["B"]
+        elif op == 0xB1:                    # OR C
+            reg["A"] |= reg["C"]
+            reg["CY"] = 0
+            reg["Z"] = int(reg["A"] == 0)
+        elif op == 0xB7:                    # OR A
+            reg["CY"] = 0
+            reg["Z"] = int(reg["A"] == 0)
+        elif op == 0x28:
+            r = rel()
+            pc = (pc + r) & 0xFFFF if reg["Z"] else pc
+        elif op == 0x30:
+            r = rel()
+            pc = (pc + r) & 0xFFFF if not reg["CY"] else pc
+        elif op == 0x18:
+            r = rel()
+            pc = (pc + r) & 0xFFFF
+        elif op == 0xE5:                    # PUSH HL
+            reg["SP"] = (reg["SP"] - 2) & 0xFFFF
+            w8(reg["SP"], reg["L"])
+            w8(reg["SP"] + 1, reg["H"])
+        elif op == 0xE1:                    # POP HL
+            reg["L"] = mem[reg["SP"]]
+            reg["H"] = mem[(reg["SP"] + 1) & 0xFFFF]
+            reg["SP"] = (reg["SP"] + 2) & 0xFFFF
+        elif op == 0x36:
+            w8(hl(), fetch())
+        elif op == 0x23:
+            set_hl((hl() + 1) & 0xFFFF)
+        elif op == 0x3A:
+            reg["A"] = mem[fetch16()]
+        elif op == 0x32:
+            w8(fetch16(), reg["A"])
+        elif op == 0xED:
+            op2 = fetch()
+            if op2 == 0x56:                 # IM 1
+                pass
+            elif op2 == 0x52:               # SBC HL,DE
+                full = hl() - de() - reg["CY"]
+                reg["CY"] = int(full < 0)
+                set_hl(full & 0xFFFF)
+            elif op2 == 0xB0:               # LDIR
+                n = reg["B"] << 8 | reg["C"] or 0x10000
+                for _i in range(n):
+                    w8(de() + _i, mem[(hl() + _i) & 0xFFFF])
+                set_hl((hl() + n) & 0xFFFF)
+                d = (de() + n) & 0xFFFF
+                reg["D"], reg["E"] = d >> 8, d & 0xFF
+                reg["B"] = reg["C"] = 0
+            else:
+                raise AssertionError(f"opcode ED {op2:02X} at {pc - 2:04X}")
+        else:
+            raise AssertionError(f"opcode {op:02X} at {pc - 1:04X}")
+    raise AssertionError("no HALT")
+
+
+def test_rom_runs_from_address_zero():
+    """The ROM image runs on a Z80: the LDIR copy puts the initial data in
+    RAM, the BSS is cleared, main sees the data and writes BSS."""
+    with tempfile.TemporaryDirectory() as d:
+        _build(d)
+        img, sym, _ = _rom(d, "--rom-size", "8000")
+        mem, reg = _run_z80(img)
+        assert mem[sym["counter"]] == 0x5A
+        assert bytes(mem[sym["msg"]:sym["msg"] + 3]) == b"HI\0"
+        assert mem[sym["total"]] == 0x5A          # main copied counter
+        assert bytes(mem[sym["buf"]:sym["buf"] + 16]) == bytes(16)
+        assert reg["H"] << 8 | reg["L"] == sym["msg"]
+        assert mem[sym["__bss_end"]] == 0xCC      # nothing beyond BSS
+
+
+def test_ram_end_symbol_sets_the_stack():
+    crt0 = CRT0.replace("LD SP,0", "LD SP,__RAM_END").replace(
+        "EXTRN main", "EXTRN main, __RAM_END")
+    with tempfile.TemporaryDirectory() as d:
+        _build(d, crt0=crt0)
+        img, sym, _ = _rom(d, "--ram-end", "F900")
+        assert sym["__ram_end"] == 0xF900
+        assert img[0x68:0x6B] == bytes([0x31, 0x00, 0xF9])
+        # --ram-size to the top of memory: 10000H reads as 0000H
+        img, sym, _ = _rom(d, "--ram-size", "800")
+        assert sym["__ram_end"] == 0
+        # without a limit the symbol does not exist
+        r = _ul80(d, "--bin", "-p", "68", "-d", "F800", "--rom-data",
+                  "-o", os.path.join(d, "n.bin"), check=False)
+        assert r.returncode == 1 and "__RAM_END" in (r.stderr + r.stdout)
+
+
+def test_rom_data_with_com_output_is_a_usage_error():
+    with tempfile.TemporaryDirectory() as d:
+        _build(d)
+        for extra in ([], ["--prl"], ["--spr"]):
+            r = _ul80(d, "--rom-data", "-p", "68", "-d", "F800", *extra,
+                      "-o", os.path.join(d, "b.com"), check=False)
+            assert r.returncode == 2 and "--rom-data needs --bin" in r.stderr
+            assert not os.path.exists(os.path.join(d, "b.com"))
+
+
+def test_fill_above_ff_is_an_error():
+    with tempfile.TemporaryDirectory() as d:
+        _build(d)
+        r = _ul80(d, "--bin", "-p", "68", "-d", "F800", "--rom-data",
+                  "--fill", "100", "-o", os.path.join(d, "x.bin"),
+                  check=False)
+        assert r.returncode == 2 and "--fill" in r.stderr
+
+
+def test_rom_size_without_origin_is_an_error():
+    with tempfile.TemporaryDirectory() as d:
+        _build(d)
+        r = _ul80(d, "--bin", "-d", "F800", "--rom-data", "--rom-size",
+                  "8000", "-o", os.path.join(d, "x.bin"), check=False)
+        assert r.returncode == 2 and "needs -p" in r.stderr
+
+
+def test_data_past_the_address_space_is_an_error():
+    with tempfile.TemporaryDirectory() as d:
+        _build(d)
+        r = _ul80(d, "--bin", "-p", "68", "-d", "FFF8", "--rom-data",
+                  "-o", os.path.join(d, "x.bin"), check=False)
+        assert r.returncode == 1 and "Address space overflow" in r.stderr
+        r = _ul80(d, "--bin", "-p", "68", "-d", "F800", "--ram-size", "900",
+                  "--rom-data", "-o", os.path.join(d, "x.bin"), check=False)
+        assert r.returncode == 2
+
+
+def test_empty_dseg_with_rom_data():
+    app = ("\t.Z80\n\tCSEG\n\tPUBLIC main\nmain:\tRET\n"
+           "\tCOMMON //\n\tPUBLIC total, buf\ntotal:\tDS 1\nbuf:\tDS 16\n"
+           "\tEND\n")
+    with tempfile.TemporaryDirectory() as d:
+        _build(d, app=app)
+        img, sym, _ = _rom(d)
+        assert sym["__data_len"] == 0
+        assert sym["__data_rom"] == len(img)
+        assert sym["__bss_start"] == 0xF800
+        mem, _ = _run_z80(img)
+        assert bytes(mem[0xF800:0xF811]) == bytes(17)
+
+
+def test_common_origin_runs_and_moves_bss():
+    with tempfile.TemporaryDirectory() as d:
+        _build(d)
+        img, sym, _ = _rom(d, "--common-origin", "FC00")
+        mem, _ = _run_z80(img)
+        assert mem[0xFC00] == 0x5A and mem[sym["counter"]] == 0x5A
+
+
+def test_equ_file_links_a_bank_against_the_common_image():
+    """Phase 6 route: link the common image, export its symbols as EQU,
+    assemble a bank that INCLUDEs them, link the bank at 8000H."""
+    bank = ("\t.Z80\n\tCSEG\n\tINCLUDE common.equ\n"
+            "bankfn:\tCALL MAIN\n\tLD A,(COUNTER)\n\tRET\n\tEND\n")
+    with tempfile.TemporaryDirectory() as d:
+        _build(d)
+        equ = os.path.join(d, "common.equ")
+        img, sym, _ = _rom(d, "--equ-file", equ)
+        text = open(equ).read()
+        assert f"MAIN\tEQU\t0{sym['main']:04X}H" in text
+        _asm(d, "bank", bank)
+        out = os.path.join(d, "bank.bin")
+        _ul80(d, "--bin", "-p", "8000", "-o", out,
+              inputs=[os.path.join(d, "bank.rel")])
+        b = open(out, "rb").read()
+        assert b[0] == 0xCD
+        assert int.from_bytes(b[1:3], "little") == sym["main"]
+        assert b[3] == 0x3A
+        assert int.from_bytes(b[4:6], "little") == sym["counter"]
