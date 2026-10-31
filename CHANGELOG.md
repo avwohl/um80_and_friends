@@ -20,20 +20,20 @@ All notable changes to the um80 toolchain are documented here.
 
 ### Fixed
 - um80 no longer reports a false "Phase error" in a CSEG or DSEG that is
-  longer than 64K. A JR or DJNZ near the 64K mark was too far in one pass and
-  near in the next, because um80 cut the target address to 16 bits but not
-  the location counter. The distance now uses the true offsets of the
+  longer than 64K. A JR or DJNZ near the 64K mark was too far in one pass. In
+  the next pass the same JR was near. um80 cut the target address to 16 bits
+  but did not cut the location counter. The distance now uses the true offsets of the
   segment. In a .PHASE block, where addresses are 16-bit, the distance wraps
   at 64K. A real phase error in the source is still reported. Tests are in
   tests/test_jr_64k.py.
 - The .rel output can change for code that crosses the 64K mark. The choice
   between JR and JP near the mark is now made with the true distance. In ASEG
-  code and in .PHASE blocks the distance wraps at 64K, so a JR over the mark
+  code and in .PHASE blocks the distance wraps at 64K. A JR over the mark
   can stay a JR where um80 made a JP before. Both encodings are correct. Code
   that does not cross 64K gives the same .rel as before.
-- A program that crosses 64K and has a size that depends on a label it moves
-  (for example IF (L2-L1) LT 45 around a DS) can have no fixed point. um80
-  now reports "Cannot resolve the value" for such a program. The old wrap
+- A program can cross 64K and have a size that depends on a label that the
+  size moves (for example IF (L2-L1) LT 45 around a DS). Such a program has
+  no fixed point. um80 now reports "Cannot resolve the value" for such a program. The old wrap
   error hid this. M80 reports a phase error for the same program.
 
 ## [0.3.52] - 2026-09-26
