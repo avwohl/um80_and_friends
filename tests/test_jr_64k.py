@@ -131,3 +131,52 @@ def test_generated_jumps_near_the_limit(seed, pad):
     asm, ok = assemble(build_random(seed, pad))
     assert ok, asm.errors
     assert not [e for e in asm.errors if "Phase" in str(e)]
+
+
+@pytest.mark.parametrize("org", [0xFF00, 0xFFC0, 0xFFF0, 0xFFFC, 0xFFFE])
+@pytest.mark.parametrize("seed", range(4))
+def test_aseg_code_crossing_64k_assembles(seed, org):
+    """ASEG code that runs over 64K: no phase error, stable sizes."""
+    src = build_random(seed, 0).replace("\tCSEG\n\tDS 0\n",
+                                        f"\tASEG\n\tORG {org}H\n")
+    asm, ok = assemble(src)
+    assert ok, asm.errors
+    assert not [e for e in asm.errors if "Phase" in str(e)]
+
+
+def test_aseg_jr_over_64k_mark_wraps():
+    """In ASEG code the address wraps at 64K, as the Z80 program counter
+    does: a JR whose target is past 0FFFFH uses the wrapped distance and
+    stays a 2-byte JR."""
+    asm, ok = assemble("""\
+\t.Z80
+\tASEG
+\tORG 0FFFAH
+\tJR Z,L1
+\tNOP
+\tNOP
+\tNOP
+L1:\tRET
+\tEND
+""")
+    assert ok, asm.errors
+    assert not asm.promoted_jr
+
+
+def test_label_dependent_size_without_fixed_point_is_an_error():
+    """A size that depends on a label it moves has no fixed point.  um80
+    must say so (not loop, not pick a value), as M80 does with a phase
+    error.  The old 64K wrap bug hid this for code across 64K."""
+    asm, ok = assemble("""\
+\t.Z80
+\tCSEG
+\tDS 0FFF0H
+L3:\tNOP
+\tIF (L4-L3) LT 3
+\tDS 5
+\tENDIF
+L4:\tNOP
+\tEND
+""")
+    assert not ok
+    assert asm.errors
