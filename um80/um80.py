@@ -2954,7 +2954,21 @@ class Assembler:
                     what = "an address in another segment"
                 self.error(f"{operator} to '{text.strip()}': {what}, so the "
                            f"distance depends on where the linker puts them")
-        return ev.value & 0xFFFF, ev.seg, reachable
+        # A relocatable target is not wrapped to 16 bits: the segment moves
+        # as one, so the distance is the one between the offsets, also when
+        # the segment is longer than 64K.  Wrapping the target but not `$'
+        # made a jump over the 64K mark look far in one pass and near in
+        # the next, so pass 2 put labels where pass 1 had not (a phase error).
+        return (ev.value & 0xFFFF if ev.seg == ADDR_ABSOLUTE else ev.value,
+                ev.seg, reachable)
+
+    @staticmethod
+    def relative_offset(val, seg, pc):
+        """The displacement of a JR/DJNZ at `pc' to `val' (2 bytes long)."""
+        offset = val - (pc + 2)
+        if seg == ADDR_ABSOLUTE:
+            offset = ((offset + 0x8000) & 0xFFFF) - 0x8000
+        return offset
 
     def parse_z80_indexed(self, operand):
         """Parse (IX+d) or (IY+d) operand.
@@ -3529,10 +3543,10 @@ class Assembler:
                 if self.line_num in self.promoted_jr:
                     # Emit JP instead (3 bytes)
                     self.emit_byte(0xC3)
-                    self.emit_word(val, seg)
+                    self.emit_word(val & 0xFFFF, seg)
                     return True
                 # Calculate offset assuming JR (2 bytes)
-                offset = val - (self.pc + 2)
+                offset = self.relative_offset(val, seg, self.pc)
                 if can_check_range and (offset < -128 or offset > 127):
                     if self.strict_jr:
                         if self.pass_num == 2:
@@ -3543,7 +3557,7 @@ class Assembler:
                         # Promote to JP
                         self.promoted_jr.add(self.line_num)
                         self.emit_byte(0xC3)
-                        self.emit_word(val, seg)
+                        self.emit_word(val & 0xFFFF, seg)
                     return True
                 self.emit_byte(0x18)
                 self.emit_byte(offset & 0xFF)
@@ -3567,10 +3581,10 @@ class Assembler:
                     # Emit JP cc instead (3 bytes)
                     c = Z80_CONDITIONS[cond]  # Same codes for NZ,Z,NC,C
                     self.emit_byte(0xC2 | (c << 3))
-                    self.emit_word(val, seg)
+                    self.emit_word(val & 0xFFFF, seg)
                     return True
                 # Calculate offset assuming JR (2 bytes)
-                offset = val - (self.pc + 2)
+                offset = self.relative_offset(val, seg, self.pc)
                 if can_check_range and (offset < -128 or offset > 127):
                     if self.strict_jr:
                         if self.pass_num == 2:
@@ -3583,7 +3597,7 @@ class Assembler:
                         self.promoted_jr.add(self.line_num)
                         c = Z80_CONDITIONS[cond]
                         self.emit_byte(0xC2 | (c << 3))
-                        self.emit_word(val, seg)
+                        self.emit_word(val & 0xFFFF, seg)
                     return True
                 c = Z80_JR_CONDITIONS[cond]
                 self.emit_byte(0x20 | (c << 3))
@@ -3615,10 +3629,10 @@ class Assembler:
                 # Emit DEC B + JP NZ instead (4 bytes)
                 self.emit_byte(0x05)  # DEC B
                 self.emit_byte(0xC2)  # JP NZ
-                self.emit_word(val, seg)
+                self.emit_word(val & 0xFFFF, seg)
                 return True
             # Calculate offset assuming DJNZ (2 bytes)
-            offset = val - (self.pc + 2)
+            offset = self.relative_offset(val, seg, self.pc)
             if can_check_range and (offset < -128 or offset > 127):
                 if self.strict_jr:
                     if self.pass_num == 2:
@@ -3630,7 +3644,7 @@ class Assembler:
                     self.promoted_jr.add(self.line_num)
                     self.emit_byte(0x05)  # DEC B
                     self.emit_byte(0xC2)  # JP NZ
-                    self.emit_word(val, seg)
+                    self.emit_word(val & 0xFFFF, seg)
                 return True
             self.emit_byte(0x10)
             self.emit_byte(offset & 0xFF)

@@ -18,6 +18,15 @@ All notable changes to the um80 toolchain are documented here.
   .com, .prl or .spr output, `--fill` above FF, `--bin --rom-size` without
   `-p`, and data past 10000H with `-d` are now errors.
 
+### Fixed
+- um80 no longer reports a false "Phase error" in a CSEG or DSEG that is
+  longer than 64K. A JR or DJNZ near the 64K mark was too far in one pass and
+  near in the next, because um80 cut the target address to 16 bits but not
+  the location counter. The distance now uses the true offsets of the
+  segment. In a .PHASE block, where addresses are 16-bit, the distance wraps
+  at 64K. A real phase error in the source is still reported. Tests are in
+  tests/test_jr_64k.py.
+
 ## [0.3.52] - 2026-09-26
 
 The 0.3.51 release gate found the differences below between um80 and the
