@@ -1,0 +1,31 @@
+; Hand-compiled sumto.c, with the line markers of docs/debugger_plan.md.
+	.z80
+;#file 1 "sumto.c"
+;#line 1 12
+_main:	ld	hl,0
+	ld	(_total),hl
+;#line 1 13
+	ld	b,1
+loop:
+;#line 1 14
+	ld	hl,(_total)
+	ld	e,b
+	ld	d,0
+	call	_add
+	ld	(_total),hl
+;#line 1 13 nostmt
+	inc	b
+	ld	a,b
+	cp	5
+	jr	c,loop
+;#line 1 15
+;#line 1 16
+	ld	hl,0
+	jp	0
+;#line 1 5
+_add:
+;#line 1 6
+	add	hl,de
+;#line 1 7
+	ret
+_total:	dw	0
