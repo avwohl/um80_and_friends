@@ -19,6 +19,23 @@ All notable changes to the um80 toolchain are documented here.
   `-p`, and data past 10000H with `-d` are now errors.
 
 ### Fixed
+- Messages and the .PRN listing now give the physical line of the source
+  file. Before, um80 counted the lines of each macro or REPT expansion. A file
+  of 9 lines (a 3-line macro called twice, then a wrong line 9) said "Error at
+  line 15". It now says line 9. An expansion line has the line number of the
+  macro call or of the REPT, IRP or IRPC line. A message for a line in an
+  INCLUDE file gives the file ("Error at line 7 of inc.mac"). The same form is
+  in warnings and in the line numbers inside messages ("used at line ...",
+  "Unterminated MACRO M2 (line 3 of inc.mac)"). Lines from -e text or a --pre
+  file do not move the numbers of the source file: before, 3 lines of -e text
+  moved every number by 3. The names of these lines are "-e" and the name of
+  the --pre file, and the lines of all -e options count on from 1. The count that JR/DJNZ promotion uses is not changed.
+  The assembled .REL files are not changed: 1554 .rel files from 1139 sources
+  (uc80, uada80, cpmemu, klaatutv and others, each with and without --dri)
+  are byte-identical before and after. Tests are in tests/test_source_position.py.
+- In a .PRN listing the line of a macro call came after its expansion and
+  repeated the last byte of the expansion (`7 0003 D1 swap bc,de` after
+  `pop de`). It now comes first and has no bytes.
 - um80 no longer reports a false "Phase error" in a CSEG or DSEG that is
   longer than 64K. A JR or DJNZ near the 64K mark was too far in one pass. In
   the next pass the same JR was near. um80 cut the target address to 16 bits

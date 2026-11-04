@@ -74,4 +74,7 @@ def test_m80_carries_an_open_if_on():
     # ("Unterminated Conditional", and no END seen).
     code, warnings = _assemble(OPEN)
     assert code == '0201'
-    assert warnings == ['Warning at line 33: Unterminated conditional (missing ENDIF)']
+    # The source is 24 lines; the warning names line 25, the empty line
+    # after the last line end (source_lines()).  It said 33 once: the line
+    # count included the lines of the macro expansions.
+    assert warnings == ['Warning at line 25: Unterminated conditional (missing ENDIF)']

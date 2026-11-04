@@ -28,6 +28,7 @@ Digital Research's MAC 2.0 and RMAC 1.1:
 | `test_repeat_blocks.py` | Nested REPT/IRP/IRPC, IRP sublists, EXITM |
 | `test_radix_conditional.py` | Decimal `.RADIX` operand, unterminated / duplicate-`ELSE` diagnostics |
 | `test_symbol_class.py` | SET vs. EQU/label redefinability classes |
+| `test_source_position.py` | Messages and the .PRN listing give the physical line of the source file (after a macro or REPT, in an INCLUDE file, with -e and --pre text) |
 | `test_z80_and_charconst.py` | `LD A,I`/`LD A,R` encoding, two-character constant byte order |
 | `test_linker_segments.py` | Absolute ASEG placement, mixed CSEG+ASEG, COMMON-only modules |
 | `test_linker_absolute_code.py` | A module's code placed above the absolute code loaded before it; absolute code overlapping anything is an error, or with `--allow-overlap` a warning and the byte loaded last in the image |

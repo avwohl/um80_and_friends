@@ -18,6 +18,27 @@ from um80.opcodes_z80 import *
 from um80.relformat import *
 
 
+class SrcLine(int):
+    """A physical line of a source file: the number, and the file when it
+    is not the main source file (an INCLUDE file, a --pre file, -e text).
+
+    It is an int, so it sorts and compares as the number.  Its text says
+    where the line is: "3", or "3 of defs.inc" for a line in an INCLUDE file.
+    """
+    def __new__(cls, number, file=None):
+        self = super().__new__(cls, number)
+        self.file = file
+        return self
+
+    def __str__(self):
+        if self.file:
+            return f"{int(self)} of {self.file}"
+        return str(int(self))
+
+    def __format__(self, spec):
+        return super().__format__(spec) if spec else str(self)
+
+
 class AssemblerError(Exception):
     """Assembler error with line information."""
     def __init__(self, message, line_num=None, line_text=None):
@@ -451,7 +472,16 @@ class Assembler:
         self.current_common = None  # Current COMMON block if any
 
         self.pass_num = 1
+        # line_num counts every line process_line() reads, an expansion line
+        # of a macro or a REPT included: promoted_jr is keyed by it.  The
+        # physical position (src_file, src_line) is for people: the messages
+        # and the listing.  An expansion line has the position of the line
+        # that called the macro or began the REPT; src_file is None in the
+        # main source file.
         self.line_num = 0
+        self.src_file = None
+        self.src_line = 0
+        self.line_origins = []  # (src_file, src_line) of each of the lines
         self.errors = []
         self.warnings = []
 
@@ -670,13 +700,18 @@ class Assembler:
             return ADDR_COMMON_REL
         return self.segments[self.current_seg].seg_type
 
+    @property
+    def pos(self):
+        """The physical source position of the line being assembled."""
+        return SrcLine(self.src_line, self.src_file)
+
     def error(self, msg):
         """Record an error."""
-        self.errors.append(AssemblerError(msg, self.line_num))
+        self.errors.append(AssemblerError(msg, self.pos))
 
     def warning(self, msg):
         """Record a warning."""
-        self.warnings.append(f"Warning at line {self.line_num}: {msg}")
+        self.warnings.append(f"Warning at line {self.pos}: {msg}")
 
     def z80_form_hint(self, operator, ops):
         """Hint for a Z80 instruction whose mnemonic is an 8080 mnemonic.
@@ -722,7 +757,7 @@ class Assembler:
         """Save a listing entry for the current line."""
         if self.pass_num == 2 and self.generate_listing:
             self.listing_lines.append({
-                'line_num': self.line_num,
+                'line_num': self.src_line,
                 'addr': self.current_line_start_loc,
                 'seg': self.current_line_start_seg,
                 'bytes': self.current_line_bytes[:],
@@ -772,7 +807,7 @@ class Assembler:
         sym.defined = True
         sym.defined_pass = self.pass_num
         sym.redefinable = False  # EQU / label is non-redefinable
-        sym.line = self.line_num
+        sym.line = self.pos
         if public:
             sym.public = True
 
@@ -880,7 +915,7 @@ class Assembler:
         for dep, forward in reads.items():
             deps[dep] = deps.get(dep) or forward
         self.def_text.setdefault(node, f"{node[0]} {operator} {text.strip()}")
-        self.def_line.setdefault(node, self.line_num)
+        self.def_line.setdefault(node, self.pos)
 
     def predict_forward_values(self, order, defs):
         """What forward references should read next time through pass 1,
@@ -1983,7 +2018,7 @@ class Assembler:
             if colons == '::':
                 sym = self.lookup_symbol(label)
                 sym.public = True
-                sym.public_line = sym.public_line or self.line_num
+                sym.public_line = sym.public_line or self.pos
         else:
             match = NAME_DEFINITION.match(stripped)
             if match:
@@ -2464,7 +2499,7 @@ class Assembler:
             return
         self.reported_unlinkable.add(name)
         self.errors.append(AssemblerError(
-            f"{name}, used at line {self.line_num}: {why}", line))
+            f"{name}, used at line {self.pos}: {why}", line))
 
     def number_operand(self, text, directive, allow_undefined=False):
         """Evaluate the operand of a directive that needs a number now.
@@ -3944,7 +3979,7 @@ class Assembler:
             sym.defined_pass = self.pass_num
             sym.redefinable = True
             sym.link_expr = link_expr
-            sym.line = self.line_num
+            sym.line = self.pos
             self.set_count[name] = k
             if self.pass_num == 1:
                 self.def_value[(name, k)] = self.symbol_value(sym)
@@ -4064,7 +4099,7 @@ class Assembler:
             for op in ops:
                 sym = self.lookup_symbol(op.strip())
                 sym.public = True
-                sym.public_line = sym.public_line or self.line_num
+                sym.public_line = sym.public_line or self.pos
             return True
 
         # EXTRN/EXT/EXTERNAL - declare external symbols
@@ -4426,7 +4461,7 @@ class Assembler:
             if operands:
                 params = [p.strip().upper() for p in operands.split(',')]
             self.collecting_macro = label.upper()
-            self.block_open_line = self.line_num
+            self.block_open_line = self.pos
             self.macro_params = params
             self.macro_body = []
             self.macro_nest_depth = 0
@@ -4456,7 +4491,7 @@ class Assembler:
                 self.error("REPT requires a count")
                 return True
             count = self.number_operand(ops[0], 'REPT').value & 0xFFFF
-            self.block_open_line = self.line_num
+            self.block_open_line = self.pos
             self.repeat_stack.append(('REPT', count, [], None, label))
             return True
 
@@ -4486,7 +4521,7 @@ class Assembler:
                 if values[-1] != last and self.pass_num == 2:
                     self.warning("M80 flags a `%' in the last item of an IRP"
                                  " list O; um80 takes its value")
-            self.block_open_line = self.line_num
+            self.block_open_line = self.pos
             self.repeat_stack.append(('IRP', values, [], param, label))
             self._repeat_comment_tail()
             return True
@@ -4512,7 +4547,7 @@ class Assembler:
                 # for it).  M80 does not, except where a macro's empty
                 # argument made the string empty (expand_macro()).
                 chars = ['']
-            self.block_open_line = self.line_num
+            self.block_open_line = self.pos
             self.repeat_stack.append(('IRPC', chars, [], param, label))
             self._repeat_comment_tail()
             return True
@@ -5366,7 +5401,17 @@ class Assembler:
                     # ENDM of the outer block - execute it.
                     rept_type, param_or_count, body, iter_var, rept_label = self.repeat_stack.pop()
                     self._endm_label(label, body)
-                    self.execute_repeat(rept_type, param_or_count, body, iter_var)
+                    # The expansion lines have the position of the line
+                    # that began the block, as a macro's have the call's,
+                    # not the position of this ENDM.
+                    saved_position = (self.src_file, self.src_line)
+                    opener = self.block_open_line
+                    if isinstance(opener, SrcLine):
+                        self.src_file, self.src_line = opener.file, int(opener)
+                    try:
+                        self.execute_repeat(rept_type, param_or_count, body, iter_var)
+                    finally:
+                        self.src_file, self.src_line = saved_position
             else:
                 self.repeat_stack[-1][2].append(line)
             return
@@ -5425,8 +5470,12 @@ class Assembler:
         # name (M80 resolves the macro table before the instruction/pseudo-op
         # tables). Checked after the SET/ASET directive disambiguation above.
         if upper_op in self.macros:
-            self.expand_macro(upper_op, operands)
+            # The call's own listing line comes first and has no bytes: the
+            # lines of the expansion follow it, and they carry the bytes.
+            # It was saved after the expansion, so it repeated the last
+            # byte of the last expansion line.
             self._save_listing_entry(line)
+            self.expand_macro(upper_op, operands)
             return True
 
         # Try CPU instruction
@@ -6284,6 +6333,7 @@ class Assembler:
             return
         # Save current state
         saved_line_num = self.line_num
+        saved_position = (self.src_file, self.src_line)
         saved_entry_point = self.entry_point
         where = self.whereabouts()
 
@@ -6299,9 +6349,11 @@ class Assembler:
             self.line_num = 0
 
             # Process each line
-            for line in lines:
+            self.src_file = os.path.basename(filepath)
+            for number, line in enumerate(lines, 1):
                 if self.ended:
                     break
+                self.src_line = number
                 self.process_line(line)
 
         except IOError as e:
@@ -6311,6 +6363,7 @@ class Assembler:
             # Pop from include stack and restore line number
             self.include_stack.pop()
             self.line_num = saved_line_num
+            self.src_file, self.src_line = saved_position
 
         if library and self.dri and self.whereabouts() != where:
             self.library_code.add(os.path.basename(filepath))
@@ -6364,9 +6417,13 @@ class Assembler:
             self.rel_common = None  # no COMMON block selected in the .REL yet
 
         self.ended = False
-        for line in lines:
+        for index, line in enumerate(lines):
             if self.ended:
                 break
+            if index < len(self.line_origins):
+                self.src_file, self.src_line = self.line_origins[index]
+            else:
+                self.src_file, self.src_line = None, index + 1
             self.process_line(line)
 
         # An IF/IFx/COND left open at end of pass is an error (M80 reports
@@ -6435,12 +6492,18 @@ class Assembler:
 
         # Process pre-items (inline code and pre-include files)
         pre_lines = []
+        pre_origins = []
         if pre_items:
             for item_type, item_value in pre_items:
                 if item_type == 'e':
                     # Inline code - split on ! for multiple statements (DRI notation)
                     statements = item_value.split('!')
                     pre_lines.extend(statements)
+                    # One count over every -e option, so two of them do
+                    # not both start at line 1.
+                    first = sum(1 for o in pre_origins if o[0] == '-e') + 1
+                    pre_origins.extend(('-e', n) for n in
+                                       range(first, first + len(statements)))
                 elif item_type == 'pre':
                     # Pre-include file - read and add its lines
                     filepath = self.find_include_file(item_value)
@@ -6449,14 +6512,21 @@ class Assembler:
                         return False
                     try:
                         with open(filepath, 'rb') as f:
-                            pre_lines.extend(source_lines(f.read(), self.dri))
+                            text = source_lines(f.read(), self.dri)
+                        pre_lines.extend(text)
+                        pre_origins.extend(
+                            (os.path.basename(filepath), n)
+                            for n in range(1, len(text) + 1))
                     except IOError as e:
                         self.error(f"Cannot read pre-include file {filepath}: {e}")
                         return False
 
         # Read source - handle CP/M format (CR/LF, ^Z EOF, 128-byte records)
         with open(source_file, 'rb') as f:
-            lines = pre_lines + source_lines(f.read(), self.dri)
+            text = source_lines(f.read(), self.dri)
+        lines = pre_lines + text
+        self.line_origins = pre_origins + [(None, n) for n in
+                                           range(1, len(text) + 1)]
         self.source_lines = lines
 
         # Pass 1: Build symbol table (iterate until JR/DJNZ promotions stabilize)
