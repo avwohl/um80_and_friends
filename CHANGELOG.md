@@ -5,6 +5,41 @@ All notable changes to the um80 toolchain are documented here.
 ## [Unreleased]
 
 ### Added
+- `dbg2elf` (`um80/dbg2elf.py`, console script `dbg2elf`), the GDB Python
+  unwinder `um80/gdb/udb80_unwind.py` and docs/gdb.md (phase 7 of the cpmemu
+  debugger plan). `dbg2elf prog.dbg` reads the program that prog.dbg names
+  (length and SHA-256 are checked, a stale file is refused) and writes an
+  ELF32 EM_Z80 file (`e_flags` 1): `.text` at the load address, a symbol
+  table with routine sizes, DWARF 4 `.debug_line` (rule D4: each line of a
+  merged group is a statement row in source order, the last is primary,
+  `nostmt` rows have `is_stmt` off), and `.debug_info` with one compile unit,
+  a subprogram for each routine, a `DW_TAG_inlined_subroutine` for each
+  record of the inline stack (nested, with call file and call line) and a
+  `DW_OP_addr` variable for each data label. Measured with GDB 18.1 against
+  `cpmemu --gdb`: `break FILE:LINE`, `continue`, `step`, `next`, `finish`,
+  `bt` and `print` of a static variable work for tools/dbg2elf_proto/sumto.mac
+  (ELF file 1153 bytes) and for a `uc80 -g` program (crc.c, 190 lines: .com
+  1536 bytes, prog.dbg 21495 bytes, ELF 3974 bytes, 0.14 s). A `uc80 -g`
+  program with an inlined call steps into the inlined body and out, and `bt`
+  shows the inline frame (before: GDB showed the inlined line at the call and
+  had no inline frame). `;#endinline` puts the call line back as the
+  position, so `dbg2elf` drops that line from a group that has more lines.
+  The unwinder unwinds from the `monitor bt` shadow stack (the stack address of
+  each return address is found by a search upward from the frame below), else
+  from the `;#func` frame records (IX frame, prologue and `ret` cases, a
+  frameless routine with pushes). For a recursive C program it shows 5 `sum`
+  frames and 4 `fill` frames (IX frame) equal to the entries of `monitor bt`,
+  and both sources give the same `bt` at each instruction of the prologue and
+  epilogue. Tests: tests/test_dbg2elf.py (22, no GDB needed, with the reader
+  tests/elfread.py) and tests/test_gdb.py (14, live GDB; skipped with a reason
+  when GDB or cpmemu is missing, `UDB80_REQUIRE_GDB=1` makes the skip a
+  failure). The suite went from 1487 passed, 1 skipped to 1523 passed, 1
+  skipped. `dbg2elf` refuses a
+  program file whose length is not the `length` of prog.dbg (measured: one
+  appended byte gave an ELF file 1 byte longer before, exit 1 "stale" now).
+  Not done: local variables (phase 8), a compile unit for each
+  file, the `moved` table, `hex`, `prl` and `spr` images.
+
 - ul80 ROM options (details in docs/ul80_rom.md): `-d/--data-origin` (LINK-80
   `/D:`), `--common-origin`, `--rom-data` (the initial bytes of DSEG are stored
   after the code, DSEG symbols stay at the RAM address, and `__DATA_ROM`,

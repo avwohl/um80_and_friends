@@ -48,6 +48,7 @@ ucref80 = "um80.ucref80:main"
 ud80 = "um80.ud80:main"
 ux80 = "um80.ux80:main"
 udb80 = "um80.udb80:main"
+dbg2elf = "um80.dbg2elf:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

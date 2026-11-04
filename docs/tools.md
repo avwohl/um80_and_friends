@@ -169,6 +169,13 @@ Generates cross-reference listings showing:
 
 See `man ucref80` for full documentation.
 
+### dbg2elf - ELF and DWARF file for GDB
+
+Reads `prog.dbg` (from `ul80 --debug-info`) and the program file. Writes an
+ELF32 file with the code, the routine symbols, DWARF line rows and inlined
+calls, so that GDB with a z80 target can debug the program on `cpmemu --gdb`.
+See [gdb.md](gdb.md).
+
 ### ud80 - Disassembler
 
 8080/Z80 disassembler that:
