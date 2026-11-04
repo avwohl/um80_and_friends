@@ -83,6 +83,9 @@ Microsoft MACRO-80 compatible assembler supporting:
 - PUBLIC/EXTRN for module linking
 - Include files
 - All standard directives (ORG, EQU, SET, DB, DW, DS, etc.)
+- `--debug-info`: also writes `NAME.dbm` beside the `.rel` file, with the
+  source line of each instruction, the `;#` markers in force and all
+  labels. The `.rel` file does not change. See [debug_info.md](debug_info.md).
 
 #### Command-Line Pre-Execution (`-e` and `--pre`)
 
@@ -120,6 +123,11 @@ LINK-80 compatible linker that:
 - Can output Intel HEX format
 - Can output MP/M .PRL (Page Relocatable) format
 - Provides `__END__` symbol for dynamic memory allocation
+- `--debug-info`: reads the `.dbm` file of each module and writes
+  `NAME.dbg` beside the output file, with the addresses of the source lines,
+  the routines and all labels, and the length and SHA-256 of the output file.
+  `--debug-file FILE` names the `.dbg` file. The output file and the `.SYM`
+  file do not change. See [debug_info.md](debug_info.md).
 
 #### Predefined Symbols
 
@@ -145,6 +153,9 @@ LIB-80 compatible library manager for:
 - Creating .LIB library archives
 - Listing library contents and public symbols
 - Adding/removing/extracting modules
+- Storing the `.dbm` file beside a `.rel` file with the module. A library
+  with a `.dbm` is a version 2 `ULIB` file. ul80 reads versions 1 and 2.
+  See [debug_info.md](debug_info.md).
 
 See `man ulib80` for full documentation, or refer to the original [Microsoft CREF/LIB Manual](https://github.com/avwohl/retro_docs/blob/main/um80_and_friends/cref_lib.pdf).
 
@@ -223,6 +234,8 @@ See `man ux80` for full documentation.
 | .LIB | Library archive |
 | .PRN | Assembly listing |
 | .SYM | Symbol file |
+| .DBM | Module debug information, JSON (`um80 --debug-info`) |
+| .DBG | Linked debug information, JSON (`ul80 --debug-info`) |
 
 ## Installing Man Pages
 

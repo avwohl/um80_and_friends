@@ -17,6 +17,7 @@ from pathlib import Path
 from um80 import __version__
 from um80.relformat import *
 from um80.ulib80 import Library, LibraryError
+from um80 import debuginfo
 
 
 class LinkerError(Exception):
@@ -108,6 +109,9 @@ class Module:
         # word still whole, built when a chain is first followed
         # (Linker._fill_chain()).
         self.link_types = None
+
+        # The module's .dbm document (--debug-info), or None.
+        self.dbm = None
 
 
 class Linker:
@@ -203,6 +207,8 @@ class Linker:
         # link().
         self.owner_mod = array('i')
         self.owner_off = array('i')
+        # --debug-info: read the .dbm of each module as it is loaded.
+        self.debug_info = False
 
     def error(self, msg):
         self.errors.append(f"Error: {msg}")
@@ -232,9 +238,31 @@ class Linker:
         """Load a REL file and add to modules list."""
         with open(filename, 'rb') as f:
             data = f.read()
-        return self.load_rel_data(Path(filename).stem, data)
+        dbm = None
+        if self.debug_info:
+            dbm = self._read_dbm(Path(filename).with_suffix('.dbm'), data)
+        return self.load_rel_data(Path(filename).stem, data, dbm)
 
-    def load_rel_data(self, name, data):
+    def _read_dbm(self, path, rel_data):
+        """The document of the .dbm file `path' that belongs to the .REL
+        bytes `rel_data', or None (with a warning when the file is there
+        but is not usable)."""
+        if not path.exists():
+            return None
+        document = debuginfo.load_dbm(path.read_bytes())
+        if document is None:
+            self.warning(f"{path} is not a .dbm file of a version ul80 "
+                         "reads: its source lines are left out")
+            return None
+        rel = document.get('rel') or {}
+        if (rel.get('length') != len(rel_data)
+                or rel.get('sha256') != debuginfo.sha256_hex(rel_data)):
+            self.warning(f"{path} was made for another .rel file than the "
+                         "one linked: its source lines are left out")
+            return None
+        return document
+
+    def load_rel_data(self, name, data, dbm=None):
         """Load REL data from bytes (e.g., from a library module).
 
         Every module in it: a .REL can hold several, one after another,
@@ -243,11 +271,15 @@ class Linker:
         """
         reader = RELReader(data)
         count = 0
+        if isinstance(dbm, (bytes, bytearray)):
+            dbm = debuginfo.load_dbm(bytes(dbm))
         while True:
             more = self._load_module(reader, name if count == 0
                                      else f"{name}_{count}")
             if more is None:
                 break
+            if count == 0 and self.debug_info:
+                self.modules[-1].dbm = dbm
             count += 1
             if not more:
                 break
@@ -1862,6 +1894,186 @@ class Linker:
             if remainder:
                 f.write(bytes(128 - remainder))
 
+    # --debug-info: the segment names of a .dbm file.
+    DBG_SEGMENTS = {'ASEG': ADDR_ABSOLUTE, 'CSEG': ADDR_PROGRAM_REL,
+                    'DSEG': ADDR_DATA_REL}
+
+    def _dbg_key(self, seg):
+        """The segment key of module.seg_buf_start for the .dbm segment
+        name `seg' (None for an absolute address)."""
+        if seg.startswith('COMMON:'):
+            return (ADDR_COMMON_REL, seg[len('COMMON:'):].upper())
+        return self.DBG_SEGMENTS.get(seg)
+
+    def _dbg_addr(self, module, seg, offset):
+        """The address where the linker put `offset' of segment `seg' of
+        `module', or None for a segment the module does not have."""
+        if seg == 'ABS':
+            return offset & 0xFFFF
+        key = self._dbg_key(seg)
+        if key is None:
+            return None
+        if key == ADDR_ABSOLUTE:
+            return offset
+        if key == ADDR_PROGRAM_REL:
+            return module.code_base + offset
+        if key == ADDR_DATA_REL:
+            return module.data_base + offset
+        return self.common_bases.get(key[1], self.common_base) + offset
+
+    def _dbg_owned(self, idx, module, seg, offset, length, addr):
+        """Whether the image holds the `length' bytes at `offset' of
+        segment `seg' of module `idx' as that module loaded them: false
+        when a later module loaded over one of them."""
+        start = module.seg_buf_start.get(self._dbg_key(seg))
+        if start is None:
+            return False
+        for i in range(length):
+            out = addr + i - self.output_base
+            if not 0 <= out < len(self.owner_mod):
+                return False
+            if (self.owner_mod[out] != idx
+                    or self.owner_off[out] != start + offset + i):
+                return False
+        return True
+
+    def build_debug_info(self):
+        """The prog.dbg document, without its `image' (docs/debug_info.md).
+
+        Run after link().  Each row of each module's .dbm moves from
+        (segment, offset) to where link() put the bytes.  A row whose bytes
+        a later module loaded over is dropped (owner_mod, owner_off).  A
+        module with no .dbm gets its public symbols as labels, and no rows.
+        """
+        files, file_index = [], {}
+
+        def global_file(path):
+            if path not in file_index:
+                file_index[path] = len(files)
+                files.append(path)
+            return file_index[path]
+
+        asm, lines, labels, funcs, noopt, moved = [], [], [], [], [], []
+        modules = []
+        dropped = 0
+        for idx, module in enumerate(self.modules):
+            doc = module.dbm
+            modules.append({'name': module.name,
+                            'source': doc.get('source') if doc else None,
+                            'debug': doc is not None})
+            if doc is None:
+                for name, (value, seg_type) in module.publics.items():
+                    addr = self.relocate_value(
+                        module, value, seg_type,
+                        module.public_blocks.get(name))
+                    labels.append([name, addr, idx, 1])
+                continue
+            fmap = [global_file(path) for path in doc['files']]
+
+            def gref(entry):
+                """A source position of a row, in the global file table."""
+                out = [fmap[entry[0]], entry[1], entry[2]]
+                if len(entry) > 3:
+                    out += [fmap[entry[3]], entry[4]]
+                return out
+
+            state = None        # the group in force, a list, or None
+            inline = None
+            previous = None     # the last line entry, to extend
+            for raw in doc['rows']:
+                (seg, offset, length, run, mfile, mline, kind, src, inl,
+                 bfile, bline) = debuginfo.row_fields(raw)
+                addr = self._dbg_addr(module, seg, offset)
+                kept = addr is not None
+                if kept and kind != 's':
+                    kept = self._dbg_owned(idx, module, seg, offset, length,
+                                           addr)
+                if src is not None:
+                    state = src
+                if inl is not None:
+                    inline = inl
+                if not kept:
+                    dropped += 1
+                    previous = None
+                    continue
+                start = (run & 0xFFFF) if run is not None else addr
+                end = start + length
+                image_addr = addr
+                if (self.rom_data
+                        and self._dbg_key(seg) == ADDR_DATA_REL):
+                    image_addr = self.code_end + (addr - self.data_base)
+                if image_addr != start:
+                    if moved and moved[-1][0] + moved[-1][2] == start \
+                            and moved[-1][1] + moved[-1][2] == image_addr:
+                        moved[-1][2] += length
+                    else:
+                        moved.append([start, image_addr, length])
+                row = [start, end, kind, fmap[mfile], mline]
+                if bfile is not None:
+                    row += [fmap[bfile], bline]
+                asm.append(row)
+                # The line table: a row that starts a group (src is not
+                # None) or a marker change starts an entry; an instruction
+                # that follows with no marker goes on the entry before it.
+                group = [gref(e) for e in state] if state else []
+                fresh = src is not None or inl is not None
+                if kind == 's' or not group or (kind == 'd' and not fresh):
+                    previous = None
+                    continue
+                if not fresh:
+                    if previous is not None and previous[1] == start:
+                        previous[1] = end
+                        continue
+                    group = group[-1:]
+                entry = [start, end, group]
+                if inline:
+                    entry.append([[name, fmap[f], line]
+                                  for name, f, line in inline])
+                lines.append(entry)
+                previous = entry
+            for name, seg, offset, mfile, mline in doc['labels']:
+                addr = self._dbg_addr(module, seg, offset)
+                if addr is not None:
+                    labels.append([name, addr, idx,
+                                   1 if name in module.publics else 0])
+
+            def where(triple):
+                seg, offset, run = triple
+                if run is not None:
+                    return run & 0xFFFF
+                return self._dbg_addr(module, seg, offset)
+
+            def place(position):
+                return self._dbg_addr(module, position[0], position[1])
+
+            for func in doc['funcs']:
+                ix = func.get('ix')
+                if where(func['start']) is None:
+                    continue
+                funcs.append({
+                    'name': func['name'], 'module': idx,
+                    'file': None if func['file'] is None
+                    else fmap[func['file']],
+                    'line': func['line'], 'frame': func['frame'],
+                    'pops': func['pops'], 'start': where(func['start']),
+                    'end': where(func['end']) if func['end'] else None,
+                    'ix': [place(ix[0]), place(ix[1])] if ix else None})
+            for begin, finish in doc['noopt']:
+                if where(begin) is not None and where(finish) is not None:
+                    noopt.append([where(begin), where(finish)])
+
+        asm.sort(key=lambda row: (row[0], row[1]))
+        lines.sort(key=lambda row: (row[0], row[1]))
+        labels.sort(key=lambda row: (row[1], row[0]))
+        funcs.sort(key=lambda func: func['start'])
+        moved.sort()
+        return {'format': debuginfo.DBG_FORMAT,
+                'version': debuginfo.DBG_VERSION,
+                'producer': f'ul80 {__version__}',
+                'files': files, 'modules': modules, 'lines': lines,
+                'asm': asm, 'labels': labels, 'funcs': funcs,
+                'noopt': noopt, 'moved': moved, 'dropped_rows': dropped}
+
     def save_sym(self, filename):
         """Save symbol table file (.SYM) compatible with SID/ZSID debuggers.
 
@@ -1893,6 +2105,33 @@ def save_equ_text(linker):
             addr = linker._global_address(name)[0] & 0xFFFF
             lines.append(f"{name}\tEQU\t0{addr:04X}H\n")
     return ''.join(lines)
+
+
+def image_description(linker, args, output_path):
+    """The `image' of a prog.dbg file: what the output file is, read back
+    from the file as written (docs/debug_info.md, the image check).
+
+    `load' is the address of the first byte of the image; `offset' is the
+    place of that byte in the file; both are None when the file is not a
+    memory image (Intel HEX).
+    """
+    with open(output_path, 'rb') as f:
+        written = f.read()
+    if args.hex:
+        kind, load, offset = 'hex', None, None
+    elif args.prl or args.spr:
+        kind, load, offset = ('spr' if args.spr else 'prl'), args.origin, 256
+    elif args.bin:
+        span = linker.image_span(args.origin)
+        kind, load, offset = 'bin', (span[0] if span else args.origin), 0
+    else:
+        kind, load, offset = 'com', min(linker.output_base,
+                                        linker.code_base), 0
+    return {'file': os.path.basename(str(output_path)), 'kind': kind,
+            'length': len(written),
+            'sha256': debuginfo.sha256_hex(written),
+            'load': load, 'offset': offset,
+            'model': 'cpm' if kind == 'com' else 'flat'}
 
 
 def _hex_arg(text):
@@ -1973,6 +2212,16 @@ def main():
                              'the stack (with --ram-end or --ram-size)')
     parser.add_argument('--verbose', action='store_true',
                         help='Print a one-line ROM and RAM usage summary')
+    parser.add_argument('--debug-info', action='store_true',
+                        help='Also write NAME.dbg beside the output file: the '
+                             'addresses of the source lines, the routines and '
+                             'all labels, from the .dbm file of each module '
+                             '(beside its .rel, or in the library), and the '
+                             'length and SHA-256 of the output file '
+                             '(docs/debug_info.md). The output file is the '
+                             'same with and without it')
+    parser.add_argument('--debug-file', metavar='FILE', default=None,
+                        help='Name of the file --debug-info writes')
 
     args = parser.parse_args()
 
@@ -2023,6 +2272,7 @@ def main():
     linker.prl_extra = args.extra
     linker.allow_overlap = args.allow_overlap
     linker.fatal_mult_def = args.fatal_mult_def
+    linker.debug_info = args.debug_info or args.debug_file is not None
 
     # Emit zeros for DS directives (default: True)
     if args.no_ds_zeros:
@@ -2076,7 +2326,8 @@ def main():
                 if lib_mod_key in modules_loaded:
                     continue
                 if undefined.intersection(lib_module.publics):
-                    linker.load_rel_data(lib_module.name, lib_module.data)
+                    linker.load_rel_data(lib_module.name, lib_module.data,
+                                         lib_module.dbm)
                     modules_loaded.add(lib_mod_key)
                     loaded_any = True
 
@@ -2138,6 +2389,18 @@ def main():
     if args.equ_file:
         with open(args.equ_file, 'w') as f:
             f.write(save_equ_text(linker))
+
+    if linker.debug_info:
+        dbg_path = args.debug_file or str(Path(output_path).with_suffix('.dbg'))
+        document = linker.build_debug_info()
+        document = {**{k: document[k] for k in ('format', 'version',
+                                                 'producer')},
+                    'image': image_description(linker, args, output_path),
+                    **{k: v for k, v in document.items()
+                       if k not in ('format', 'version', 'producer')}}
+        with open(dbg_path, 'w', newline='\n', encoding='ascii') as f:
+            f.write(debuginfo.dumps(document, debuginfo.DBG_TABLES))
+        print(f"Debug file -> {dbg_path}")
 
     # Save symbol file if requested
     if args.sym or args.sym_file:

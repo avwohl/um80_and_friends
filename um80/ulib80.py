@@ -19,6 +19,7 @@ from pathlib import Path
 
 from um80 import __version__
 from um80.relformat import RELReader
+from um80 import debuginfo
 
 
 class LibraryError(Exception):
@@ -33,6 +34,7 @@ class Module:
         self.data = data or bytearray()
         self.publics = []  # List of public symbol names
         self.size = len(self.data) if data else 0
+        self.dbm = None  # bytes of the module's .dbm file (--debug-info), or None
 
     def __repr__(self):
         return f"Module({self.name}, {self.size} bytes, {len(self.publics)} publics)"
@@ -43,25 +45,56 @@ class Library:
 
     # Library file format:
     # - Magic: "ULIB" (4 bytes)
-    # - Version: 1 (2 bytes)
+    # - Version: 1 or 2 (2 bytes)
     # - Module count (2 bytes)
     # - For each module:
     #   - Name length (1 byte)
     #   - Name (N bytes)
     #   - Data offset (4 bytes)
     #   - Data size (4 bytes)
+    #   - Version 2 only: .dbm size (4 bytes), 0 for none
     #   - Public count (2 bytes)
     #   - For each public:
     #     - Symbol length (1 byte)
     #     - Symbol name (N bytes)
-    # - Module data (concatenated)
+    # - Module data (concatenated); version 2: each module's .dbm bytes
+    #   follow the module's own data
+    #
+    # A library is written as version 1 when no module has a .dbm, so the
+    # file is the same as before --debug-info existed.  Both versions load.
 
     MAGIC = b'ULIB'
     VERSION = 1
+    VERSION_DEBUG = 2
 
     def __init__(self):
         self.modules = []  # List of Module objects
         self.symbol_index = {}  # symbol_name -> module_name
+
+    @staticmethod
+    def read_dbm(filename, rel_data, whole):
+        """The bytes of the .dbm beside `filename' (a .REL), or None.
+
+        A .dbm made for another .REL (its length or SHA-256 differ) is
+        refused with a warning.  `whole' is true when the .REL is stored as
+        it is, so that the check applies.
+        """
+        path = Path(filename).with_suffix('.dbm')
+        if not path.exists():
+            return None
+        data = path.read_bytes()
+        document = debuginfo.load_dbm(data)
+        if document is None:
+            print(f"Warning: {path} is not a .dbm file of this version: "
+                  "not stored", file=sys.stderr)
+            return None
+        rel = document.get('rel') or {}
+        if whole and (rel.get('length') != len(rel_data)
+                      or rel.get('sha256') != debuginfo.sha256_hex(rel_data)):
+            print(f"Warning: {path} was made for another {filename}: not "
+                  "stored", file=sys.stderr)
+            return None
+        return data
 
     def add_rel_file(self, filename):
         """Add a .REL file to the library: each module in it.
@@ -79,6 +112,10 @@ class Library:
         parts = self.split_modules(data)
         if len(parts) <= 1:
             parts = [(stem, data)]
+        dbm = self.read_dbm(filename, data, len(parts) == 1)
+        dbm_module = None
+        if dbm is not None:
+            dbm_module = (debuginfo.load_dbm(dbm).get('module') or '').upper()
         added = []
         for name, part in parts:
             name = name.upper() or stem
@@ -93,6 +130,11 @@ class Library:
 
             # Parse the REL data to extract public symbols
             module.publics = self._extract_publics(part)
+            # The .dbm goes with the module of its own name; a .REL of one
+            # module takes it whatever the stored name is.
+            if dbm is not None and (len(parts) == 1
+                                    or dbm_module == name.upper()):
+                module.dbm = dbm
 
             # Update symbol index
             for sym in module.publics:
@@ -183,10 +225,12 @@ class Library:
 
     def save(self, filename):
         """Save library to file."""
+        version = self.VERSION_DEBUG if any(m.dbm for m in self.modules) \
+            else self.VERSION
         with open(filename, 'wb') as f:
             # Write header
             f.write(self.MAGIC)
-            f.write(struct.pack('<H', self.VERSION))
+            f.write(struct.pack('<H', version))
             f.write(struct.pack('<H', len(self.modules)))
 
             # Calculate data offsets
@@ -195,6 +239,8 @@ class Library:
             for mod in self.modules:
                 index_size += 1 + len(mod.name.encode('ascii'))  # Name
                 index_size += 4 + 4  # Offset + size
+                if version == self.VERSION_DEBUG:
+                    index_size += 4  # .dbm size
                 index_size += 2  # Public count
                 for pub in mod.publics:
                     index_size += 1 + len(pub.encode('ascii'))
@@ -211,6 +257,10 @@ class Library:
                 f.write(struct.pack('<I', data_offset))
                 f.write(struct.pack('<I', len(mod.data)))
                 data_offset += len(mod.data)
+                if version == self.VERSION_DEBUG:
+                    dbm_size = len(mod.dbm) if mod.dbm else 0
+                    f.write(struct.pack('<I', dbm_size))
+                    data_offset += dbm_size
 
                 # Publics
                 f.write(struct.pack('<H', len(mod.publics)))
@@ -222,6 +272,8 @@ class Library:
             # Write module data
             for mod in self.modules:
                 f.write(mod.data)
+                if version == self.VERSION_DEBUG and mod.dbm:
+                    f.write(mod.dbm)
 
     @classmethod
     def load(cls, filename):
@@ -248,7 +300,7 @@ class Library:
                 return lib
 
             version = struct.unpack('<H', f.read(2))[0]
-            if version != cls.VERSION:
+            if version not in (cls.VERSION, cls.VERSION_DEBUG):
                 raise LibraryError(f"Unsupported library version: {version}")
 
             module_count = struct.unpack('<H', f.read(2))[0]
@@ -261,6 +313,9 @@ class Library:
 
                 offset = struct.unpack('<I', f.read(4))[0]
                 size = struct.unpack('<I', f.read(4))[0]
+                dbm_size = 0
+                if version == cls.VERSION_DEBUG:
+                    dbm_size = struct.unpack('<I', f.read(4))[0]
 
                 pub_count = struct.unpack('<H', f.read(2))[0]
                 publics = []
@@ -269,15 +324,17 @@ class Library:
                     pub = f.read(pub_len).decode('ascii')
                     publics.append(pub)
 
-                modules_info.append((name, offset, size, publics))
+                modules_info.append((name, offset, size, publics, dbm_size))
 
             # Read module data
-            for name, offset, size, publics in modules_info:
+            for name, offset, size, publics, dbm_size in modules_info:
                 f.seek(offset)
                 data = f.read(size)
 
                 mod = Module(name, bytearray(data))
                 mod.publics = publics
+                if dbm_size:
+                    mod.dbm = f.read(dbm_size)
                 lib.modules.append(mod)
 
                 # Update symbol index
@@ -326,7 +383,8 @@ def cmd_list(args):
     print()
 
     for mod in lib.modules:
-        print(f"  {mod.name:12s}  {mod.size:6d} bytes  {len(mod.publics):3d} publics")
+        debug = f"  {len(mod.dbm):6d} bytes debug info" if mod.dbm else ""
+        print(f"  {mod.name:12s}  {mod.size:6d} bytes  {len(mod.publics):3d} publics{debug}")
 
     return 0
 
@@ -386,6 +444,11 @@ def cmd_extract(args):
         with open(outfile, 'wb') as f:
             f.write(mod.data)
         print(f"  Extracted: {name} -> {outfile}")
+        if mod.dbm:
+            dbm_file = f"{name.lower()}.dbm"
+            with open(dbm_file, 'wb') as f:
+                f.write(mod.dbm)
+            print(f"  Extracted: {name} debug info -> {dbm_file}")
 
     return 0
 
@@ -449,6 +512,8 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""Examples:
   ulib80 -c mylib.lib foo.rel bar.rel    Create library from REL files
+                                         (a foo.dbm beside foo.rel is stored
+                                         with the module)
   ulib80 -l mylib.lib                    List modules in library
   ulib80 -p mylib.lib                    List public symbols
   ulib80 -x mylib.lib                    Extract all modules

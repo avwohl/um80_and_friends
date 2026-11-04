@@ -18,6 +18,38 @@ All notable changes to the um80 toolchain are documented here.
   .com, .prl or .spr output, `--fill` above FF, `--bin --rom-size` without
   `-p`, and data past 10000H with `-d` are now errors.
 
+- Fixes in the same feature, before release: a COMMON block named in lower
+  case (`COMMON /blk/`) lost its rows in prog.dbg, because um80 wrote the
+  segment as `COMMON:blk` and the .rel stores `BLK` (measured: `dropped_rows`
+  was 1 for one row, 2 for two modules sharing a block; now the later
+  module's row is kept and the earlier one dropped, `dropped_rows` 1). The
+  block name is now upper case in the .dbm and in ul80. A DS in DSEG with
+  `--rom-data` is now in `moved`. The .dbm and .dbg files are written with LF
+  line ends on Windows. Without `--debug-info` um80 no longer records the
+  position of macro body lines.
+
+- `um80 --debug-info`, `ulib80` container version 2 and `ul80 --debug-info`
+  (specification: docs/debug_info.md, phase 2 of the cpmemu debugger plan).
+  um80 writes `NAME.dbm` beside the .rel: for each instruction and data
+  statement its segment, load offset, length, run address (.PHASE), the
+  physical source line (the call line for a macro or REPT, the body line
+  too for a macro), and the state of the whole-line `;#` markers (`;#file`,
+  `;#line`, `;#inline`, `;#endinline`, `;#func`, `;#endfunc`, `;#noopt`).
+  A DS with no fill is a row with no bytes. All labels are in the file, with
+  no PUBLIC needed. Lines that come together with no byte between them are a
+  group, in source order; the last line is primary and only `nostmt` is not
+  a step point. ulib80 stores the .dbm of a module with the module (version 2
+  of the container, written only when a .dbm exists; ul80 reads 1 and 2).
+  ul80 relocates each row, drops the rows of bytes that a later module
+  loaded over, and writes `NAME.dbg` with the line, assembler line, label,
+  routine and moved-address tables, and the length and SHA-256 of the output
+  file as written. The .rel, the output file, the .SYM and the .PRN are the
+  same with and without the options: 747 sources (all of tests/, uc80's
+  lib, uada80's runtime and cpmemu's tests/*.asm) give byte-identical .rel
+  files and the same messages before and after, and with `--debug-info`.
+  Tests are in tests/test_debug_info.py (47 tests; the suite went from 1415 to
+  1462 passed).
+
 ### Fixed
 - Messages and the .PRN listing now give the physical line of the source
   file. Before, um80 counted the lines of each macro or REPT expansion. A file

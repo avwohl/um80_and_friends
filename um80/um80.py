@@ -16,6 +16,7 @@ from um80 import __version__
 from um80.opcodes_8080 import *
 from um80.opcodes_z80 import *
 from um80.relformat import *
+from um80 import debuginfo
 
 
 class SrcLine(int):
@@ -438,6 +439,24 @@ class Macro:
         self.name = name.upper()
         self.params = params  # List of parameter names
         self.body = body  # List of source lines
+        # Where each body line was written, when --debug-info keeps them.
+        self.body_pos = getattr(body, 'positions', None)
+
+
+class BodyLines(list):
+    """The lines of a macro body being collected, and where each was
+    written ((file, line) of the source), for --debug-info."""
+
+    def __init__(self, where):
+        super().__init__()
+        self.where = where
+        self.positions = []
+
+    def append(self, item):
+        super().append(item)
+        position = self.where()
+        if position is not None:
+            self.positions.append(position)
 
 
 class Assembler:
@@ -499,7 +518,7 @@ class Assembler:
         # Macro definition collection state
         self.collecting_macro = None  # Name of macro being defined
         self.macro_params = []  # Parameters of macro being defined
-        self.macro_body = []  # Lines of macro being defined
+        self.macro_body = BodyLines(self._body_position)  # Lines of macro being defined
         self.macro_nest_depth = 0  # For nested MACRO/ENDM
 
         # REPT/IRP/IRPC state
@@ -547,6 +566,18 @@ class Assembler:
         self.current_line_marks = {}
         self.current_line_start_loc = 0
         self.current_line_start_seg = 'CSEG'
+
+        # --debug-info (um80/debuginfo.py, docs/debug_info.md): rows are
+        # recorded where the listing collects its bytes.
+        self.debug_info = False
+        self.dbg = None             # the DebugCollector, in pass 2
+        self.module_name_used = None  # the module name the .rel carries
+        self.debug_source = None    # the main source file, as given
+        self.dbg_start = None       # (segment, loc, run, bytes so far) at the
+                                    # start of the statement
+        self.dbg_kind = 'd'         # 'i' once an instruction was assembled
+        self.dbg_space = None       # (segment, loc, run, count) of a DS
+        self.body_pos = None        # (file, line) of the macro body line
 
         # Include file handling
         self.include_stack = []  # Stack of (filename, line_num) for nested includes
@@ -747,14 +778,18 @@ class Assembler:
 
     def _start_listing_line(self):
         """Prepare for listing capture at start of line processing."""
-        if self.pass_num == 2 and self.generate_listing:
+        if self.pass_num == 2 and (self.generate_listing or self.debug_info):
             self.current_line_start_loc = self.pc
             self.current_line_start_seg = self.current_seg
             self.current_line_bytes = []
             self.current_line_marks = {}
+            if self.debug_info:
+                self.dbg_begin()
 
     def _save_listing_entry(self, line):
         """Save a listing entry for the current line."""
+        if self.pass_num == 2 and self.debug_info:
+            self.dbg_record()
         if self.pass_num == 2 and self.generate_listing:
             self.listing_lines.append({
                 'line_num': self.src_line,
@@ -764,6 +799,79 @@ class Assembler:
                 'marks': dict(self.current_line_marks),
                 'source': line
             })
+
+    def _body_position(self):
+        """Where a macro body line is written, or None without
+        --debug-info (nothing is kept then)."""
+        return self._position() if self.debug_info else None
+
+    def _position(self):
+        """(file, line) of the physical source line being assembled."""
+        return (self.src_file, int(self.src_line))
+
+    def dbg_segment(self):
+        """The name of the segment the location counter is in, as a .dbm
+        file gives it."""
+        if self.current_common is not None:
+            return debuginfo.seg_name(ADDR_COMMON_REL, self.current_common)
+        return self.current_seg
+
+    def dbg_where(self):
+        """[segment, load offset, run address or None] of the next byte."""
+        run = self.pc if self.phase is not None else None
+        return [self.dbg_segment(), self.loc, run]
+
+    def dbg_begin(self):
+        """Note where a statement starts (--debug-info)."""
+        seg, loc, run = self.dbg_where()
+        self.dbg_start = (seg, loc, run, len(self.current_line_bytes))
+        self.dbg_kind = 'd'
+        self.dbg_space = None
+
+    def dbg_record(self):
+        """Record the bytes the statement just assembled (--debug-info).
+
+        Called from _save_listing_entry(), the place where the listing
+        collects the bytes, so one row is one instruction or one data
+        statement, in pass 2 only.  A DS with no fill has a row with no
+        bytes; a line that makes no bytes has none.
+        """
+        start = self.dbg_start
+        if start is None or self.dbg is None:
+            return
+        seg, loc, run, done = start
+        count = len(self.current_line_bytes) - done
+        kind = self.dbg_kind
+        if count <= 0 and self.dbg_space is not None:
+            seg, loc, run, count = self.dbg_space
+            kind = 's'
+        if count > 0:
+            body = self.body_pos if self.macro_level and self.body_pos \
+                and self.body_pos[1] else None
+            self.dbg.row(seg, loc, count, run, self.src_file,
+                         int(self.src_line), kind, body)
+        # The next statement starts where this one ended.
+        self.dbg_begin()
+
+    def define_label(self, name):
+        """Define label `name' at the location counter."""
+        ev = self.here()
+        self.define_value(name, ev)
+        if self.pass_num == 2 and self.dbg is not None:
+            seg = debuginfo.seg_name(ev.seg, ev.block)
+            offset = ev.value & 0xFFFF if seg == 'ABS' else ev.value
+            self.dbg.label(name.upper(), seg, offset, self.src_file,
+                           int(self.src_line))
+
+    def dbg_marker_line(self, line):
+        """A ;# marker line, in pass 2 with --debug-info."""
+        try:
+            found = debuginfo.parse_marker(line)
+        except debuginfo.MarkerError as e:
+            self.warning(f"Malformed debug marker ({e}): {line.strip()}")
+            return
+        if found:
+            self.dbg.marker(found[0], found[1], self.dbg_where())
 
     def define_symbol(self, name, value, seg_type=None, public=False):
         """Define or update a symbol (a label, or EQU of an assembly-time value)."""
@@ -2378,7 +2486,7 @@ class Assembler:
 
     def list_field(self, values, mark=None):
         """Add the bytes of one field to the listing line, then its mark."""
-        if self.pass_num == 2 and self.generate_listing:
+        if self.pass_num == 2 and (self.generate_listing or self.debug_info):
             self.current_line_bytes.extend(v & 0xFF for v in values)
             if mark:
                 self.current_line_marks[len(self.current_line_bytes) - 1] = mark
@@ -4059,6 +4167,8 @@ class Assembler:
                     new_loc = self.loc + val
                     self.select_common(self.current_common)
                     self.output.write_set_location(self.seg_type, new_loc)
+                    if self.dbg is not None and val:
+                        self.dbg_space = tuple(self.dbg_where()) + (val,)
                 self.loc += val
                 self.mark_location()
             return True
@@ -4463,7 +4573,7 @@ class Assembler:
             self.collecting_macro = label.upper()
             self.block_open_line = self.pos
             self.macro_params = params
-            self.macro_body = []
+            self.macro_body = BodyLines(self._body_position)
             self.macro_nest_depth = 0
             return True
 
@@ -4871,6 +4981,10 @@ class Assembler:
         """Process a single source line."""
         self.line_num += 1
         self._start_listing_line()
+        if (self.dbg is not None and ';' in line
+                and self.collecting_macro is None and not self.repeat_stack
+                and not self.cond_false_depth):
+            self.dbg_marker_line(line)
         if self.dri and '\n' in line and self._line_feed_in_statement(line):
             # An 8AH that does not follow a CR (mac_source_lines()).
             self.error("A line feed outside a string or a comment - an 8AH,"
@@ -5378,7 +5492,7 @@ class Assembler:
                     )
                     self.collecting_macro = None
                     self.macro_params = []
-                    self.macro_body = []
+                    self.macro_body = BodyLines(self._body_position)
             else:
                 self.macro_body.append(line_for_macro)
             return
@@ -5425,7 +5539,7 @@ class Assembler:
                         'IF1', 'IF2', 'IFB', 'IFNB', 'IFIDN', 'IFDIF',
                         'COND', 'ELSE', 'ENDIF', 'ENDC'):
             if label and self.cond_false_depth == 0:
-                self.define_value(label, self.here())
+                self.define_label(label)
             self.assemble_pseudo_op(operator, operands, label)
             self._save_listing_entry(line)
             return
@@ -5448,7 +5562,7 @@ class Assembler:
                      and upper_op not in self.macros)
         if label and not org_label and (z80_set or upper_op not in
                                         ('EQU', 'SET', 'DEFL', 'ASET', 'MACRO')):
-            self.define_value(label, self.here())
+            self.define_label(label)
 
         if not operator:
             if operands:
@@ -5481,17 +5595,19 @@ class Assembler:
         # Try CPU instruction
         if self.z80_mode:
             if self.assemble_z80_instruction(operator, operands):
+                self.dbg_kind = 'i'
                 self._save_listing_entry(line)
                 return
         else:
             if self.assemble_instruction(operator, operands):
+                self.dbg_kind = 'i'
                 self._save_listing_entry(line)
                 return
 
         # Try pseudo-op
         if self.assemble_pseudo_op(operator, operands, label):
             if org_label:
-                self.define_value(label, self.here())
+                self.define_label(label)
             self._save_listing_entry(line)
             return
 
@@ -5991,9 +6107,12 @@ class Assembler:
         # Expand body lines with parameter substitution
         self.macro_level += 1
         cond_depth = len(self.cond_stack)
-        for body_line in macro.body:
+        saved_body_pos = self.body_pos
+        for body_index, body_line in enumerate(macro.body):
             if self.ended:
                 break
+            self.body_pos = macro.body_pos[body_index] \
+                if macro.body_pos else None
             # The LOCAL statements of the line, which may be any of the
             # statements a `!' separates (_local_names()).  A line of LOCALs
             # only is not assembled.  A LOCAL declares its names for the
@@ -6050,6 +6169,7 @@ class Assembler:
             # carries them on).
             self.end_conditionals(cond_depth)
 
+        self.body_pos = saved_body_pos
         self.macro_level -= 1
 
     def _substitute_body_line(self, line, subst, local_syms, suffix, cuts):
@@ -6154,7 +6274,7 @@ class Assembler:
         EXITM is, as MACRO-80, MAC and RMAC define it; um80 did not."""
         label = self.parse_line(line)[0]
         if label:
-            self.define_value(label, self.here())
+            self.define_label(label)
 
     @staticmethod
     def _irpc_string(operands):
@@ -6401,7 +6521,7 @@ class Assembler:
         self.exitm_pending = False
         self.collecting_macro = None
         self.macro_params = []
-        self.macro_body = []
+        self.macro_body = BodyLines(self._body_position)
         self.macro_nest_depth = 0
         self.phase = None
 
@@ -6438,6 +6558,17 @@ class Assembler:
                     else self.repeat_stack[-1][0])
             self.warning(f"Unterminated {kind} (line {self.block_open_line}): no ENDM,"
                          " so nothing after it was assembled")
+
+    def debug_document(self, rel_bytes):
+        """The .dbm document of the module just assembled (--debug-info)."""
+        def resolve(name):
+            sym = self.symbols.get(name.upper())
+            if sym is None or not sym.defined or sym.external:
+                return None
+            seg = debuginfo.seg_name(sym.seg_type, sym.common_block)
+            return [seg, sym.value]
+        return self.dbg.finish(self.module_name_used, self.dbg.main_source,
+                               rel_bytes, resolve)
 
     def write_listing(self, filepath):
         """Write the listing file."""
@@ -6684,6 +6815,9 @@ class Assembler:
             # Held back like an ASEG directive's, so a source that starts
             # with an ORG does not say it loads at 0000H.
             self.output.defer_set_location(ADDR_ABSOLUTE, 0)
+        if self.debug_info:
+            self.dbg = debuginfo.DebugCollector(
+                self.debug_source or str(source_file), self.warning)
         self.assemble_pass(lines, 2)
 
         if self.errors:
@@ -6692,6 +6826,7 @@ class Assembler:
         body = self.output
         self.output = RELWriter(truncate_symbols=self.truncate_symbols)
         name = self.module_name or self.title_name or Path(source_file).stem.upper()[:6]
+        self.module_name_used = name
         self.output.write_program_name(name)
         for entry_name in entry_names:
             self.output.write_entry_symbol(entry_name)
@@ -6827,6 +6962,12 @@ def main():
                         help='Include file before source (can be repeated)')
     parser.add_argument('-g', '--globals', action='store_true',
                         help='Export all symbols as PUBLIC (for debug symbol files)')
+    parser.add_argument('--debug-info', action='store_true',
+                        help='Also write NAME.dbm beside the .rel file: for each '
+                             'instruction and data statement its bytes, its '
+                             'source line and the ;# markers in force, and all '
+                             'labels (docs/debug_info.md). The .rel is the same '
+                             'with and without it')
     parser.add_argument('-t', '--truncate', action='store_true',
                         help='Cut PUBLIC, EXTRN and module names to 6 characters, as M80 does')
     parser.add_argument('--aseg', action='store_true',
@@ -6879,8 +7020,17 @@ def main():
         asm.include_paths = args.include
     if args.listing:
         asm.generate_listing = True
+    if args.debug_info:
+        asm.debug_info = True
+        asm.debug_source = args.input
     pre_items = getattr(args, 'pre_items', None) or []
     success = asm.assemble(args.input, pre_items=pre_items)
+    rel_bytes = dbm_text = None
+    if success:
+        rel_bytes = asm.output.get_bytes()
+        if args.debug_info:
+            dbm_text = debuginfo.dumps(asm.debug_document(rel_bytes),
+                                       debuginfo.DBM_TABLES)
 
     # Report errors and warnings
     for err in asm.errors:
@@ -6893,7 +7043,12 @@ def main():
 
     # Write output
     with open(output_path, 'wb') as f:
-        f.write(asm.output.get_bytes())
+        f.write(rel_bytes)
+
+    if dbm_text is not None:
+        with open(Path(output_path).with_suffix('.dbm'), 'w', newline='\n',
+                  encoding='ascii') as f:
+            f.write(dbm_text)
 
     # Write listing file if requested
     if args.listing:

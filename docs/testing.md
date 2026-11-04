@@ -1,6 +1,6 @@
 # Testing
 
-The test suite (1322 tests) runs under `pytest`:
+The test suite (1462 tests) runs under `pytest`:
 
 ```bash
 pip install -e ".[dev]"
@@ -28,6 +28,7 @@ Digital Research's MAC 2.0 and RMAC 1.1:
 | `test_repeat_blocks.py` | Nested REPT/IRP/IRPC, IRP sublists, EXITM |
 | `test_radix_conditional.py` | Decimal `.RADIX` operand, unterminated / duplicate-`ELSE` diagnostics |
 | `test_symbol_class.py` | SET vs. EQU/label redefinability classes |
+| `test_debug_info.py` | `um80 --debug-info`, ulib80 container version 2 and `ul80 --debug-info` (docs/debug_info.md): the `.rel`, `.com`, `.SYM` and `.PRN` files are the same with and without the options; the label addresses of `prog.dbg` are the `.SYM` addresses; each instruction row has the line of the `.PRN`, a macro row has the body line; a JR promotion, a `.PHASE` block, a DS with no fill and a library module; the D4 merge rule and `nostmt`; the marker grammar and its warnings; a row that a later module overwrote is dropped; `--rom-data` load addresses; the SHA-256 of the output file; a stale `.dbm`; a version 1 library; the line rows of `tools/dbg2elf_proto/sumto.mac` equal the rows of the prototype |
 | `test_source_position.py` | Messages and the .PRN listing give the physical line of the source file (after a macro or REPT, in an INCLUDE file, with -e and --pre text) |
 | `test_z80_and_charconst.py` | `LD A,I`/`LD A,R` encoding, two-character constant byte order |
 | `test_linker_segments.py` | Absolute ASEG placement, mixed CSEG+ASEG, COMMON-only modules |
