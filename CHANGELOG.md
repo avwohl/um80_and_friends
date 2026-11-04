@@ -50,6 +50,37 @@ All notable changes to the um80 toolchain are documented here.
   Tests are in tests/test_debug_info.py (47 tests; the suite went from 1415 to
   1462 passed).
 
+- `udb80`, a source-level debugger for cpmemu (phase 3 of the cpmemu
+  debugger plan; user view in docs/udb80.md; console script `udb80`, module
+  `um80/udb80.py`). It reads the `prog.dbg` that `ul80 --debug-info` writes
+  and refuses a file that does not match the program (the D9 check: length
+  and SHA-256 of the .COM file, and of guest memory at 0100H). It speaks the
+  GDB remote protocol to `cpmemu --gdb`, and starts cpmemu itself with
+  `--run 'cpmemu ARGS'` (port 0 and a port file) or connects with
+  `--connect HOST:PORT`. Commands: `break`/`tbreak` (FILE:LINE, routine or
+  label, `*ADDR`; a line with many addresses gets a breakpoint at each),
+  `delete`, `continue`, `step` (the D4 range rule, one `vCont;r` packet for a
+  line), `next` and `finish` (a temporary breakpoint at the return address
+  that counts only when the shadow stack is back to its depth, with an SP
+  fallback when the stub has no shadow stack), `stepi`, `bt` (the shadow
+  stack from `monitor bt`, each frame marked `[shadow]`, or `[guess]` from a
+  stack scan), `list`, `disassemble` (the `ud80` decoder), `info registers`,
+  `info symbols`, `info line`, `x`, `print`, `sizes`, and a batch mode
+  (`-ex`, `-x FILE`, `--batch`). `udb80 addr2line [-r] prog.dbg ADDR...`
+  gives the routine and line of each address (for the `--backtrace` output of
+  cpmemu), and `udb80 sizes prog.dbg` gives the bytes of each routine.
+  `next` and `finish` also stop when the frame unwinds past the return
+  address (a longjmp, or POP POP RET): the temporary breakpoint goes on every
+  caller's return address, and a return to one counts when the shadow depth is
+  below the starting depth. Without this change, `next` over such a call ran
+  the program to its exit (measured with two live tests, which fail without
+  the change and pass with it).
+  Tests are in tests/test_udb80.py (23 tests; the suite went from 1464
+  passed, 1 skipped to 1487 passed, 1 skipped). Fifteen of the 23 run a real
+  `cpmemu --gdb` on `tools/dbg2elf_proto/sumto.mac` and on a recursive
+  assembler program, and skip with the reason when no cpmemu is found;
+  `UDB80_REQUIRE_CPMEMU=1` makes that skip a failure.
+
 ### Fixed
 - Messages and the .PRN listing now give the physical line of the source
   file. Before, um80 counted the lines of each macro or REPT expansion. A file
