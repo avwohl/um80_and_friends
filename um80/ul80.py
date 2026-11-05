@@ -1954,6 +1954,7 @@ class Linker:
             return file_index[path]
 
         asm, lines, labels, funcs, noopt, moved = [], [], [], [], [], []
+        var_rows, types = [], {}
         modules = []
         dropped = 0
         for idx, module in enumerate(self.modules):
@@ -2062,17 +2063,71 @@ class Linker:
                 if where(begin) is not None and where(finish) is not None:
                     noopt.append([where(begin), where(finish)])
 
+            # Variables (revision 2): the types are merged by name, and a
+            # name with another definition in an earlier module is renamed.
+            if doc.get('types') or doc.get('vars'):
+                mapping, added = debuginfo.merge_types(
+                    types, doc.get('types') or {})
+                for name, definition in added.items():
+                    types.setdefault(name, definition)
+                starts = {f['name']: where(f['start'])
+                          for f in doc['funcs']}
+                for raw in doc.get('vars') or []:
+                    row = self._dbg_var(module, idx, raw, fmap, starts,
+                                        mapping, where)
+                    if row is not None:
+                        var_rows.append(row)
+
         asm.sort(key=lambda row: (row[0], row[1]))
         lines.sort(key=lambda row: (row[0], row[1]))
         labels.sort(key=lambda row: (row[1], row[0]))
         funcs.sort(key=lambda func: func['start'])
         moved.sort()
-        return {'format': debuginfo.DBG_FORMAT,
-                'version': debuginfo.DBG_VERSION,
-                'producer': f'ul80 {__version__}',
-                'files': files, 'modules': modules, 'lines': lines,
-                'asm': asm, 'labels': labels, 'funcs': funcs,
-                'noopt': noopt, 'moved': moved, 'dropped_rows': dropped}
+        var_rows.sort(key=lambda r: r[4] if r[4] is not None else -1)
+        document = {'format': debuginfo.DBG_FORMAT,
+                    'version': debuginfo.DBG_VERSION,
+                    'producer': f'ul80 {__version__}',
+                    'files': files, 'modules': modules, 'lines': lines,
+                    'asm': asm, 'labels': labels, 'funcs': funcs,
+                    'noopt': noopt, 'moved': moved,
+                    'dropped_rows': dropped}
+        if var_rows or types:
+            document['revision'] = debuginfo.REVISION
+            document['vars'] = var_rows
+            document['types'] = types
+        return document
+
+    def _dbg_var(self, module, idx, raw, fmap, starts, mapping, where):
+        """A variable row of a .dbm file as a row of prog.dbg:
+        [name, type, kind, location, routine start, scope, ranges, decl,
+        module] with addresses instead of segment offsets.  A location
+        in a segment that the module does not have becomes null."""
+        name, vtype, kind, loc, func, scope, ranges, decl = raw[:8]
+        why = raw[8] if len(raw) > 8 else None
+        if loc is not None and loc[0] == 'at':
+            addr = self._dbg_addr(module, loc[1], loc[2])
+            loc = None if addr is None else ['at', addr & 0xFFFF]
+            if loc is None:
+                why = why or 'segment-not-linked'
+        out_ranges = None
+        if ranges:
+            out_ranges = []
+            for a, b in ranges:
+                start = self._dbg_addr(module, a[0], a[1])
+                end = self._dbg_addr(module, b[0], b[1])
+                if start is None or end is None:
+                    loc, out_ranges = None, None
+                    why = why or 'segment-not-linked'
+                    break
+                out_ranges.append([start, end])
+        row = [name, debuginfo.rename_type_refs(vtype, mapping), kind, loc,
+               starts.get(func) if func else None,
+               [fmap[scope[0]], scope[1], scope[2]] if scope else None,
+               out_ranges,
+               [fmap[decl[0]], decl[1]] if decl else None, idx]
+        if why:
+            row.append(why)
+        return row
 
     def save_sym(self, filename):
         """Save symbol table file (.SYM) compatible with SID/ZSID debuggers.

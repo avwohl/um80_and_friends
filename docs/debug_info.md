@@ -59,7 +59,7 @@ does not read a marker in a false conditional. um80 does not read a marker
 while um80 collects the body of a macro or of a REPT. A marker in a macro
 body takes effect when the macro runs.
 
-The kind and the words `nostmt`, `begin` and `end` can be in upper or
+The kind and the words `nostmt`, `begin`, `end` and `none` can be in upper or
 lower case. Paths and names keep their case. A number is decimal digits.
 
 | Marker | Meaning |
@@ -72,6 +72,8 @@ lower case. Paths and names keep their case. A number is decimal digits.
 | `;#endfunc [NAME]` | The routine ends at the next byte. |
 | `;#noopt begin` | The start of a region that no optimizer changes. |
 | `;#noopt end` | The end of the region. |
+| `;#type NAME [key=value ...]` | The definition of a named type (struct, union, enum or typedef). See [Variables](#variables). |
+| `;#var NAME TYPE [key=value ...]` | A variable: its type, where it lives and where its name is valid. See [Variables](#variables). |
 
 ### Fields
 
@@ -142,6 +144,131 @@ Example, from `tools/dbg2elf_proto/sumto.mac`:
 `ld hl,0` has the group lines 15 and 16, and line 16 is primary. `jp 0`
 has line 16.
 
+## Variables
+
+A `;#var` marker describes one variable. A `;#type` marker describes one
+named type. The compiler writes both after its last text pass, because only
+the final text tells where a variable lives.
+
+### Types
+
+A type is a text with no blanks. The grammar:
+
+| Text | Meaning |
+|---|---|
+| `void` | no value |
+| `NAME:SIZE` | a base type with its size in bytes, for example `int:2`, `uchar:1`, `long:4` |
+| `*T` | pointer to `T` (2 bytes) |
+| `[N]T` | array of `N` elements of `T`. `[]T` has no known size. |
+| `func(T)` | function that returns `T` |
+| `struct:TAG`, `union:TAG`, `enum:TAG` | a named aggregate or enumeration. An anonymous one has the tag `.N`. |
+| `typedef:NAME` | a typedef name |
+| `raw:N` | `N` bytes of unknown type |
+
+The base names are `char`, `schar`, `uchar`, `short`, `ushort`, `int`, `uint`,
+`long`, `ulong`, `llong`, `ullong`, `bool`, `float`, `double` and `ldouble`. A
+name that starts with `u` is unsigned (`bool` too). `char` is signed. The size
+comes from the compiler, because the size of `int` depends on its options.
+Qualifiers (`const`, `volatile`) are not recorded.
+
+`;#type` has these forms. A tag and a name use letters, digits and `_ . $ ~`.
+
+```
+;#type struct:pt size=4 members=x:int:2@0,y:int:2@2
+;#type union:u size=2 members=i:int:2@0,c:[2]char:1@0
+;#type enum:color size=2 values=RED=0,GREEN=5
+;#type typedef:byte target=uchar:1
+;#type struct:bits size=2 members=a:uint:2@0#3.0,b:uint:2@0#5.3
+```
+
+A member is `NAME:TYPE@OFFSET`. A bit field adds `#WIDTH.SHIFT`: the width in
+bits, and the bit of the storage unit at `OFFSET` where the field starts (0 is
+the least significant bit). An unknown key is ignored. A second `;#type` with
+the same name and a different content gives a warning, and the first one stays.
+
+### The variable marker
+
+```
+;#var NAME TYPE [kind=KIND] [LOCATION] [range=LABEL:LABEL ...] [scope=F:A-B] [decl=F:L] [why=TEXT]
+```
+
+`NAME` and `TYPE` come first. The other words can be in any order.
+
+- `kind=` is `global`, `static`, `local` or `param`. The default is `global`
+  outside a routine, and `local` inside one. A `static` is a file-scope
+  `static` object or a `static` local.
+- A `;#var` marker between `;#func` and `;#endfunc` belongs to that routine.
+  A marker outside a routine belongs to the program.
+- `LOCATION` is one of these words. With no location word, or with `none`, the
+  value is *not available*.
+  - `at=LABEL`, `at=LABEL+N` or `at=LABEL-N`: the variable is at the address of
+    a label. A local in the shared automatic area is `at=??AUTO+N`. The
+    address is correct while the routine is active, and the compiler shares
+    the area only between routines that are never active together.
+  - `ix=N`: the variable is at IX+N (N can be negative) in the IX frame of the
+    routine. A debugger takes the frame base from the frame records
+    ([frame_records.md](frame_records.md)): the base of an IX frame is the stack
+    address of the return address minus 2.
+  - `reg=R`: the variable is in the register `R` (`A B C D E H L BC DE HL IX IY`
+    and the halves of IX and IY).
+  - `none`: the variable has no place. `why=TEXT` can say why (no blanks).
+- `range=A:B` (repeatable): the variable is valid when `A <= PC < B`. Two
+  labels give the addresses. A variable in a register needs the ranges, because a
+  register holds the local in part of the routine only. A variable with no
+  `range=` is valid in the whole routine.
+- `scope=F:A-B`: the name is visible on the lines `A` to `B` of file `F`. A
+  local is visible from its declaration to the end of its block.
+- `decl=F:L`: the line of the declaration.
+
+The routine, the lines and the ranges together decide when a name stands for
+a variable. A debugger looks up a name in the routine that holds the PC and
+in the blocks that hold the line. Names in an inner block hide names in an
+outer block. The static and global names come last.
+
+The compiler writes `none` and not a guess when it does not know the place. The
+reasons that uc80 gives are `no-storage` (no instruction uses the slot: the
+optimizer removed the variable), `no-frame` (the IX frame was removed) and
+`save-not-paired` (the pushes and pops of the register do not show where the
+register holds the variable).
+
+um80 resolves each label of `at=` and `range=` to a segment and an offset. An
+`at=` label that the module does not define gives a variable with no location.
+um80 writes no warning, because the compiler removes the data of a global that
+nothing uses. A `range=` label that is not defined gives a warning.
+
+### Rows in the files
+
+A row of the `vars` table of a `.dbm` file is
+`[name, type, kind, location, routine, scope, ranges, decl]` and, when the
+variable has a reason, a ninth value `why`.
+
+- `location` is `["at", segment, offset]`, `["ix", N]`, `["reg", "BC"]` or null.
+- `routine` is the name of the routine, or null.
+- `scope` is `[file, first, last]` or null. `decl` is `[file, line]` or null.
+  Both use indexes into `files`.
+- `ranges` is null or a list of `[start, end]` positions `[segment, offset]`.
+
+A row of `vars` in `prog.dbg` is
+`[name, type, kind, location, routine start, scope, ranges, decl, module]` and
+an optional `why`. The location of `at` is `["at", address]`, the routine is
+the start address of the routine, and `ranges` are `[start, end]` addresses.
+The rows are in the order of the routines, and the order of the compiler
+inside a routine.
+
+`types` maps a name to a definition: `{"size": N, "members": [[name, type,
+offset] or [name, type, offset, width, shift], ...]}` for a struct or union,
+`{"size": N, "values": [[name, value], ...]}` for an enum, and
+`{"target": type}` for a typedef.
+
+ul80 merges the types of all modules by name. Two modules that define the
+same name with the same content share one definition. Another module can define the
+same name with other content. That module gets the name `NAME~1` (then `~2`)
+for its own variables and for the types in its own definitions. Two modules
+can thus use `struct node` for two different structures.
+
+A link of modules with no `;#var` marker gives a `prog.dbg` with none of the
+new keys.
+
 ## The .dbm file
 
 A `.dbm` file is JSON. The top level is one object. Each row of the tables
@@ -160,6 +287,14 @@ objects, because a big program gives a small file.
 | `labels` | List of `[name, segment, offset, file, line]`. |
 | `funcs` | List of routine objects, see below. |
 | `noopt` | List of `[start, end]`. Each is a position `[segment, offset, run]`. |
+| `revision` | The number 2. Present only when the module has `types` or `vars`. |
+| `types` | Object: type name to definition. Present only with `revision`. See [Variables](#variables). |
+| `vars` | List of variable rows. Present only with `revision`. See [Variables](#variables). |
+
+The `version` stays 1 when a file gets the keys `revision`, `types` and `vars`.
+A reader of the first revision checks `format` and `version`, and ignores the
+keys that it does not know. A module with no `;#type` and no `;#var` marker
+gets none of the three keys, so its file is the same as before.
 
 The list `files` has the main source file, the INCLUDE files, and the
 files of the `;#file` markers. A `;#file` path that is the same as an
@@ -274,6 +409,9 @@ ul80 writes `prog.dbg` beside the output file, or in the file of
 | `noopt` | List of `[start, end]` addresses. |
 | `moved` | List of `[run, load, length]`. See below. |
 | `dropped_rows` | The number of rows that ul80 dropped. |
+| `revision` | The number 2. Present only when a module has `types` or `vars`. |
+| `vars` | List of variable rows, with addresses. Present only with `revision`. |
+| `types` | Object: type name to definition, for all modules. Present only with `revision`. |
 
 All addresses are run addresses, as the program sees the addresses. Each
 table is in address order. A range `[start, end]` includes `start` and does
@@ -339,10 +477,13 @@ Each byte has an assembler position (the `.mac` file and line) from the
 `lines` table. A debugger shows the source by default, and can show the
 assembler.
 
-The format has room for a third level. A `;#line` marker can have `outer=G:M`: the
-position in a language above the source, for example the BASIC line that
-made a C line. The value is in the groups as the two last values. The
-compilers do not write this field now.
+The format has a third level. A `;#line` marker can have `outer=G:M`: the
+position at the level below the source, for example the C line under a BASIC
+line. The value is in the groups as the two last values. uc80 writes the field
+when a `#line` directive is in effect: the position of the marker is the BASIC
+line that the directive names, and `outer=` is the line of the C file. The
+`.dbm` file and `prog.dbg` carry the value. `udb80` shows the level: see
+[udb80.md](udb80.md#the-outer-level).
 
 ### The image check
 

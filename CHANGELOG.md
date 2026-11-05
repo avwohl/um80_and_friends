@@ -5,6 +5,96 @@ All notable changes to the um80 toolchain are documented here.
 ## [Unreleased]
 
 ### Added
+- Variables (phase 8 of the cpmemu debugger plan) and the `outer=` level (rule
+  D8). The format is in docs/debug_info.md (Variables), the debugger in
+  docs/udb80.md, GDB in docs/gdb.md.
+  - **Format.** Two new markers: `;#type NAME size=.. members=.. | values=.. |
+    target=..` for a struct, union, enum or typedef, and `;#var NAME TYPE
+    [kind=..] [at=LABEL+N | ix=N | reg=R | none] [range=LABEL:LABEL ...]
+    [scope=F:A-B] [decl=F:L] [why=..]`. A type is a text with no blanks
+    (`*struct:node`, `[4]int:2`, `typedef:byte`). The `.dbm` file and `prog.dbg`
+    get the keys `revision` (2), `types` and `vars` **only when a module has a
+    marker**; `version` stays 1. Measured: the installed ul80 and udb80 (main,
+    `da44ce5`) read a revision 2 `.dbm` and `.dbg` and ignore the new keys
+    (the `.com` is the same, byte for byte), and a module with no `;#var` or
+    `;#type` marker gives a `.dbm` and a `.dbg` with the same keys as before
+    (`test_a_module_without_variables_gets_no_new_keys`). The `.rel` file is the
+    same bytes with the markers (`test_the_object_file_is_the_same...`).
+    um80 resolves `at=` and `range=` labels to segment offsets (COMMON blocks
+    too, `??AUTO` is `COMMON:AUTO` in uc80 output); an `at=` label that the
+    module does not define gives a variable with no location and no warning,
+    because uc80 removes the data of a global that nothing uses.
+  - **ul80** relocates the locations and the ranges, gives the routine as a start
+    address, and merges the types of all modules by name. Two modules with
+    the same `struct pt` and different members get `struct:pt` and
+    `struct:pt~1`, and the variables of the second module use `~1`.
+  - **udb80** reads the tables through the new `um80/vardata.py` (standard library
+    only; the GDB commands share the file). New: `print` of variables (`g`,
+    `*p`, `p->m`, `s.m`, `a[i]`, `&x`, `+ - * / %`, strings, enums, bit fields,
+    pointers as hex with the target `<g>` or `"text"`), `info locals`, `info
+    args`, `ptype`, `whatis`, `frame [N]` (`f`), `up`, `down`, and `x` with a
+    variable. The selected frame decides the scope (the routine, and the line
+    for blocks and declarations) and the frame base: the walker of
+    `um80/frames.py` now keeps the stack slot of each return address
+    (`Walker.slots`), and the base of an IX frame is the slot minus 2. A
+    register variable shows only in frame 0 and inside its PC ranges. Every
+    other case that has no place shows `<not available>`.
+  - **Outer level (D8).** `info line` adds `Outer level: line M of "FILE".`;
+    `set level outer` (or `c`) shows the outer position in stops, `frame`,
+    `bt` and `list`; `set level both` shows both; `addr2line` adds `[outer F:L]`
+    and has `--outer`. Nothing that relied on the old form changed: a program
+    with no `outer=` prints the same text as before.
+  - **dbg2elf** writes DWARF types (`DW_TAG_base_type`, `pointer_type`,
+    `array_type`, `structure_type`, `union_type`, `member`, `enumeration_type`,
+    `enumerator`, `typedef`, `subroutine_type`), `DW_TAG_variable` and
+    `DW_TAG_formal_parameter`, inside the `DW_TAG_subprogram` of the routine
+    (a `DW_TAG_lexical_block` with the address range of the lines for an inner
+    block). A fixed address is `DW_OP_addr`. **Measured with GDB 18.1 (z80
+    target):** `DW_OP_addr` works; `DW_OP_fbreg N-4-pops` with the frame base
+    `DW_OP_call_frame_cfa` works for IX variables **when `udb80_unwind.py`
+    is loaded** (the frame id of the unwinder is the stack address after the
+    return, IX+4): `info locals`, `info args`, `print *p` and `up` show the
+    right values at 3 levels of recursion; without the unwinder GDB shows
+    garbage frames (`bt` 20 frames) and `{0, 0}`. A register has no DWARF
+    register number in the z80 port, so `dbg2elf` writes no record for it.
+    `--ix-locals off` writes no record for IX variables. New: the GDB commands
+    `um80/gdb/udb80_vars.py` (`zlocals`, `zargs`, `zprint`, `zptype`,
+    `udb80-vars-dbg`; `dbg2elf --vars-path`) read `prog.dbg` with `vardata.py`
+    and show register variables and IX variables in any frame. The label
+    variables of the older `dbg2elf` stay for a `prog.dbg` with no `vars`.
+  - **Tests.** `tests/test_variables.py` (85 tests): the markers through um80
+    and ul80, merge and rename of types, a library module, malformed markers,
+    the expression code on a fake memory (27 expressions, scope, ranges,
+    errors), live `udb80` sessions against `cpmemu --gdb` with `uc80 -g` (a
+    global, a file static, a local static, a `??AUTO` local, an IX local, an IX
+    parameter under `--optnone`, an array element, a struct member, `frame 1`
+    and `frame 3` locals, a register variable that is not available in a
+    caller), the DWARF tree, GDB sessions (static, `??AUTO`, IX with the
+    unwinder, the helper commands in frames 0 and 1), and the outer level with
+    a hand-written `.mac` and with a `#line` C file from uc80. The suite
+    went from 1546 passed, 1 skipped to 1629 passed, 1 skipped (GDB 18.1,
+    cpmemu `39b0f4f`, uc80 from the sibling checkout). Mutation checks: the
+    base of an upper IX frame changed by 2 bytes fails 2 tests; the CFA offset
+    of `DW_OP_fbreg` fails 4; ul80 ranges fail 6; the scope test removed fails 3.
+  - **Review fixes.** (1) `print m2[1]`, `print buf[0]`, `print &m2[1]`,
+    `print buf+1` and `x/s buf` on a variable with no address (uc80 drops the
+    data of an unused global) ended the session with a `TypeError`. Now an
+    element of an unavailable array is `<not available>`, a sum or `x`
+    operand made from one gives that message, and `print` turns any internal
+    error into a message. (2) With two files that define `static int cnt` or
+    `struct s` differently, `print cnt` and `ptype struct s` did not find
+    the name (the records had `cnt__s0`, `s__t0`). uc80 now writes the source
+    name in `;#var`; the `at=` label keeps the unique name. `lookup` prefers
+    the variable of the file of the frame; `ptype` and type names accept the
+    source tag and list `s__t0, s__t1` when it is ambiguous. Two new tests in
+    `tests/test_variables.py` (85 tests).
+  - **Not done.** Only uc80 writes `;#var` so far; uplm80 and ucow write no
+    variable records (uada80 is out of scope). A register variable has the pc range from the first to the
+    last statement marker, cut at the `push`/`pop` of its pair; a write that
+    reuses the register after the last use without a `pop` is not seen. No
+    float conversion, no assignment or cast, no `info scope`. A DWARF location
+    list for register variables. `break` on an outer-level file.
+
 - `udb80 --wait-program`, for a stub that does not load the program itself
   (romwbw_emu, phase 9 of the cpmemu debugger plan). udb80 sends `monitor
   wait-program sha256 LENGTH SHA` with the image of prog.dbg, continues, and

@@ -27,6 +27,7 @@ import tempfile
 import time
 
 from um80 import frames
+from um80 import vardata
 from um80.ud80 import Disassembler
 
 REG_NAMES = ['af', 'bc', 'de', 'hl', 'sp', 'pc', 'ix', 'iy',
@@ -107,6 +108,28 @@ class DebugInfo:
         self.code_end = max([r[1] for r in self.asm] +
                             [r[1] for r in self.lines] + [0])
         self._frame_program = None
+        self._vars = None
+
+    @property
+    def vars(self):
+        """The variables and types (um80/vardata.py)."""
+        if self._vars is None:
+            self._vars = vardata.Program(self.data)
+        return self._vars
+
+    def func_record(self, addr):
+        """The ;#func record (a dict) of the routine that holds addr."""
+        for k, f in enumerate(self.funcs):
+            s = f.get('start')
+            if s is None:
+                continue
+            e = f.get('end')
+            if e is None:
+                e = self.funcs[k + 1]['start'] if k + 1 < len(self.funcs) \
+                    else self.code_end
+            if s <= addr < e:
+                return f
+        return None
 
     def frame_program(self):
         """The frame records and instruction rows, for um80.frames."""
@@ -259,9 +282,11 @@ class DebugInfo:
             raise UdbError('No code at or after %s:%d.' % (name, line))
         return self.line_addrs(name, best)
 
-    def addr2line(self, addr, want_asm=False):
-        """A dict for one address: func, src (file, line, inline), asm."""
-        out = {'addr': addr}
+    def addr2line(self, addr, want_asm=False, want_outer=False):
+        """A dict for one address: func, src (file, line, inline), asm and
+        outer (file, line) of the level above the source, or None.  With
+        want_outer the src is the outer position where there is one."""
+        out = {'addr': addr, 'outer': None}
         fn = self.func_at(addr)
         out['func'] = fn[0] if fn else None
         out['offset'] = fn[1] if fn else None
@@ -270,6 +295,11 @@ class DebugInfo:
         if e is not None and not want_asm:
             f, l = self.src_primary(e)
             out['src'] = (self.file_name(f), l, e[3] if len(e) > 3 else None)
+            group = e[2][-1]
+            if len(group) > 4:
+                out['outer'] = (self.file_name(group[3]), group[4])
+                if want_outer:
+                    out['src'] = (out['outer'][0], out['outer'][1], out['src'][2])
         r = self.asm_row(addr)
         out['asm'] = (self.file_name(r[3]), r[4]) if r else None
         return out
@@ -410,6 +440,9 @@ class Debugger:
         self.next_bp = 1
         self.z_refs = {}          # address -> count of Z0 packets in force
         self.level = 'auto'       # auto, src or asm
+        self.outer = 'off'        # off, on or both: the level above the source
+        self.sel = 0              # the selected frame (frame, up, down)
+        self._vchain = None
         self.cpu_z80 = True
         self.shadow = None        # True once monitor bt has answered
         self.no_shadow = False    # set shadow off: act as with a stub without one
@@ -542,6 +575,8 @@ class Debugger:
         self.need_alive()
         self._regs = None
         self._pages = {}
+        self._vchain = None
+        self.sel = 0
         self.started = True
         self.rsp.send(packet)
         try:
@@ -769,7 +804,8 @@ class Debugger:
 
     def location_text(self, addr, want_pc=None):
         """'FUNC () at FILE:LINE' for an address."""
-        info = self.dbg.addr2line(addr, self.level == 'asm')
+        info = self.dbg.addr2line(addr, self.level == 'asm',
+                                  self.outer == 'on')
         name = info['func'] or '??'
         if info['src'] is not None:
             where = ' at %s:%d' % (info['src'][0], info['src'][1])
@@ -799,6 +835,9 @@ class Debugger:
             line = info['asm']
         if line is not None:
             self.show_source_line(line[0], line[1])
+            if self.outer == 'both' and info['outer'] is not None:
+                self.say('outer level: %s:%d' % info['outer'])
+                self.show_source_line(*info['outer'])
             self.list_file, self.list_next = line[0], max(1, line[1] - 4)
             self._center = line[1]
         elif not show_frame:
@@ -1010,6 +1049,20 @@ class Debugger:
         return addr
 
     def eval_addr(self, text):
+        if self.alive and self.dbg.vars.has_vars():
+            try:
+                ctx, val = self.eval_var(text)
+            except vardata.NoSuchName:
+                pass
+            else:
+                t = ctx.program.resolve(val.type)
+                try:
+                    if (t[0] in ('arr', 'struct', 'union', 'func')
+                            and val.addr is not None):
+                        return val.addr & 0xFFFF
+                    return ctx.integer(val) & 0xFFFF
+                except vardata.VarError as e:
+                    raise UdbError(str(e))
         v, a = self.eval_expr(text)
         return (a if a is not None else v) & 0xFFFF
 
@@ -1080,13 +1133,15 @@ class Debugger:
 
     COMMANDS = ['break', 'tbreak', 'delete', 'continue', 'step', 'next', 'stepi',
                 'finish', 'backtrace', 'list', 'disassemble', 'info', 'x',
-                'print', 'sizes', 'set', 'monitor', 'echo', 'kill', 'quit', 'help']
+                'print', 'sizes', 'set', 'monitor', 'echo', 'kill', 'quit', 'help',
+                'frame', 'up', 'down', 'ptype', 'whatis']
     ALIASES = {'b': 'break', 'br': 'break', 'tb': 'tbreak', 'd': 'delete',
                'c': 'continue', 'cont': 'continue', 'r': 'continue',
                's': 'step', 'n': 'next', 'si': 'stepi', 'fin': 'finish',
                'bt': 'backtrace', 'where': 'backtrace', 'l': 'list',
                'disas': 'disassemble', 'i': 'info', 'p': 'print',
-               'inspect': 'print', 'q': 'quit', 'exit': 'quit', 'h': 'help'}
+               'inspect': 'print', 'q': 'quit', 'exit': 'quit', 'h': 'help',
+               'f': 'frame'}
 
     def canonical(self, word):
         if word in self.ALIASES:
@@ -1259,7 +1314,8 @@ class Debugger:
             return
         if self.list_file is None:
             if self.alive:
-                info = self.dbg.addr2line(self.pc(), self.level == 'asm')
+                info = self.dbg.addr2line(self.pc(), self.level == 'asm',
+                                          self.outer == 'on')
                 src = info['src'] and info['src'][:2] or info['asm']
                 if src:
                     self.list_file, self.list_next = src[0], max(1, src[1] - 4)
@@ -1331,7 +1387,7 @@ class Debugger:
                            'symbols, line, source, frame.')
         sub, arg = parts[0], (parts[1] if len(parts) > 1 else '')
         for full in ('registers', 'breakpoints', 'symbols', 'symbol', 'line',
-                     'source', 'all-registers'):
+                     'source', 'all-registers', 'locals', 'args', 'frame'):
             if full.startswith(sub):
                 break
         else:
@@ -1347,6 +1403,12 @@ class Debugger:
         elif full == 'source':
             self.say('Debug file: %s' % self.dbg.path)
             self.say('Files: %s' % ', '.join(self.dbg.files))
+        elif full == 'locals':
+            self.info_vars(False)
+        elif full == 'args':
+            self.info_vars(True)
+        elif full == 'frame':
+            self.cmd_frame('', '')
 
     def info_registers(self, arg):
         regs = self.regs(True)
@@ -1424,6 +1486,9 @@ class Debugger:
         f, l = self.dbg.src_primary(e)
         self.say('Line %d of "%s" starts at address %s and ends at %s.'
                  % (l, self.dbg.file_name(f), h4(e[0]), h4(e[1])))
+        if info['outer'] is not None:
+            self.say('Outer level: line %d of "%s".'
+                     % (info['outer'][1], info['outer'][0]))
 
     def cmd_x(self, rest, fmt):
         m = re.fullmatch(r'(\d*)([a-z]*)', fmt)
@@ -1496,9 +1561,261 @@ class Debugger:
             self.say('%s%s:\t%s' % (h4(a), (' ' + sym) if sym else '',
                                      '\t'.join(items[i:i + per_line])))
 
+    # -- variables (um80/vardata.py) ----------------------------------------------
+
+    def var_chain(self):
+        """(frames, slots) of the walker for the stop now: the frames of
+        D7 source 2, each (pc, sp, tag), and the stack slot of each return
+        address.  Frame 0 alone when the walker cannot unwind."""
+        if self._vchain is None:
+            regs = self.regs()
+            walker = frames.Walker(self.dbg.frame_program(), self.page_byte)
+            chain = walker.walk(regs['pc'], regs['sp'], regs['ix'])
+            self._vchain = (chain, list(walker.slots))
+        return self._vchain
+
+    def var_frame(self, index):
+        """The vardata.Frame of frame `index'."""
+        self.need_alive()
+        chain, slots = self.var_chain()
+        if not 0 <= index < len(chain):
+            raise UdbError('No frame at level %d.' % index)
+        pc = chain[index][0]
+        probe = pc if index == 0 else max(0, pc - 1)
+        rec = self.dbg.func_record(probe)
+        start = rec['start'] if rec else None
+        e = self.dbg.line_entry(probe)
+        pos = self.dbg.src_primary(e) if e is not None else None
+        regs = self.regs() if index == 0 else None
+        base = None
+        args_only = False
+        if rec is not None and rec.get('frame') == 'ix':
+            rng = rec.get('ix')
+            slot = slots[index] if index < len(slots) else None
+            if index == 0:
+                if rng and rng[0] <= pc <= rng[1]:
+                    base = regs['ix']
+                elif slot is not None and not rng and pc >= start + 8:
+                    base = slot - 2
+                elif slot is not None:
+                    # before `add ix,sp` and after `pop ix`: the arguments
+                    # stand above the return address and are valid; the
+                    # locals are not (Frame.args_only)
+                    base = slot - 2
+                    args_only = True
+            elif slot is not None:
+                base = slot - 2
+        frame = vardata.Frame(probe, start, pos, index, regs, base)
+        frame.args_only = args_only
+        return frame
+
+    def var_context(self, index=None):
+        frame = self.var_frame(self.sel if index is None else index)
+
+        def symbolize(a):
+            # a static object, then a routine, then a label exactly there
+            for v in self.dbg.vars.vars:
+                if v.func is None or v.kind == 'static':
+                    if v.loc and v.loc[0] == 'at':
+                        try:
+                            size = max(self.dbg.vars.size(v.type), 1)
+                        except vardata.VarError:
+                            continue
+                        if v.loc[1] <= a < v.loc[1] + size:
+                            off = a - v.loc[1]
+                            return '<%s>' % v.name if not off else \
+                                '<%s+%d>' % (v.name, off)
+            rec = self.dbg.func_record(a)
+            if rec is not None:
+                off = a - rec['start']
+                return '<%s>' % rec['name'] if not off else \
+                    '<%s+%d>' % (rec['name'], off)
+            r = self.dbg.func_at(a)
+            return '<%s>' % r[0] if r is not None and r[1] == 0 else ''
+        return vardata.Context(self.dbg.vars, self.read_mem, frame, symbolize)
+
+    def eval_var(self, text):
+        """(Context, Value) of a C expression in the selected frame."""
+        ctx = self.var_context()
+        try:
+            return ctx, vardata.Evaluator(ctx).evaluate(text)
+        except vardata.NoSuchName:
+            raise
+        except vardata.VarError as e:
+            raise UdbError(str(e))
+        except (TypeError, ValueError, IndexError, KeyError) as e:
+            raise UdbError('Cannot evaluate the expression (%s).' % e)
+
+    def info_vars(self, params):
+        if not self.dbg.vars.has_vars():
+            raise UdbError('The debug file has no variables; build with '
+                           'uc80 -g and link with ul80 --debug-info.')
+        ctx = self.var_context()
+        shown = 0
+        for v in vardata.visible(self.dbg.vars, ctx.frame):
+            if v.func is None or (v.kind == 'param') != params:
+                continue
+            try:
+                text = ctx.format(ctx.variable(v))
+            except vardata.VarError as e:
+                text = '<%s>' % e
+            self.say('%s = %s' % (v.name, text))
+            shown += 1
+        if not shown:
+            self.say('No arguments.' if params else 'No locals.')
+
+    def frame_line(self, index):
+        chain, _slots = self.var_chain()
+        pc = chain[index][0]
+        return '#%-2d %s' % (index, self.frame_text(pc, index, index == 0))
+
+    def cmd_frame(self, rest, fmt):
+        self.need_alive()
+        if rest:
+            try:
+                n = int(rest, 0)
+            except ValueError:
+                raise UdbError('Bad frame level: "%s"' % rest)
+            self.select_frame(n)
+        self.show_frame()
+
+    def select_frame(self, n):
+        chain, _slots = self.var_chain()
+        if not 0 <= n < len(chain):
+            raise UdbError('No frame at level %d.' % n)
+        self.sel = n
+
+    def show_frame(self):
+        self.say(self.frame_line(self.sel))
+        chain, _slots = self.var_chain()
+        pc = chain[self.sel][0]
+        probe = pc if self.sel == 0 else max(0, pc - 1)
+        info = self.dbg.addr2line(probe, self.level == 'asm',
+                                  self.outer == 'on')
+        line = info['src'][:2] if info['src'] else info['asm']
+        if line is not None:
+            self.show_source_line(line[0], line[1])
+            if self.outer == 'both' and info['outer'] is not None:
+                self.say('outer level: %s:%d' % info['outer'])
+                self.show_source_line(*info['outer'])
+            self.list_file, self.list_next = line[0], max(1, line[1] - 4)
+
+    def cmd_up(self, rest, fmt):
+        self.need_alive()
+        n = self.repeat_count(rest)
+        chain, _slots = self.var_chain()
+        if self.sel + 1 >= len(chain):
+            raise UdbError('Initial frame selected; you cannot go up.')
+        self.sel = min(self.sel + n, len(chain) - 1)
+        self.show_frame()
+
+    def cmd_down(self, rest, fmt):
+        self.need_alive()
+        n = self.repeat_count(rest)
+        if self.sel == 0:
+            raise UdbError('Bottom (innermost) frame selected; you cannot go down.')
+        self.sel = max(self.sel - n, 0)
+        self.show_frame()
+
+    def type_from_text(self, text):
+        """The type that `ptype' text names, or None when it is an
+        expression."""
+        prog = self.dbg.vars
+        m = re.fullmatch(r'(struct|union|enum)\s+([A-Za-z0-9_.$~]+)', text)
+        if m:
+            key = m.group(1) + ':' + m.group(2)
+            if key not in prog.types:
+                # a multi-file build names a conflicting tag TAG__tN
+                alt = [k for k in prog.types
+                       if k.startswith(m.group(1) + ':')
+                       and vardata.source_name(k) == key]
+                if len(alt) > 1:
+                    raise UdbError('%s %s is ambiguous: %s.' % (
+                        m.group(1), m.group(2),
+                        ', '.join(k.split(':', 1)[1] for k in sorted(alt))))
+                if alt:
+                    key = alt[0]
+            if key not in prog.types:
+                raise UdbError('No %s type named %s.' % (m.group(1), m.group(2)))
+            return (m.group(1), key)
+        alt = [k for k in prog.types if k.startswith('typedef:')
+               and vardata.source_name(k) == 'typedef:' + text]
+        if 'typedef:' + text in prog.types:
+            return ('typedef', 'typedef:' + text)
+        if len(alt) == 1:
+            return ('typedef', alt[0])
+        words = text.split()
+        for core, name in vardata.BASE_C_NAMES.items():
+            if name == ' '.join(words):
+                return ('base', core, 0)
+        return None
+
+    def cmd_ptype(self, rest, fmt, whatis=False):
+        if not rest:
+            raise UdbError('Argument required (a type or an expression).')
+        prog = self.dbg.vars
+        try:
+            t = self.type_from_text(rest)
+            if t is None:
+                _ctx, val = self.eval_var(rest)
+                t = val.type
+        except vardata.NoSuchName:
+            raise UdbError('No symbol "%s" in current context.' % rest)
+        except vardata.VarError as e:
+            raise UdbError(str(e))
+        if whatis:
+            self.say('type = %s' % prog.name(t))
+        else:
+            self.say('type = %s' % prog.describe(t))
+
+    def cmd_whatis(self, rest, fmt):
+        self.cmd_ptype(rest, fmt, True)
+
+    def print_var(self, rest, fmt):
+        """print of an expression on variables; False when the expression
+        names no variable (the caller then tries labels and registers)."""
+        if not self.dbg.vars.has_vars():
+            return False
+        try:
+            ctx, val = self.eval_var(rest)
+        except vardata.NoSuchName:
+            return False
+        try:
+            text = self.format_var(ctx, val, fmt)
+        except vardata.VarError as e:
+            raise UdbError(str(e))
+        except (TypeError, ValueError, IndexError, KeyError) as e:
+            raise UdbError('Cannot print the value (%s).' % e)
+        self.hist += 1
+        self.say('$%d = %s' % (self.hist, text))
+        return True
+
+    def format_var(self, ctx, val, fmt):
+        t = ctx.program.resolve(val.type) if val.available else None
+        if fmt and val.available and t[0] in ('base', 'enum', 'ptr') and not (
+                t[0] == 'base' and t[1] in vardata.FLOATS):
+            n = ctx.integer(val)
+            size = max(ctx.program.size(val.type), 1)
+            u = n & ((1 << (8 * size)) - 1)
+            if fmt == 'x':
+                return '0x%x' % u
+            if fmt == 'o':
+                return '0%o' % u if u else '0'
+            if fmt == 't':
+                return bin(u)[2:]
+            if fmt == 'd':
+                return str(n)
+            if fmt == 'u':
+                return str(u)
+            if fmt == 'c':
+                return '%d %s' % (n, vardata.char_text(u & 0xFF))
+        return ctx.format(val)
+
     def cmd_print(self, rest, fmt):
         if not rest:
             raise UdbError('Argument required (an expression).')
+        if self.print_var(rest, fmt):
+            return
         v, a = self.eval_expr(rest)
         self.hist += 1
         self.say('$%d = %s' % (self.hist, self.format_value(rest, v, a, fmt)))
@@ -1522,8 +1839,17 @@ class Debugger:
 
     def cmd_set(self, rest, fmt):
         parts = rest.split()
-        if len(parts) == 2 and parts[0] == 'level' and parts[1] in ('auto', 'src', 'asm'):
+        if len(parts) == 2 and parts[0] == 'level':
+            self.list_file = None         # `list' starts again at the stop
+        if len(parts) == 2 and parts[0] == 'level' and parts[1] in ('outer', 'c'):
+            self.outer = 'on'
+        elif len(parts) == 2 and parts[0] == 'level' and parts[1] == 'both':
+            self.outer = 'both'
+        elif len(parts) == 2 and parts[0] == 'level' and parts[1] in ('auto', 'src', 'asm'):
             self.level = parts[1]
+            self.outer = 'off'
+        elif len(parts) == 2 and parts[0] == 'outer' and parts[1] in ('off', 'on', 'both'):
+            self.outer = parts[1]
         elif len(parts) == 2 and parts[0] == 'cpu' and parts[1] in ('z80', '8080'):
             self.cpu_z80 = parts[1] == 'z80'
         elif len(parts) == 2 and parts[0] == 'shadow' and parts[1] in ('on', 'off'):
@@ -1532,7 +1858,8 @@ class Debugger:
         elif len(parts) >= 1 and parts[0] in ('confirm', 'pagination', 'width', 'height'):
             pass
         else:
-            raise UdbError('set: use "set level auto|src|asm", "set cpu z80|8080" or "set shadow on|off".')
+            raise UdbError('set: use "set level auto|src|asm|outer|both", '
+                           '"set cpu z80|8080" or "set shadow on|off".')
 
     def cmd_monitor(self, rest, fmt):
         self.need_alive()
@@ -1604,6 +1931,9 @@ def cmd_addr2line(argv):
                     help='each ADDR is a return address; look up ADDR-1')
     ap.add_argument('--asm', action='store_true',
                     help='show the assembler line, not the source line')
+    ap.add_argument('--outer', action='store_true',
+                    help='show the outer level (the C line of a BASIC '
+                         'line) as the source line, where there is one')
     ap.add_argument('--program', help='the program file for the image check')
     args = ap.parse_intermixed_args(argv)
     dbg = DebugInfo(args.dbg)
@@ -1612,7 +1942,7 @@ def cmd_addr2line(argv):
     for text in args.addr:
         addr = parse_addr(text)
         probe = addr - 1 if args.return_address else addr
-        info = dbg.addr2line(probe, args.asm)
+        info = dbg.addr2line(probe, args.asm, args.outer)
         name = info['func'] or '??'
         if info['func'] and info['offset']:
             name = '%s+%d' % (info['func'], info['offset'])
@@ -1624,6 +1954,8 @@ def cmd_addr2line(argv):
                     '%s at %s:%d' % (n, dbg.file_name(ff), ll) for n, ff, ll in inl)
             if info['asm']:
                 line += '  [asm %s:%d]' % info['asm']
+            if info['outer'] and not args.outer:
+                line += '  [outer %s:%d]' % info['outer']
         elif info['asm'] is not None:
             line = '%s  %s  %s:%d  [asm]' % ((h4(addr), name) + info['asm'])
         else:
@@ -1654,6 +1986,9 @@ class DumpView(Debugger):
         self.memory = memory
         self._regs = regs
         self.level = 'auto'
+        self.outer = 'off'
+        self.sel = 0
+        self._vchain = None
         self.cpu_z80 = True
         self.alive = True
         self.src_cache = {}

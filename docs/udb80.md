@@ -90,10 +90,14 @@ line has no code, `break` uses the next line that has code and says so.
 - `info line [LOCATION]`: show the address range of a line.
 - `x/NFU ADDRESS`: show memory. N is a count. F is `x`, `d`, `u`, `c`,
   `s` or `i`. U is `b` (1 byte, the default), `h` (2 bytes) or `w` (4 bytes).
-- `print[/F] EXPRESSION`: show a value. See [Print](#print).
+- `print[/F] EXPRESSION`: show a value. See [Print](#print) and [Variables](#variables).
+- `info locals`, `info args`: show the variables of the selected frame. `frame [N]`
+  (`f`), `up [N]`, `down [N]`: select a frame. `ptype`, `whatis`: show a type.
+  See [Variables](#variables).
 - `sizes`: show the bytes of each routine.
 - `monitor COMMAND`: send a command to the stub (`monitor bt`).
-- `set level auto|src|asm`, `set cpu z80|8080`, `set shadow on|off`.
+- `set level auto|src|asm|outer|both`, `set cpu z80|8080`, `set shadow on|off`.
+  See [The outer level](#the-outer-level).
 - `kill`, `quit`, `echo TEXT`, `help`.
 
 A breakpoint at 0100H stops the program at the first `continue`. The stub
@@ -180,8 +184,121 @@ value, and the size of the value comes from the `DB` or `DW` statement:
 1 byte or 2 bytes. A bigger area gives its address, and `x` shows the bytes.
 A label of code gives its address. `print/x` shows hex.
 
-`prog.dbg` has no types, so `print total` shows a number and not a C
-value. Types are phase 8 of the plan.
+A name that is a variable of the program gets a C value: see
+[Variables](#variables). A name that is a label only gets the old rules.
+
+## Variables
+
+A `prog.dbg` that has the `vars` table (a program that `uc80 -g` made, with
+`um80` and `ul80` run with `--debug-info`) gives udb80 the C variables. The
+table format is in [debug_info.md](debug_info.md#variables).
+
+```
+(udb80) break deep.c:27
+(udb80) continue
+(udb80) info args
+n = 1
+p = (struct pt *) 0x03a8 <q>
+(udb80) print *p
+$1 = {x = 5, y = 6}
+(udb80) frame 1
+#1  0x01b5 in _deep () at deep.c:28
+(udb80) info locals
+arr = {4, 2}
+local = 4
+```
+
+### Expressions
+
+An expression has names, numbers, character constants (`'a'`), `*p`, `&x`,
+`a[i]`, `s.m`, `p->m`, a unary minus and parentheses. An expression can also
+have `+ - * / %` on integers, and a pointer plus or minus an integer. There is
+no cast, no comparison and no assignment. A name is a variable first. When the name is no variable,
+`print` tries the labels and the registers, as before (`$pc`, `*0x100`).
+
+A value has the form of the type:
+
+- an integer: a decimal number. `char` types show the character, for
+  example `97 'a'`. `bool` shows `true` or `false`.
+- an enumeration: the name of the constant, or the number.
+- a pointer: `(int *) 0x02cd <g>`. The text in angle brackets is the variable
+  or the routine at the address. A `char` pointer shows the string:
+  `0x02e2 "hi"`.
+- an array: `{10, 20, 30}`. A `char` array shows the string. A run of 10 or
+  more equal elements shows as `0 <repeats 12 times>`. udb80 shows 200
+  elements at most.
+- a struct or union: `{x = 3, y = 4}`.
+- a float: the bytes in hex. udb80 does not convert the float formats.
+
+`print/x`, `/d`, `/u`, `/o`, `/t` and `/c` change an integer, an enumeration
+or a pointer. `x/4dh ARRAY` takes the address of an array, struct or function
+and the value of an integer or pointer variable. `ptype EXPRESSION` and
+`ptype struct TAG` show the full type. `whatis` shows the name of the type.
+
+### Which variables a frame has
+
+`frame N` (`up`, `down`) selects a frame of the backtrace. `print`, `info
+locals`, `info args` and `x` use the selected frame. Each resume (`continue`,
+`step`, `next`, `finish`, `stepi`) selects frame 0 again. udb80 takes the
+frames from the frame records, whatever source `bt` uses.
+
+A name stands for a variable when two things are true. The routine of the
+frame holds the variable. The line of the frame is in the scope of the variable.
+A line above the declaration does not see the variable. A name in an inner block hides
+a name in an outer block. The globals and the statics of the file come last.
+`info locals` lists the innermost block first.
+
+Two files can each have a `static` variable of one name, and a struct tag or
+typedef of one name with different content. The record keeps the source name
+of the variable. The variable in the file of the frame wins. If no variable
+is in that file, the first one wins. The compiler gives a conflicting tag the name
+`TAG__tN`. `ptype struct TAG` finds the tag when one file defines it, and
+shows the choices `TAG__t0`, `TAG__t1` when two files do.
+
+The compiler removes the data of a global that nothing uses. The variable
+then has no address. `print` shows `<not available>` for the variable and for
+each element of the variable. An `x` command or a sum that needs the
+address gives the same message. udb80 keeps the session open.
+
+The place of a variable decides what udb80 can show:
+
+- *Fixed address* (a global, a static, a local in the shared area `??AUTO`):
+  udb80 reads the address in any frame of the routine. The routine must be
+  active, and the compiler shares `??AUTO` only between routines that are
+  never active together.
+- *IX frame*: the frame base is the stack address of the return address minus
+  2. In frame 0 between `add ix,sp` and `pop ix`, the base is the register IX.
+  Before the prologue ends and after the epilogue, the arguments (IX+4 and up)
+  are valid and the locals are not available. A frame with a `[guess]` tag has
+  no frame base.
+- *Register*: only in frame 0, and only when the PC is in a range of the
+  variable. The registers of the other frames are not saved. The value of a
+  register that is not live shows `<not available>`.
+- *No place*: the optimizer removed the variable, or the compiler did not
+  know where the variable lives. `<not available>`.
+
+With `uc80`, the values are exact at the start of a statement for a routine
+under `--optnone`. In an optimized routine, the optimizer can keep a value in a
+register, drop a store, or fold a constant. The debugger then shows the value of
+the slot, or `<not available>`. Use `--optnone=NAME` for the routine that you
+debug.
+
+## The outer level
+
+A line can have an outer level: the position below the source level, for
+example the C line under a BASIC line (`outer=` in
+[debug_info.md](debug_info.md#levels)). uc80 writes the field when a `#line`
+directive is in effect, as in the C code that mbasic makes.
+
+- `info line` adds the line `Outer level: line 7 of "p.c".`
+- `set level outer` (or `set level c`) shows the outer position in place of
+  the source position, in the stop message, in `frame`, `bt` and `list`.
+  `set level both` shows the source line and the outer line. `set level src`,
+  `auto` and `asm` turn the outer level off.
+- `addr2line` adds `[outer FILE:LINE]`. With `--outer`, it shows the outer
+  position in place of the source position.
+
+`step`, `next` and `break` work on the source level in all cases.
 
 ## addr2line
 
@@ -243,7 +360,9 @@ against `prog.dbg`, as `udb80` does at the start of a session.
 
 - udb80 runs one program on one stub.
 - No `watch`, `ignore`, conditions, `call` or `set` of memory yet.
-- Variables with types are a later phase.
+- No cast, assignment, comparison, `sizeof` or function call in an expression.
+- No `info scope`, `info variables` or `watch` of a variable.
+- A float is not converted.
 - With `--run` and no `--batch`, the program and udb80 both read the
   terminal. Start cpmemu in a second terminal and use `--connect` for a
   program that reads the keyboard.

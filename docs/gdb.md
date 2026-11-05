@@ -55,15 +55,19 @@ dbg2elf prog.dbg
 
 ```
 dbg2elf prog.dbg [prog.com] [-o prog.elf] [--comp-dir DIR] [--asm-lines MODE]
-        [--keep-underscore] [--keep-case] [--no-variables] [--language c|asm]
+        [--keep-underscore] [--keep-case] [--no-variables] [--ix-locals fbreg|off]
+        [--language c|asm]
 dbg2elf --unwinder-path
+dbg2elf --vars-path
 ```
 
 - `--comp-dir DIR`: the folder that relative source paths start from. The default is the folder of `prog.dbg`. The compilers write paths relative to the folder where you ran them.
 - `--asm-lines auto|always|never`: write the lines of the `.mac` files. `auto` writes the lines only when `prog.dbg` has no source lines, so an assembler program has lines. `always` adds the lines of the `.mac` files for bytes with no source line. A step then goes into the runtime. `never` writes none.
 - `--keep-underscore`: keep the leading underscore of a C name. Without the option, `dbg2elf` removes the underscore, and GDB sees `main` for `_main`.
 - `--keep-case`: um80 writes every label in upper case. Without the option, `dbg2elf` writes a label with no lower case letter in lower case. A name from a `;#func` marker keeps its case.
-- `--no-variables`: write no static variables.
+- `--no-variables`: write no variables and no types.
+- `--ix-locals fbreg|off`: `fbreg` (the default) writes the variables at IX+N with `DW_OP_fbreg`. `off` writes no record for them. See [Variables](#variables).
+- `--vars-path`: print the path of `udb80_vars.py`, the GDB commands for the variables.
 - `--unwinder-path`: print the path of `udb80_unwind.py`.
 
 ### What the ELF file holds
@@ -76,7 +80,8 @@ The ELF file is ELFCLASS32, little endian, `e_machine` 220 (EM_Z80) and `e_flags
 - `.debug_info` has one compile unit. The unit has these records:
   - one `DW_TAG_subprogram` with `low_pc` and `high_pc` for each routine
   - one `DW_TAG_inlined_subroutine` for each inline record
-  - one `DW_TAG_variable` with `DW_OP_addr` for each static variable
+  - the types, variables and parameters of the `vars` and `types` tables, if `prog.dbg` has them: see [Variables](#variables)
+  - one `DW_TAG_variable` with `DW_OP_addr` for each data label, if `prog.dbg` has no `vars` table
 - `.debug_abbrev` and `.debug_str` complete the DWARF data.
 
 The program has one compile unit. The name of the unit is the file of the first routine.
@@ -85,11 +90,35 @@ The program has one compile unit. The name of the unit is the file of the first 
 
 A routine is a `;#func` record of `prog.dbg`. A program without `;#func` markers has no records. In that case `dbg2elf` takes each label that starts with an underscore (`_name`, not `__name`) or is PUBLIC and has an instruction. The routine ends at the next routine or at the first data row.
 
-### Static variables
+### Variables
 
-`prog.dbg` has no types. Phase 8 of the plan adds types. Until then, `dbg2elf` writes a variable for each label of a data row, in a module that has debug data. The size is the run of data bytes from the label to the next label. A size of 1 gives `unsigned char`, a size of 2 gives `int`, and another size gives an array of `unsigned char`.
+A `prog.dbg` from a compiler that writes `;#var` markers (`uc80 -g`) has the tables `types` and `vars`: see [debug_info.md](debug_info.md#variables). `dbg2elf` writes them as DWARF:
 
-Labels that start with `@`, `?` or `__` are not variables. A variable written by a compiler as `Total` has the name `total`, because um80 loses the case of a label.
+- A type becomes `DW_TAG_base_type`, `DW_TAG_pointer_type`, `DW_TAG_array_type` with `DW_TAG_subrange_type`, `DW_TAG_structure_type` or `DW_TAG_union_type` with `DW_TAG_member` (a bit field has `DW_AT_bit_size` and `DW_AT_data_bit_offset`), `DW_TAG_enumeration_type` with `DW_TAG_enumerator`, `DW_TAG_typedef` or `DW_TAG_subroutine_type`.
+- A variable with a fixed address (a global, a static, a local in the shared area `??AUTO`) becomes a `DW_TAG_variable` with `DW_OP_addr`. A local goes inside its `DW_TAG_subprogram`. A local in an inner block goes inside a `DW_TAG_lexical_block` with the address range of the lines of the block. A parameter becomes a `DW_TAG_formal_parameter`.
+- A variable at IX+N becomes a `DW_TAG_variable` or `DW_TAG_formal_parameter` with `DW_OP_fbreg`, and the routine gets `DW_AT_frame_base` `DW_OP_call_frame_cfa`. The offset is N - 4 - pops. The unwinder gives each frame the stack address after the return address as its id, and GDB uses this address as the call frame address. The address is IX+4.
+- A variable in a register, and a variable with no place, get no record.
+
+What GDB 18.1 does with the z80 target, measured (`tests/test_variables.py`):
+
+- `DW_OP_addr` works. `print g`, `print gp.y`, `print ga[2]`, `ptype struct pt`, `whatis` and `print leaf::cnt` give the right values.
+- `DW_OP_fbreg` with `DW_OP_call_frame_cfa` works **when `udb80_unwind.py` is loaded**. `info locals`, `info args`, `print *p` and `up` then show the values of IX variables, also in the callers. Without the unwinder, the z80 unwinder of GDB makes the frames. In a measured session `bt` then showed 20 frames, most of them garbage, and `print arr` gave `{0, 0}`.
+- A register does not work: the z80 port has no DWARF register numbers, and a register holds a local in part of the routine only. `dbg2elf` writes no record, and GDB does not know the name.
+
+The GDB commands in `um80/gdb/udb80_vars.py` fill the gap. The commands read `prog.dbg` (the same lookup as the unwinder) and use the code of `udb80` (`um80/vardata.py`):
+
+```
+(gdb) source /path/to/um80/gdb/udb80_unwind.py
+(gdb) source /path/to/um80/gdb/udb80_vars.py
+(gdb) zlocals          # the locals of the selected frame, with the register locals
+(gdb) zargs            # the arguments
+(gdb) zprint arr[1]    # name, *p, p->m, s.m, a[i], &x, + and -
+(gdb) zptype p         # the type of an expression, or struct TAG
+```
+
+A register local shows only in frame 0 and only inside its PC ranges. Elsewhere the commands show `<not available>`. `udb80-vars-dbg FILE` chooses the `prog.dbg` file. The IX base of a frame is the stack pointer of the next outer frame minus 4 minus `pops`.
+
+The values of a routine that the optimizer changed can be stale: see [udb80.md](udb80.md#which-variables-a-frame-has). Use `--optnone` for the routine that you debug.
 
 ### Inlined calls
 
@@ -195,6 +224,8 @@ A test stops a recursive C program (5 calls of `sum`, 4 calls of `fill` with an 
 
 `tests/test_dbg2elf.py` parses the ELF file with a reader written for the tests (`tests/elfread.py`) and checks the structure, the line rows and the DIE tree. These tests need no GDB.
 
+`tests/test_variables.py` has the format tests (no tools), the tests of the expression code on a fake memory, the live tests of `udb80` (`uc80 -g`, `cpmemu --gdb`), the DWARF tests and the GDB tests for the variables.
+
 `tests/test_gdb.py` runs GDB against `cpmemu --gdb`. The tests find GDB in the environment variable `UDB80_GDB`, then `z80-unknown-elf-gdb` and `gdb` on the PATH. The tests find cpmemu as `tests/test_udb80.py` does. A test skips with a reason when a tool is missing. These variables turn the skip into a failure:
 
 - `UDB80_REQUIRE_GDB=1`
@@ -207,7 +238,8 @@ CI cannot build GDB in each run. Set `UDB80_REQUIRE_GDB=1` on a job that has a Z
 
 - The ELF file has one compile unit. A function from a header file has the right lines and file, and the same unit.
 - Two inlined calls of the same name at the same call line, next to each other, give one inlined record. `prog.dbg` does not keep the end of the first call.
-- `print` works for static variables. A local variable needs phase 8 of the plan. GDB 18.1 has no DWARF register numbers for the Z80, so a variable in IX or in a register needs a Python helper.
+- `print` of a variable in a register needs the helper commands (`zprint`). `print` of an IX variable needs `udb80_unwind.py`.
+- A `bool` or a float has a base type with the right size, and GDB cannot decode the float formats of uc80.
 - `dbg2elf` reads `com` and `bin` images. A `hex`, `prl` or `spr` image gives an error. The `moved` table of `prog.dbg` (`--rom-data`) is not used.
 - The unwinder reads the stack from the stack address of the innermost frame. The unwinder looks at most 16K upward for a return address.
 - The shadow call stack hides a frame for a tail call (`jp`), as the stub documentation says.

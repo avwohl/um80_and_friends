@@ -29,8 +29,20 @@ _POSITION = re.compile(r'^(\d+):(\d+)$')
 _NAME_CHARS = re.compile(r'^[^\s;]+$')
 
 MARKER_KINDS = ('file', 'line', 'inline', 'endinline', 'func', 'endfunc',
-                'noopt')
+                'noopt', 'type', 'var')
 FRAME_KINDS = ('none', 'ix', 'static')
+VAR_KINDS = ('global', 'static', 'local', 'param')
+# Revision 2 of both files adds the keys `types' and `vars'
+# (docs/debug_info.md, Variables).  The `version' stays 1: a reader of
+# revision 1 ignores keys that it does not know.
+REVISION = 2
+
+_TYPE_NAME = re.compile(r'^(struct|union|enum|typedef):([A-Za-z0-9_.$~]+)$')
+_TYPE_REF = re.compile(r'\b(struct|union|enum|typedef):([A-Za-z0-9_.$~]+)')
+_MEMBER = re.compile(r'^([^:\s,@]+):(\S+?)@(\d+)(?:#(\d+)\.(\d+))?$')
+_SCOPE = re.compile(r'^(\d+):(\d+)-(\d+)$')
+_REG_NAMES = ('A', 'B', 'C', 'D', 'E', 'H', 'L', 'BC', 'DE', 'HL', 'IX',
+              'IY', 'IXH', 'IXL', 'IYH', 'IYL', 'SP')
 
 
 def _number(word, what):
@@ -119,10 +131,172 @@ def parse_marker(line):
         return kind, fields
     if kind == 'endfunc':
         return kind, {'name': words[0] if words else None}
+    if kind == 'type':
+        return kind, _parse_type_marker(words)
+    if kind == 'var':
+        return kind, _parse_var_marker(words)
     # noopt
     if len(words) != 1 or words[0].lower() not in ('begin', 'end'):
         raise MarkerError('#noopt is followed by begin or end')
     return kind, {'what': words[0].lower()}
+
+
+def _split_members(text):
+    return [w for w in text.split(',') if w]
+
+
+def _parse_type_marker(words):
+    """;#type NAME [size=N] [members=LIST] [values=LIST] [target=TYPE]"""
+    if not words:
+        raise MarkerError('#type needs a name')
+    found = _TYPE_NAME.match(words[0])
+    if not found:
+        raise MarkerError("#type name is struct:TAG, union:TAG, enum:TAG or "
+                          "typedef:NAME, not '%s'" % words[0])
+    fields = {'name': words[0], 'kind': found.group(1), 'size': None,
+              'members': [], 'values': [], 'target': None}
+    for word in words[1:]:
+        key, sep, value = word.partition('=')
+        key = key.lower()
+        if not sep:
+            continue
+        if key == 'size':
+            fields['size'] = _number(value, 'size=')
+        elif key == 'target':
+            fields['target'] = value
+        elif key == 'members':
+            for item in _split_members(value):
+                m = _MEMBER.match(item)
+                if not m:
+                    raise MarkerError("#type member '%s' is not "
+                                      "NAME:TYPE@OFFSET" % item)
+                row = [m.group(1), m.group(2), int(m.group(3))]
+                if m.group(4) is not None:
+                    row += [int(m.group(4)), int(m.group(5))]
+                fields['members'].append(row)
+        elif key == 'values':
+            for item in _split_members(value):
+                name, eq, number = item.rpartition('=')
+                try:
+                    fields['values'].append([name, int(number)])
+                except ValueError:
+                    raise MarkerError("#type value '%s' is not NAME=NUMBER"
+                                      % item)
+        # any other key: ignored
+    if fields['kind'] == 'typedef' and not fields['target']:
+        raise MarkerError('#type typedef needs target=TYPE')
+    return fields
+
+
+def _parse_var_marker(words):
+    """;#var NAME TYPE [key=value ...]  (docs/debug_info.md)"""
+    if len(words) < 2:
+        raise MarkerError('#var needs a name and a type')
+    if not _NAME_CHARS.match(words[0]):
+        raise MarkerError('#var name is not a name')
+    fields = {'name': words[0], 'type': words[1], 'kind': None, 'at': None,
+              'ix': None, 'reg': None, 'ranges': [], 'scope': None,
+              'decl': None, 'none': False, 'why': None}
+    for word in words[2:]:
+        key, sep, value = word.partition('=')
+        key = key.lower()
+        if not sep:
+            if key == 'none':
+                fields['none'] = True
+            continue
+        if key == 'kind':
+            if value.lower() not in VAR_KINDS:
+                raise MarkerError("kind= is global, static, local or param, "
+                                  "not '%s'" % value)
+            fields['kind'] = value.lower()
+        elif key == 'at':
+            m = re.match(r'^([^\s;+]+)(?:([+-])(\d+))?$', value)
+            if not m:
+                raise MarkerError('at= needs LABEL, LABEL+N or LABEL-N')
+            n = int(m.group(3) or 0)
+            fields['at'] = (m.group(1), -n if m.group(2) == '-' else n)
+        elif key == 'ix':
+            if not re.match(r'^[+-]?\d+$', value):
+                raise MarkerError('ix= needs a number')
+            fields['ix'] = int(value)
+        elif key == 'reg':
+            if value.upper() not in _REG_NAMES:
+                raise MarkerError("reg= is a register name, not '%s'" % value)
+            fields['reg'] = value.upper()
+        elif key == 'range':
+            a, sep2, b = value.partition(':')
+            if not sep2 or not a or not b:
+                raise MarkerError('range= needs LABEL:LABEL')
+            fields['ranges'].append((a, b))
+        elif key == 'scope':
+            m = _SCOPE.match(value)
+            if not m:
+                raise MarkerError('scope= needs FILE:FIRST-LAST')
+            fields['scope'] = (int(m.group(1)), int(m.group(2)),
+                               int(m.group(3)))
+        elif key == 'decl':
+            m = _POSITION.match(value)
+            if not m:
+                raise MarkerError('decl= needs FILE:LINE')
+            fields['decl'] = (int(m.group(1)), int(m.group(2)))
+        elif key == 'why':
+            fields['why'] = value
+        # any other key: ignored
+    places = [fields['at'] is not None, fields['ix'] is not None,
+              fields['reg'] is not None, fields['none']]
+    if sum(places) > 1:
+        raise MarkerError('#var has more than one of at=, ix=, reg= and '
+                          'none')
+    return fields
+
+
+def rename_type_refs(text, mapping):
+    """The type expression `text' with each named type that `mapping' has
+    renamed."""
+    if not mapping or not text:
+        return text
+    return _TYPE_REF.sub(
+        lambda m: mapping.get(m.group(0), m.group(0)), text)
+
+
+def merge_types(merged, module_types):
+    """Add the types of one module to `merged' (a dict).  A name that both
+    have with a different definition is renamed in the module (NAME~1,
+    NAME~2, ...), and the second return value says how.  Returns
+    (the mapping old name -> new name, the new definitions of the module
+    under their final names)."""
+    mapping = {}
+
+    def renamed(definition):
+        out = dict(definition)
+        if 'members' in out:
+            out['members'] = [[m[0], rename_type_refs(m[1], mapping)] + m[2:]
+                              for m in out['members']]
+        if out.get('target'):
+            out['target'] = rename_type_refs(out['target'], mapping)
+        return out
+
+    for _round in range(len(module_types) + 1):
+        changed = False
+        for name, definition in module_types.items():
+            final = mapping.get(name, name)
+            have = merged.get(final)
+            if have is not None and have != renamed(definition):
+                k = 1
+                while (f"{name}~{k}" in merged
+                       and merged[f"{name}~{k}"] != renamed(definition)):
+                    k += 1
+                mapping[name] = f"{name}~{k}"
+                changed = True
+        if not changed:
+            break
+    added = {}
+    for name, definition in module_types.items():
+        final = mapping.get(name, name)
+        value = renamed(definition)
+        merged.setdefault(final, value)
+        added[final] = value
+    return mapping, added
 
 
 def seg_name(seg_type, block=None, absolute_name='ABS'):
@@ -162,6 +336,8 @@ class DebugCollector:
         self.last = None            # the primary position now in force
         self.inline = []            # [name, file, line, position at #inline]
         self.inline_dirty = False
+        self.types = {}             # name -> definition (docs/debug_info.md)
+        self.vars = []              # variable records, resolved in finish()
 
     def file(self, path):
         """The index of `path' in the file table."""
@@ -250,6 +426,10 @@ class DebugCollector:
             # The bytes after the routine have no source position.
             self.pending = []
             self.last = None
+        elif kind == 'type':
+            self._type(fields)
+        elif kind == 'var':
+            self._var(fields)
         elif kind == 'noopt':
             if fields['what'] == 'begin':
                 if self.noopt_depth == 0:
@@ -263,6 +443,44 @@ class DebugCollector:
                 self.noopt_depth -= 1
                 if self.noopt_depth == 0:
                     self.noopt.append([self.noopt_open, list(where)])
+
+    def _type(self, fields):
+        definition = {}
+        if fields['size'] is not None:
+            definition['size'] = fields['size']
+        if fields['kind'] in ('struct', 'union'):
+            definition['members'] = fields['members']
+        elif fields['kind'] == 'enum':
+            definition['values'] = fields['values']
+        else:
+            definition['target'] = fields['target']
+        if fields['name'] in self.types \
+                and self.types[fields['name']] != definition:
+            self.warn(f"#type {fields['name']} is defined twice with "
+                      "different contents: the first one stays")
+            return
+        self.types[fields['name']] = definition
+
+    def _var(self, fields):
+        scope = None
+        if fields['scope'] is not None:
+            index = self._known(fields['scope'][0])
+            if index is not None:
+                scope = [index, fields['scope'][1], fields['scope'][2]]
+        decl = None
+        if fields['decl'] is not None:
+            index = self._known(fields['decl'][0])
+            if index is not None:
+                decl = [index, fields['decl'][1]]
+        kind = fields['kind']
+        func = self.open_func['name'] if self.open_func is not None else None
+        if kind is None:
+            kind = 'global' if func is None else 'local'
+        self.vars.append({'name': fields['name'], 'type': fields['type'],
+                          'kind': kind, 'func': func, 'scope': scope,
+                          'decl': decl, 'at': fields['at'],
+                          'ix': fields['ix'], 'reg': fields['reg'],
+                          'ranges': fields['ranges'], 'why': fields['why']})
 
     def row(self, seg, offset, length, run, mac_file, mac_line, kind,
             body=None):
@@ -309,13 +527,57 @@ class DebugCollector:
                           'line': func['line'], 'frame': func['frame'],
                           'pops': func['pops'], 'start': func['start'],
                           'end': func['end'], 'ix': ix})
-        return {'format': DBM_FORMAT, 'version': DBM_VERSION,
-                'module': module, 'source': source,
-                'rel': {'length': len(rel_bytes),
-                        'sha256': hashlib.sha256(rel_bytes).hexdigest()},
-                'files': self.files, 'rows': self.rows,
-                'labels': self.labels, 'funcs': funcs,
-                'noopt': self.noopt}
+        document = {'format': DBM_FORMAT, 'version': DBM_VERSION,
+                    'module': module, 'source': source,
+                    'rel': {'length': len(rel_bytes),
+                            'sha256': hashlib.sha256(rel_bytes).hexdigest()},
+                    'files': self.files, 'rows': self.rows,
+                    'labels': self.labels, 'funcs': funcs,
+                    'noopt': self.noopt}
+        if self.vars or self.types:
+            document['revision'] = REVISION
+            document['types'] = self.types
+            document['vars'] = [self._var_row(v, resolve)
+                                for v in self.vars]
+        return document
+
+    def _var_row(self, var, resolve):
+        """[name, type, kind, location, routine, scope, ranges, decl, why]
+        of one #var, with the labels resolved.  The location is
+        ["at", segment, offset], ["ix", n], ["reg", name] or null (the
+        value is not available).  `ranges' is null (the whole routine) or a
+        list of [start, end] positions [segment, offset]."""
+        loc = None
+        why = var['why']
+        if var['at'] is not None:
+            found = resolve(var['at'][0])
+            if found is None:
+                # no warning: the compiler removes the data of a global that
+                # nothing uses, and the marker stays
+                why = why or 'label-not-defined'
+            else:
+                loc = ['at', found[0], found[1] + var['at'][1]]
+        elif var['ix'] is not None:
+            loc = ['ix', var['ix']]
+        elif var['reg'] is not None:
+            loc = ['reg', var['reg']]
+        ranges = None
+        if var['ranges']:
+            ranges = []
+            for a, b in var['ranges']:
+                ra, rb = resolve(a), resolve(b)
+                if ra is None or rb is None:
+                    self.warn(f"#var {var['name']}: range= labels are not "
+                              "defined in this module: no location")
+                    loc, ranges = None, None
+                    why = why or 'range-not-defined'
+                    break
+                ranges.append([ra, rb])
+        row = [var['name'], var['type'], var['kind'], loc, var['func'],
+               var['scope'], ranges, var['decl']]
+        if why:
+            row.append(why)
+        return row
 
 
 def row_fields(row):
@@ -328,7 +590,13 @@ def dumps(document, tables):
     a list of rows) has one row to a line, which keeps a diff readable."""
     parts = []
     for key, value in document.items():
-        if key in tables:
+        if key in tables and isinstance(value, dict):
+            body = ',\n'.join(json.dumps(k) + ':'
+                              + json.dumps(v, separators=(',', ':'))
+                              for k, v in value.items())
+            parts.append(json.dumps(key) + ':{\n' + body + '\n}'
+                         if value else json.dumps(key) + ':{}')
+        elif key in tables:
             body = ',\n'.join(json.dumps(row, separators=(',', ':'))
                               for row in value)
             parts.append(json.dumps(key) + ':[\n' + body + '\n]'
@@ -339,8 +607,8 @@ def dumps(document, tables):
     return '{' + ',\n'.join(parts) + '}\n'
 
 
-DBM_TABLES = ('rows', 'labels')
-DBG_TABLES = ('lines', 'asm', 'labels', 'moved', 'noopt')
+DBM_TABLES = ('rows', 'labels', 'vars', 'types')
+DBG_TABLES = ('lines', 'asm', 'labels', 'moved', 'noopt', 'vars', 'types')
 
 
 def load_dbm(data):

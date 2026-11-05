@@ -201,6 +201,8 @@ class Elf:
                     pos += 4
                 elif f == 0x0f:
                     v, pos = _uleb(info, pos)
+                elif f == 0x0d:
+                    v, pos = _sleb(info, pos)
                 elif f == 0x18:
                     n, pos = _uleb(info, pos)
                     v = bytes(info[pos:pos + n])

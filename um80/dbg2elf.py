@@ -27,6 +27,8 @@ import re
 import struct
 import sys
 
+from um80 import vardata
+
 # --- ELF constants ----------------------------------------------------------
 EM_Z80 = 220
 EF_Z80_MACH_Z80 = 1
@@ -38,7 +40,17 @@ SHN_ABS = 0xfff1
 
 # --- DWARF constants --------------------------------------------------------
 DW_TAG_array_type = 0x01
+DW_TAG_enumeration_type = 0x04
+DW_TAG_formal_parameter = 0x05
+DW_TAG_lexical_block = 0x0b
+DW_TAG_member = 0x0d
+DW_TAG_pointer_type = 0x0f
 DW_TAG_compile_unit = 0x11
+DW_TAG_structure_type = 0x13
+DW_TAG_subroutine_type = 0x15
+DW_TAG_typedef = 0x16
+DW_TAG_union_type = 0x17
+DW_TAG_enumerator = 0x28
 DW_TAG_inlined_subroutine = 0x1d
 DW_TAG_subrange_type = 0x21
 DW_TAG_base_type = 0x24
@@ -48,6 +60,12 @@ DW_TAG_variable = 0x34
 DW_AT_location = 0x02
 DW_AT_name = 0x03
 DW_AT_byte_size = 0x0b
+DW_AT_bit_size = 0x0d
+DW_AT_const_value = 0x1c
+DW_AT_prototyped = 0x27
+DW_AT_data_member_location = 0x38
+DW_AT_frame_base = 0x40
+DW_AT_data_bit_offset = 0x6b
 DW_AT_stmt_list = 0x10
 DW_AT_low_pc = 0x11
 DW_AT_high_pc = 0x12
@@ -70,14 +88,21 @@ DW_FORM_data1 = 0x0b
 DW_FORM_data2 = 0x05
 DW_FORM_data4 = 0x06
 DW_FORM_udata = 0x0f
+DW_FORM_sdata = 0x0d
 DW_FORM_strp = 0x0e
 DW_FORM_ref4 = 0x13
 DW_FORM_sec_offset = 0x17
 DW_FORM_exprloc = 0x18
 DW_FORM_flag_present = 0x19
 
+DW_ATE_boolean = 2
+DW_ATE_float = 4
 DW_ATE_signed = 5
+DW_ATE_signed_char = 6
+DW_ATE_unsigned = 7
 DW_ATE_unsigned_char = 8
+DW_OP_fbreg = 0x91
+DW_OP_call_frame_cfa = 0x9c
 DW_INL_inlined = 1
 DW_OP_addr = 0x03
 DW_LANG_C99 = 0x0c
@@ -449,6 +474,204 @@ class Ref:
         self.die = die
 
 
+class TypeBuilder:
+    """DWARF type DIEs for the type expressions of prog.dbg (docs/debug_info.md,
+    Variables).  `die(text)` returns the DIE of a type, or None for void."""
+
+    ENCODING = {'char': DW_ATE_signed_char, 'schar': DW_ATE_signed_char,
+                'uchar': DW_ATE_unsigned_char, 'bool': DW_ATE_boolean,
+                'float': DW_ATE_float, 'double': DW_ATE_float,
+                'ldouble': DW_ATE_float}
+
+    def __init__(self, program):
+        self.program = program
+        self.cache = {}
+        self.dies = []              # every type DIE, in creation order
+
+    def _add(self, die):
+        self.dies.append(die)
+        return die
+
+    def die(self, text):
+        t = self.program.type(text)
+        return self.of(t, text)
+
+    def of(self, t, key=None):
+        key = key or repr(t)
+        if key in self.cache:
+            return self.cache[key]
+        prog = self.program
+        k = t[0]
+        if k == 'void':
+            return None
+        if k == 'base':
+            enc = self.ENCODING.get(t[1])
+            if enc is None:
+                enc = DW_ATE_unsigned if t[1] in vardata.UNSIGNED else DW_ATE_signed
+            die = self._add(Die(DW_TAG_base_type, [
+                (DW_AT_byte_size, DW_FORM_data1, t[2]),
+                (DW_AT_encoding, DW_FORM_data1, enc),
+                (DW_AT_name, DW_FORM_strp, vardata.BASE_C_NAMES.get(t[1], t[1]))]))
+            self.cache[key] = die
+            return die
+        if k == 'ptr':
+            die = Die(DW_TAG_pointer_type, [(DW_AT_byte_size, DW_FORM_data1, 2)])
+            self.cache[key] = self._add(die)
+            target = self.of(t[1])
+            if target is not None:
+                die.attrs.append((DW_AT_type, DW_FORM_ref4, Ref(target)))
+            return die
+        if k == 'arr':
+            die = Die(DW_TAG_array_type, [])
+            self.cache[key] = self._add(die)
+            elem = self.of(t[2])
+            if elem is not None:
+                die.attrs.append((DW_AT_type, DW_FORM_ref4, Ref(elem)))
+            sub = [(DW_AT_upper_bound, DW_FORM_udata, t[1] - 1)] if t[1] else []
+            die.children.append(Die(DW_TAG_subrange_type, sub))
+            return die
+        if k == 'func':
+            die = Die(DW_TAG_subroutine_type, [])
+            self.cache[key] = self._add(die)
+            ret = self.of(t[1])
+            if ret is not None:
+                die.attrs.append((DW_AT_type, DW_FORM_ref4, Ref(ret)))
+            return die
+        if k == 'typedef':
+            d = prog.types.get(t[1])
+            die = Die(DW_TAG_typedef, [(DW_AT_name, DW_FORM_strp, t[1].split(':', 1)[1])])
+            self.cache[key] = self._add(die)
+            target = self.of(prog.type(d['target'])) if d else None
+            if target is not None:
+                die.attrs.append((DW_AT_type, DW_FORM_ref4, Ref(target)))
+            return die
+        if k in ('struct', 'union'):
+            d = prog.types.get(t[1])
+            tag = t[1].split(':', 1)[1]
+            attrs = []
+            if not tag.startswith('.'):
+                attrs.append((DW_AT_name, DW_FORM_strp, tag.split('~')[0]))
+            if d is None:
+                attrs.append((DW_AT_byte_size, DW_FORM_data1, 0))
+            else:
+                attrs.append((DW_AT_byte_size, DW_FORM_data2, d.get('size') or 0))
+            die = Die(DW_TAG_structure_type if k == 'struct' else DW_TAG_union_type,
+                      attrs)
+            self.cache[key] = self._add(die)
+            for m in (d or {}).get('members', ()):
+                mt = self.of(prog.type(m[1]))
+                a = [(DW_AT_name, DW_FORM_strp, m[0])]
+                if mt is not None:
+                    a.append((DW_AT_type, DW_FORM_ref4, Ref(mt)))
+                if len(m) > 3:
+                    a.append((DW_AT_bit_size, DW_FORM_data1, m[3]))
+                    a.append((DW_AT_data_bit_offset, DW_FORM_udata, m[2] * 8 + m[4]))
+                else:
+                    a.append((DW_AT_data_member_location, DW_FORM_udata, m[2]))
+                die.children.append(Die(DW_TAG_member, a))
+            return die
+        if k == 'enum':
+            d = prog.types.get(t[1])
+            tag = t[1].split(':', 1)[1]
+            attrs = []
+            if not tag.startswith('.'):
+                attrs.append((DW_AT_name, DW_FORM_strp, tag.split('~')[0]))
+            size = (d or {}).get('size') or 2
+            attrs.append((DW_AT_byte_size, DW_FORM_data1, size))
+            attrs.append((DW_AT_encoding, DW_FORM_data1, DW_ATE_signed))
+            die = Die(DW_TAG_enumeration_type, attrs)
+            self.cache[key] = self._add(die)
+            for name, value in (d or {}).get('values', ()):
+                die.children.append(Die(DW_TAG_enumerator, [
+                    (DW_AT_name, DW_FORM_strp, name),
+                    (DW_AT_const_value, DW_FORM_sdata, value)]))
+            return die
+        # raw bytes
+        die = Die(DW_TAG_array_type, [])
+        self.cache[key] = self._add(die)
+        die.attrs.append((DW_AT_type, DW_FORM_ref4, Ref(self.of(('base', 'uchar', 1)))))
+        die.children.append(Die(DW_TAG_subrange_type,
+                                [(DW_AT_upper_bound, DW_FORM_udata, max(t[1] - 1, 0))]))
+        return die
+
+
+def typed_variables(model, builder):
+    """(file-scope DIEs, {routine start: DIEs}) for the `vars` table of
+    prog.dbg.  A variable with a fixed address gets DW_OP_addr.  A variable
+    at an IX offset gets DW_OP_fbreg when --ix-locals is fbreg (the default),
+    else no DIE (docs/gdb.md: the helper command zlocals reads it).  A variable in a
+    register gets no DIE.  A name that is in an inner block goes into a
+    DW_TAG_lexical_block with the address range of the block."""
+    opts = model.opts
+    prog = builder.program
+    top, inner = [], {}
+    by_scope = {}
+    pops = {f['start']: f.get('pops') or 0
+            for f in model.dbg.get('funcs') or [] if f.get('start') is not None}
+    for v in prog.vars:
+        loc = v.loc
+        if loc is None or (loc[0] == 'ix' and getattr(opts, 'ix_locals', 'fbreg') != 'fbreg') \
+                or loc[0] == 'reg':
+            continue
+        t = builder.of(v.type, v.type_text)
+        attrs = [(DW_AT_name, DW_FORM_strp, v.name)]
+        if v.decl:
+            attrs.append((DW_AT_decl_file, DW_FORM_udata, v.decl[0] + 1))
+            attrs.append((DW_AT_decl_line, DW_FORM_udata, v.decl[1]))
+        if v.kind == 'global':
+            attrs.append((DW_AT_external, DW_FORM_flag_present, True))
+        if t is not None:
+            attrs.append((DW_AT_type, DW_FORM_ref4, Ref(t)))
+        if loc[0] == 'at':
+            expr = bytes([DW_OP_addr]) + struct.pack('<H', loc[1])
+        else:
+            # The frame base is the CFA that the unwinder gives: the stack
+            # address after the return, which is IX + 4 + pops.
+            expr = bytes([DW_OP_fbreg]) + sleb(loc[1] - 4 - pops.get(v.func, 0))
+        attrs.append((DW_AT_location, DW_FORM_exprloc, expr))
+        die = Die(DW_TAG_formal_parameter if v.kind == 'param'
+                  else DW_TAG_variable, attrs)
+        if v.func is None:
+            top.append(die)
+            continue
+        rng = None
+        if v.scope is not None and v.kind != 'param':
+            rng = _scope_range(model, v)
+            if rng is not None and rng == _scope_range(model, v, True):
+                rng = None            # the block of the whole routine
+        by_scope.setdefault((v.func, rng), []).append(die)
+    for (func, rng), dies in by_scope.items():
+        r = next((r for r in model.routines if r.lo == func), None)
+        if rng is not None and r is not None and rng != (r.lo, r.hi):
+            block = Die(DW_TAG_lexical_block, [
+                (DW_AT_low_pc, DW_FORM_addr, rng[0]),
+                (DW_AT_high_pc, DW_FORM_data4, rng[1] - rng[0])], dies)
+            inner.setdefault(func, []).append(block)
+        else:
+            inner.setdefault(func, []).extend(dies)
+    return top, inner
+
+
+def _scope_range(model, v, whole=False):
+    """(low, high) addresses of the lines of the scope of v within its
+    routine, or None.  With `whole`: of all the lines of the routine."""
+    f, a, b = v.scope
+    r = next((r for r in model.routines if r.lo == v.func), None)
+    if r is None:
+        return None
+    if whole:
+        # every line after the declaration line of the routine
+        a, b = (r.line or 0) + 1, 1 << 30
+    lo = hi = None
+    for e in model.lines:
+        if e[0] < r.lo or e[1] > r.hi:
+            continue
+        if any(g[0] == f and a <= g[1] <= b and not g[2] for g in e[2]):
+            lo = e[0] if lo is None else min(lo, e[0])
+            hi = e[1] if hi is None else max(hi, e[1])
+    return None if lo is None else (lo, hi)
+
+
 def build_debug_info(model, comp_dir, producer, language):
     """Returns (debug_info, debug_abbrev, debug_str)."""
     strs = StrTab()
@@ -474,7 +697,17 @@ def build_debug_info(model, comp_dir, producer, language):
                                     (DW_AT_name, DW_FORM_strp, 'unsigned char')])
     type_dies = [int_t, char_t]
     var_dies = []
+    typed_top, typed_inner, builder = [], {}, None
+    if model.dbg.get('vars') and not opts.no_variables:
+        builder = TypeBuilder(vardata.Program(model.dbg))
+        typed_top, typed_inner = typed_variables(model, builder)
+    typed_addrs = set()
+    for v in (builder.program.vars if builder else ()):
+        if v.func is None and v.loc and v.loc[0] == 'at':
+            typed_addrs.add(v.loc[1])
     for v in model.variables:
+        if v.addr in typed_addrs:
+            continue
         if v.size == 1:
             t = char_t
         elif v.size == 2:
@@ -520,7 +753,12 @@ def build_debug_info(model, comp_dir, producer, language):
             attrs.append((DW_AT_decl_line, DW_FORM_udata, r.line))
         attrs.append((DW_AT_low_pc, DW_FORM_addr, r.lo))
         attrs.append((DW_AT_high_pc, DW_FORM_data4, r.hi - r.lo))
-        sub_dies.append(Die(DW_TAG_subprogram, attrs, [inline_die(n) for n in r.inlines]))
+        if getattr(opts, 'ix_locals', 'fbreg') == 'fbreg':
+            attrs.append((DW_AT_frame_base, DW_FORM_exprloc,
+                          bytes([DW_OP_call_frame_cfa])))
+        sub_dies.append(Die(DW_TAG_subprogram, attrs,
+                            [inline_die(n) for n in r.inlines]
+                            + typed_inner.get(r.lo, [])))
     lo = model.load
     hi = max([model.code_end] + [r.hi for r in model.routines] + [lo])
     cu = Die(DW_TAG_compile_unit, [
@@ -531,7 +769,8 @@ def build_debug_info(model, comp_dir, producer, language):
         (DW_AT_low_pc, DW_FORM_addr, lo),
         (DW_AT_high_pc, DW_FORM_data4, hi - lo),
         (DW_AT_stmt_list, DW_FORM_sec_offset, 0)],
-        type_dies + list(abstract.values()) + sub_dies + var_dies)
+        type_dies + (builder.dies if builder else []) + list(abstract.values())
+        + sub_dies + var_dies + typed_top)
 
     # abbreviations
     abbrevs = {}
@@ -568,6 +807,8 @@ def build_debug_info(model, comp_dir, producer, language):
                 out += struct.pack('<I', v)
             elif f == DW_FORM_udata:
                 out += uleb(v)
+            elif f == DW_FORM_sdata:
+                out += sleb(v)
             elif f == DW_FORM_ref4:
                 out += struct.pack('<I', v.die.offset if v.die.offset is not None else 0)
             elif f == DW_FORM_exprloc:
@@ -755,13 +996,25 @@ def main(argv=None):
                     help='keep the case of labels (um80 writes them in upper case)')
     ap.add_argument('--no-variables', action='store_true',
                     help='write no static variables')
+    ap.add_argument('--ix-locals', choices=('off', 'fbreg'), default='fbreg',
+                    help='variables at IX+N: fbreg (the default: DW_OP_fbreg '
+                    'with the call frame CFA that udb80_unwind.py gives as '
+                    'the frame base) or off (no DWARF record; the GDB helper '
+                    'udb80_vars.py still reads them)')
     ap.add_argument('--language', choices=('c', 'asm'), default='c')
     ap.add_argument('--unwinder-path', action='store_true',
                     help='print the path of the GDB Python unwinder and stop')
+    ap.add_argument('--vars-path', action='store_true',
+                    help='print the path of the GDB Python variable commands '
+                    '(zlocals, zargs, zprint, zptype) and stop')
     opts = ap.parse_args(argv)
     if opts.unwinder_path:
         print(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'gdb',
                            'udb80_unwind.py'))
+        return 0
+    if opts.vars_path:
+        print(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'gdb',
+                           'udb80_vars.py'))
         return 0
     if not opts.dbg:
         ap.error('the following arguments are required: dbg')

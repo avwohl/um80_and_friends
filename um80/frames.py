@@ -206,6 +206,7 @@ class Walker(object):
         self.read_byte = read_byte
         self._depth = {}        # routine start -> (map addr -> d, touches ix)
         self.bottom = False     # the last step found the end of the stack
+        self.slots = []         # see walk()
 
     def word(self, addr):
         if addr is None or not 0 <= addr < 0xFFFF:
@@ -463,6 +464,9 @@ class Walker(object):
         the PC itself.  A frame has the tag of the step that found it; frame 0
         has the tag of the step that leaves it."""
         frames = [(pc, sp, None)]
+        # slots[i]: the stack address of the return address of frame i (the
+        # frame base of an IX frame is slot - 2), or None
+        self.slots = []
         cur_pc, cur_sp, cur_ix = pc, sp, ix
         innermost = True
         self.bottom = False
@@ -480,6 +484,7 @@ class Walker(object):
             if frames[0][2] is None:
                 frames[0] = (frames[0][0], frames[0][1], st.tag)
             frames.append((st.ret, st.sp, st.tag))
+            self.slots.append(st.slot if st.tag == 'frame' else None)
             cur_pc, cur_sp, cur_ix = st.ret, st.sp, st.ix
             innermost = False
             if st.sp > 0xFFFF:

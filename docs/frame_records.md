@@ -75,6 +75,16 @@ address after a CALL means that the depth was wrong. The frame is then a
 The debugger marks each frame with the source that found the frame:
 `[shadow]`, `[frame]` or `[guess]`.
 
+## The frame base of an IX frame
+
+The walker keeps the stack address of the return address of each frame
+(`Walker.slots`). In a routine with `frame=ix` the frame base (the value of IX in the
+routine) is the slot minus 2, and the saved IX is at the frame base. The
+variables at IX+N ([debug_info.md](debug_info.md#variables)) use this base in
+any frame, also before `add ix,sp` and after `pop ix`. A frame with the tag
+`guess` has no slot that the debugger can trust, so the variables of this
+frame are not available.
+
 ## Commands
 
 ```
