@@ -13,7 +13,13 @@ The program keeps all of its 64K. GDB keeps the symbols and the source files on 
 
 ## Build GDB 18.1 for the Z80
 
-GDB has had a Z80 target since GDB 11.1. Most packages do not build the target. Homebrew has no formula. Build GDB from source.
+GDB has had a Z80 target since GDB 11.1. A GDB that is built with `--enable-targets=all` has the target. The Homebrew formula `gdb` (GDB 18.1) uses that option, so `brew install gdb` can be sufficient.
+
+A test on 2026-11-05 (macOS 27 arm64) used a GDB 18.1 built with the configure options of the formula. The GDB listed z80 in `set architecture`. With the unwinder, `break`, `continue`, a `bt` of 6 frames and `up` worked, as in [Start a session](#start-a-session). The Homebrew bottle itself was not installed for that test. Other packages were not checked.
+
+Homebrew tells you to codesign GDB. The codesign is for native macOS programs only. The test GDB had no codesign and debugged cpmemu over TCP.
+
+To build GDB from source, use the commands below.
 
 The commands below built GDB 18.1 on macOS 27 (arm64) in about one minute. GDB 18.1 needs GMP and MPFR. The build used Homebrew packages for both.
 

@@ -2,6 +2,19 @@
 
 All notable changes to the um80 toolchain are documented here.
 
+## [Unreleased]
+
+### Docs: Homebrew's `gdb` has the Z80 target
+
+`docs/gdb.md` said that Homebrew has no formula and that GDB must be built from
+source. The Homebrew formula `gdb` (18.1) configures with
+`--enable-targets=all`, which includes z80. A GDB 18.1 built with the formula's
+configure options (2026-11-05, macOS 27 arm64) listed z80 in `set
+architecture`, and with `udb80_unwind.py` from a PyPI install of um80 0.4.0
+debugged a uc80 0.8.0 `-g` program on cpmemu: `break`, `continue`, a 6-frame
+`bt`, `up`. The page also says that Homebrew's codesign step is for native
+programs only. The bottle itself was not installed.
+
 ## [0.4.0] - 2026-11-04
 
 ### Added
