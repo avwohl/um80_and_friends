@@ -440,14 +440,14 @@ def test_live_routine_names_from_func_records(cpmemu, funcs):
 
 def test_live_without_a_shadow_stack(cpmemu, sumto, recurse):
     # "set shadow off" acts as a stub with no shadow stack, as GDB's
-    # stubs and z80fpga are: next uses SP, bt scans the stack ([guess]).
+    # stubs and z80fpga are: next uses SP, bt uses the frame records ([frame]).
     out = live(cpmemu, sumto, 'sumto', 'set shadow off', 'break sumto.c:14',
                'continue', 'next', 'print total', 'step', 'bt').stdout
     in_order(out, ['Breakpoint 1, LOOP () at sumto.c:14',
                    '14\t        total = add(total, i);', '$1 = 1',
                    '_ADD () at sumto.c:6',
-                   '#0  _ADD () at sumto.c:6  [guess]',
-                   '#1  0x0111 in LOOP () at sumto.c:14  [guess]'])
+                   '#0  _ADD () at sumto.c:6  [frame]',
+                   '#1  0x0111 in LOOP () at sumto.c:14  [frame]'])
     out = live(cpmemu, recurse, 'rec', 'set shadow off', 'break rec.mac:7',
                'continue', 'delete', 'next').stdout
     in_order(out, ['Breakpoint 1, REC () at rec.mac:7', '8\t\tret'])

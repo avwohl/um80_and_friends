@@ -55,6 +55,7 @@ Each tool has many more options. [docs/tools.md](https://github.com/avwohl/um80_
 - [docs/debug_info.md](https://github.com/avwohl/um80_and_friends/blob/main/docs/debug_info.md): debug information (`--debug-info`): the `;#` markers, the `.dbm` and `.dbg` files
 - [docs/udb80.md](https://github.com/avwohl/um80_and_friends/blob/main/docs/udb80.md): udb80, the source-level debugger for cpmemu: `break`, `step`, `next`, `bt`, `addr2line`, `sizes`
 - [docs/gdb.md](https://github.com/avwohl/um80_and_friends/blob/main/docs/gdb.md): GDB for Z80 programs: build GDB 18.1, `dbg2elf` (prog.dbg to an ELF file with DWARF), the Python unwinder
+- [docs/frame_records.md](https://github.com/avwohl/um80_and_friends/blob/main/docs/frame_records.md): backtrace from the frame records of `prog.dbg` (no shadow call stack needed), `udb80 bt-dump`
 - [docs/testing.md](https://github.com/avwohl/um80_and_friends/blob/main/docs/testing.md): the test suite, the M80 compatibility tests, the mbasic2025 byte-for-byte test
 - [docs/mbasic2025.md](https://github.com/avwohl/um80_and_friends/blob/main/docs/mbasic2025.md): mbasic2025 built with um80/ul80 and with the genuine M80/L80
 - [docs/index.md](https://github.com/avwohl/um80_and_friends/blob/main/docs/index.md): quick reference, examples, troubleshooting

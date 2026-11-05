@@ -22,6 +22,7 @@ the skip into a failure, so that a CI job that must have the tool cannot
 pass without it.
 """
 
+import json
 import os
 import re
 import shutil
@@ -279,6 +280,78 @@ _main:
 ;#endfunc _main
 _total:\tdw\t0
 """
+
+
+# Two IX routines that the code alone does not explain.  _odd builds its frame
+# with `push hl / pop ix` (so the standard prologue is not there) and moves SP
+# by a number inside the range.  _clob loads IX with another value after the
+# label ixend, and the last `pop ix / ret` is below that point.  Only the
+# labels of the record give the right answer.
+ODD_C = "int odd() { return 0; }\n" * 12
+ODD_MAC = """\
+\t.z80
+;#file 1 "odd.c"
+start:\tcall\t_main
+\tjp\t0
+;#func _main 1 3 frame=none pops=0
+_main:
+;#line 1 3
+\tld\thl,2
+\tcall\t_odd
+odd_back:
+\tcall\t_clob
+clob_back:
+\tret
+;#endfunc _main
+;#func _odd 1 5 frame=ix pops=0 ixbegin=??IXB2 ixend=??IXE2
+_odd:
+;#line 1 5
+\tpush\tix
+\tld\thl,0
+\tadd\thl,sp
+\tpush\thl
+\tpop\tix
+??IXB2:
+;#line 1 6
+\tld\thl,-6
+\tadd\thl,sp
+\tld\tsp,hl
+odd_stop:
+\tnop
+\tld\tsp,ix
+??IXE2:
+;#line 1 7
+\tpop\tix
+\tret
+;#endfunc _odd
+;#func _clob 1 9 frame=ix pops=0 ixbegin=??IXB3 ixend=??IXE3
+_clob:
+;#line 1 9
+\tpush\tix
+\tld\tix,0
+\tadd\tix,sp
+??IXB3:
+\tpush\thl
+clob_in:
+\tnop
+??IXE3:
+;#line 1 10
+\tld\tix,8000h
+clob_out:
+\tpop\thl
+\tpop\tix
+\tret
+;#endfunc _clob
+"""
+
+
+@pytest.fixture(scope='module')
+def odd(tmp_path_factory):
+    d = tmp_path_factory.mktemp('odd')
+    (d / 'odd.c').write_text(ODD_C)
+    (d / 'odd.mac').write_text(ODD_MAC)
+    build(str(d), 'odd')
+    return str(d)
 
 
 def _write_rec(d):
@@ -587,3 +660,53 @@ def test_frame_records_agree_with_the_shadow_stack_at_every_instruction(
         # the last 50 frames)
         assert set(how) == {'shadow' if mode == 'auto' else 'frame'}, (mode, how, out)
     assert runs['auto'] == runs['records'], runs
+
+
+@pytest.mark.parametrize('stop,steps', [('*fill', 25), ('rec.c:11', 8), ('*sum', 12)])
+def test_ix_range_of_a_uc80_program_agrees_with_the_shadow_stack(
+        gdb_path, cpmemu, uc80_programs, stop, steps):
+    """uc80 -g writes ixbegin and ixend (phase 6).  The unwinder takes the
+    IX chain only between the two labels and the stack depth elsewhere; bt
+    from the records equals bt from the shadow call stack at each
+    instruction, and every frame came from the records."""
+    with open(os.path.join(uc80_programs, 'rec.mac')) as f:
+        assert re.search(r';#func _fill .*ixbegin=\S+ ixend=\S+', f.read())
+    cmds = ['break ' + stop, 'continue', 'delete'] + ['bt', 'stepi'] * steps + [
+        'bt', 'udb80-unwind-info']
+    runs = {}
+    for mode in ('auto', 'records'):
+        out = gdb_session(gdb_path, cpmemu, uc80_programs, 'rec',
+                          ['udb80-unwind-mode ' + mode] + cmds)
+        runs[mode] = frames(out)
+        assert len(runs[mode]) > steps, out
+        how = re.findall(r'^level \d+ pc [0-9a-f]+ sp [0-9a-f]+ \[(\w+)\]', out, re.M)
+        assert set(how) == {'shadow' if mode == 'auto' else 'frame'}, (mode, how, out)
+    assert runs['auto'] == runs['records'], runs
+
+
+def test_gdb_unwinder_takes_the_range_of_the_record(gdb_path, cpmemu, odd):
+    """_odd has no standard prologue and a computed SP inside the IX range,
+    so the code alone gives a guess.  The unwinder gives an exact frame only
+    when it uses ixbegin and ixend of the record."""
+    out = gdb_session(gdb_path, cpmemu, odd, 'odd', [
+        'udb80-unwind-mode records', 'break *odd+14', 'continue', 'bt',
+        'udb80-unwind-info'])
+    assert [f for _n, _a, f in frames(out)][:2] == ['odd', 'main'], out
+    log = out[out.index('prog.dbg:'):]
+    assert re.findall(r'\[(\w+)\]', log)[:2] == ['frame', 'frame'], out
+    assert 'guess' not in log, out
+
+
+def test_gdb_unwinder_ends_the_ix_range_at_ixend(gdb_path, cpmemu, odd):
+    """_clob loads IX with 8000H after ixend.  The test puts the address
+    after the call of _odd at 8002H, where that IX would find a return
+    address.  Only an unwinder that stops the IX chain at ixend returns to
+    clob_back (the true caller) from clob_out."""
+    labels = {l[0]: l[1] for l in json.load(open(os.path.join(odd, 'odd.dbg')))['labels']}
+    out = gdb_session(gdb_path, cpmemu, odd, 'odd', [
+        'udb80-unwind-mode records', 'break *clob+14',
+        'set {int}0x8002 = %d' % labels['ODD_BACK'],
+        'continue', 'bt', 'udb80-unwind-info'])
+    fr = frames(out)
+    assert [f for _n, _a, f in fr][:2] == ['clob', 'main'], out
+    assert fr[1][1] == labels['CLOB_BACK'], out

@@ -165,7 +165,7 @@ source /path/to/um80/gdb/udb80_unwind.py
 `dbg2elf --unwinder-path` prints the path. For each frame the unwinder uses the first source of these two that works:
 
 1. **The shadow call stack of the stub.** The unwinder runs `monitor bt` once after each resume. The stub lists the return address of each call that has not returned. The stub does not give the address of the return address on the stack. The unwinder looks for each return address in memory, from the stack address of the frame below, upward.
-2. **The frame records of `prog.dbg`.** A routine with `frame=ix` keeps the saved IX at IX+0 and the return address at IX+2. The unwinder knows that IX is not yet set at the start of the prologue (`push ix`, `ld ix,0`, `add ix,sp`). At a `ret` instruction, IX and SP already have the values of the caller. A routine with no frame record has its return address at SP plus the pushes between the routine start and the PC. The unwinder checks that the word follows a CALL instruction. If the check fails, the unwinder searches the stack for a word that follows a CALL. The unwinder marks such a frame as `guess`.
+2. **The frame records of `prog.dbg`.** The unwinder uses `um80/frames.py`, as `udb80` does. [frame_records.md](frame_records.md) has the rules. Between `ixbegin` and `ixend` of a routine with `frame=ix`, the saved IX is at IX+0 and the return address is at IX+2. Elsewhere the return address is at SP plus the bytes that the routine has pushed. The unwinder finds that number by a walk over the code of the routine. The unwinder checks that the word follows a CALL instruction. If the check fails, or if the number is not known, the unwinder searches the stack for a word that follows a CALL. The unwinder marks such a frame as `guess`.
 
 When neither source works, GDB uses its own unwinder.
 
@@ -189,7 +189,7 @@ The unwinder works without `prog.dbg` when the stub has a shadow call stack.
 
 ### Measured behavior
 
-A test stops a recursive C program (5 calls of `sum`, 4 calls of `fill` with an IX frame) at the base case. The `bt` of GDB shows 5 `sum` frames and `main`, and 4 `fill` frames and `main`. The return address of each frame equals the entry of `monitor bt` with the same number. The two sources give the same `bt` at each instruction of the prologue of `fill`, of the epilogue of `fill` and of `sum`.
+A test stops a recursive C program (5 calls of `sum`, 4 calls of `fill` with an IX frame) at the base case. The `bt` of GDB shows 5 `sum` frames and `main`, and 4 `fill` frames and `main`. The return address of each frame equals the entry of `monitor bt` with the same number. The two sources give the same `bt` at each instruction of the prologue of `fill`, of the epilogue of `fill` and of `sum`. The same test runs for a `uc80 -g` program, where `uc80` writes `ixbegin` and `ixend`.
 
 ## The tests
 

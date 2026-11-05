@@ -12,10 +12,13 @@ the user view.  The unwinder takes frames from two places, best first:
    give the stack address of a return address, so the unwinder looks for
    each return address in memory, upward from the stack address of the
    frame below.
-2. The frame records of prog.dbg (`;#func ... frame=ix`).  An IX frame has
-   the saved IX at IX+0 and the return address at IX+2.  A routine without a
-   frame record is read as: the return address is at SP, or else the first
-   word above SP that follows a CALL instruction (a guess).
+2. The frame records of prog.dbg (`;#func ... frame=ix ixbegin=.. ixend=..`),
+   read by um80/frames.py, the code that udb80 uses too.  Between ixbegin
+   and ixend the frame is in IX: the saved IX is at IX+0 and the return
+   address at IX+2.  Everywhere else the return address is at SP+d, where d
+   is the stack depth that a walk over the code of the routine finds.  When
+   d is not known, the unwinder takes the first word above SP that follows a
+   CALL instruction (a guess).
 
 A frame that neither source can unwind goes to the unwinder of GDB.  GDB
 asks the unwinders in this order: the dummy, tail call and inline unwinders
@@ -31,11 +34,26 @@ The command `udb80-unwind-info` prints what the unwinder knows.
 """
 
 import bisect
+import importlib.util
 import json
 import os
 
 import gdb
 from gdb.unwinder import Unwinder
+
+
+def _load_frames():
+    """um80/frames.py, the frame-record walker that udb80 shares.  It is
+    loaded by its path, so that GDB needs no installed um80."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    path = os.path.join(os.path.dirname(here), 'frames.py')
+    spec = importlib.util.spec_from_file_location('udb80_frames', path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+frames = _load_frames()
 
 MAX_STACK_SCAN = 0x4000
 Z80_ARCHS = ('z80', 'ez80', 'z180', 'r800', 'gbz80')
@@ -82,6 +100,8 @@ class DbgFile(object):
             data = json.load(f)
         if data.get('format') != 'um80-dbg':
             raise ValueError('%s is not a um80-dbg file' % path)
+        self.program = frames.Program(data)
+        self.walker = frames.Walker(self.program, lambda a: None)
         self.funcs = sorted((f for f in data.get('funcs') or []
                              if f.get('start') is not None),
                             key=lambda f: f['start'])
@@ -239,106 +259,27 @@ def func_start(pending, pc, level):
     return pc
 
 
-def looks_like_return(mem, dbg, addr):
-    """True if addr follows a CALL or RST instruction."""
-    if addr is None or addr < 3:
-        return False
-    if dbg is not None and dbg.asm:
-        # the instruction before addr is a call when the row that ends at addr
-        # starts with a call opcode
-        i = bisect.bisect_left(dbg.asm_starts, addr) - 1
-        while i >= 0 and dbg.asm[i][1] > addr:
-            i -= 1
-        if i >= 0 and dbg.asm[i][1] == addr and dbg.asm[i][2] == 'i':
-            op = mem.byte(dbg.asm[i][0])
-            return op == 0xCD or (op is not None and (op & 0xC7) in (0xC4, 0xC7))
-        return False
-    op = mem.byte(addr - 3)
-    return op == 0xCD or (op is not None and (op & 0xC7) == 0xC4)
-
-
-PROLOGUE = (0xDD, 0xE5, 0xDD, 0x21, 0x00, 0x00, 0xDD, 0x39)    # push ix, ld ix,0, add ix,sp
-
-
 def record_unwind(pending, pc, sp, level, dbg):
-    """Frame record of prog.dbg.  Returns (caller pc, caller sp, saved ix or
-    None, how) or None."""
-    mem = STATE.mem
-    f = dbg.func_at(pc - 1 if level else pc)
-    if f is None:
-        return None
-    start = f['start']
+    """Frame record of prog.dbg (um80/frames.py).  Returns (caller pc, caller
+    sp, caller ix or None, how) or None.  `how` is 'frame' for an exact
+    answer and 'guess' for a scan of the stack."""
     try:
         ix = int(pending.read_register('ix'))
     except gdb.error:
         ix = None
-    pops = f.get('pops') or 0
-    if f.get('frame') == 'ix' and ix is not None:
-        # the routine keeps its frame in IX between `add ix,sp` and `ld sp,ix`
-        code = [mem.byte(start + i) for i in range(len(PROLOGUE))]
-        has_prologue = tuple(code) == PROLOGUE
-        off = pc - start
-        op = mem.byte(pc)
-        if level == 0 and has_prologue and off < 8:
-            # before the frame is set up: IX is still the caller's
-            extra = 2 if off >= 2 else 0       # push ix done
-            ret_at = sp + extra
-            return mem.word(ret_at), ret_at + 2 + pops, ix, 'frame'
-        if level == 0 and op == 0xC9:
-            # at the RET: IX and SP are the caller's already
-            return mem.word(sp), sp + 2 + pops, ix, 'frame'
-        saved = mem.word(ix)
-        ret = mem.word(ix + 2)
-        if ret is not None:
-            return ret, ix + 4 + pops, saved, 'frame'
+    # A new Mem for each frame.  GDB steps and asks for frames at many
+    # stops with no event between them (`finish` out of an inline frame), so
+    # the pages that an earlier stop read can be stale.  Measured: the page
+    # at FC00H read as zeros one stop after a CALL had written to it, and the
+    # walker took a word of the wrong frame.  Only the depth maps of the
+    # routines (the code does not change) stay from call to call.
+    mem = Mem()
+    walker = dbg.walker
+    walker.read_byte = mem.byte
+    st = walker.step(pc, sp, ix, level == 0)
+    if st is None:
         return None
-    # frame=none or static: the return address is at SP, with the pushes of
-    # the routine added.  A straight scan from the start to PC counts PUSH
-    # and POP; a jump makes the count a guess, so the word is checked.
-    depth = 0
-    a = start
-    guess = False
-    while a < pc:
-        op = mem.byte(a)
-        if op is None:
-            break
-        if op & 0xCF == 0xC5:
-            depth += 2
-            a += 1
-        elif op & 0xCF == 0xC1:
-            depth -= 2
-            a += 1
-        elif op in (0xDD, 0xFD):
-            op2 = mem.byte(a + 1)
-            if op2 == 0xE5:
-                depth += 2
-            elif op2 == 0xE1:
-                depth -= 2
-            a += 2 if op2 in (0xE5, 0xE1) else 1
-            if op2 not in (0xE5, 0xE1):
-                guess = True
-                break
-        else:
-            # any other instruction: its length is unknown here; use the
-            # assembler row of prog.dbg
-            i = bisect.bisect_right(dbg.asm_starts, a) - 1
-            if i < 0 or dbg.asm[i][0] != a:
-                guess = True
-                break
-            a = dbg.asm[i][1]
-    cands = [] if guess else [sp + depth]
-    for c in cands:
-        w = mem.word(c)
-        if looks_like_return(mem, dbg, w):
-            return w, c + 2 + pops, None, 'frame'
-    # a guess: the first word above SP that follows a CALL
-    a = sp
-    while a < min(sp + MAX_STACK_SCAN, 0xffff):
-        w = mem.word(a)
-        if looks_like_return(mem, dbg, w):
-            return w, a + 2 + pops, None, 'guess'
-        a += 1
-    return None
+    return st.ret, st.sp, st.ix, st.tag
 
 
 class Z80Unwinder(Unwinder):

@@ -5,6 +5,48 @@ All notable changes to the um80 toolchain are documented here.
 ## [Unreleased]
 
 ### Added
+- Backtrace from the frame records of prog.dbg (phase 6 of the cpmemu debugger
+  plan, rule D7 source 2). `um80/frames.py` (standard library only) finds the
+  chain of return addresses from PC, SP, IX, the memory and the `;#func`
+  records: between `ixbegin` and `ixend` of an IX frame the return address is
+  at IX+2 (the word must follow a CALL, because a routine can lend IX to its
+  code as a pointer), and elsewhere at SP+d, where d is the stack depth that a
+  walk over the code of the routine finds (push, pop, `inc sp`, `dec sp`, the
+  `pops` of the called routine; two paths with two depths, `ld sp,hl` and
+  `ld sp,(nn)` make d not known and the frame a `guess`; `ld sp,nn` and the
+  routine at the load address end the chain). A record with `frame=ix` and no
+  range gets one from the code. Instruction lengths come from the `asm` rows,
+  and from a length table for library code, which has no rows. `udb80 bt` uses
+  the shadow call stack when the stub has one, else the frame records, and tags
+  each frame `[shadow]`, `[frame]` or `[guess]`. New: `bt shadow`, `bt frame`
+  (choose the source) and `udb80 bt-dump [--ix IX] prog.dbg memory.bin SP PC`
+  (a memory image from `cpmemu --save-memory`). The GDB unwinder
+  `udb80_unwind.py` uses the same file, so it now uses `ixbegin` and `ixend`
+  (before: only a fixed prologue of 8 bytes and the `ret` byte). docs/frame_records.md
+  has the rules, the commands and the limits. Measured with `cpmemu --gdb`:
+  `bt frame` equals `bt shadow`, frame by frame, at each stop of `stepi`, `step`
+  and `next` through a recursive assembler program, a program with an IX frame, a
+  recursive `uc80 -g` program and eight more `uc80 -g` programs (11,727 `stepi`
+  stops with the `printf` library; 0 differences; 835 stops have a `guess`
+  frame, all equal to the shadow stack). A `setjmp`/`longjmp` program differs at
+  657 of 3000 stops: at 653 the shadow stack keeps a frame that `longjmp`
+  skipped and the frame records are right, at 4 SP changes inside `longjmp`.
+  `bt-dump` gives the same frames as `bt` for a program that ends with `jp 0` at
+  depth 3. Fixed on the way: the unwinder read a stale page of the stack
+  (GDB steps in `finish` out of an inline frame with no event between the
+  stops), so the unwinder reads fresh memory for each frame. Tests:
+  tests/test_frames.py (17, new), 3 new tests in tests/test_gdb.py (a
+  `uc80 -g` program with 3 cases, and two assembler routines whose IX range only
+  the record gives: `push hl / pop ix` for a prologue, and a load of IX after
+  `ixend`). Mutation checks: with the old `udb80_unwind.py` the `ixend` test
+  fails; with the `rec.get('ix')` lines removed from `Walker.ix_range`, 5 tests
+  fail (before: the full suite still passed). `bt-dump` is tested with PC in an
+  IX range, with and without `--ix`, and the expected tags of `test_live_without_a_shadow_stack`
+  are `[frame]` now (were `[guess]`; the old scan found the same addresses).
+  The suite went from 1523 passed, 1 skipped to 1540 passed, 1 skipped (with
+  GDB 18.1). Not done: a run with a program from uplm80 or ucow (only `uc80 -g` and
+  hand-written programs were measured; uada80 is out of the plan), a shadow
+  stack that follows `longjmp`, the stack of a second task.
 - `dbg2elf` (`um80/dbg2elf.py`, console script `dbg2elf`), the GDB Python
   unwinder `um80/gdb/udb80_unwind.py` and docs/gdb.md (phase 7 of the cpmemu
   debugger plan). `dbg2elf prog.dbg` reads the program that prog.dbg names

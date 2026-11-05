@@ -76,7 +76,7 @@ line has no code, `break` uses the next line that has code and says so.
 - `next [N]`: the same, but run over a call.
 - `stepi [N]`: run one instruction.
 - `finish`: run until the current routine returns.
-- `backtrace [N]` (`bt`): show the frames.
+- `backtrace [shadow|frame] [N]` (`bt`): show the frames.
 - `list [LOCATION]`, `list FIRST,LAST`: show source lines.
 - `disassemble [START,END | START,+LENGTH | LOCATION]`: show instructions.
   The default is the routine that holds the current address. A `=>`
@@ -135,14 +135,27 @@ when SP is at least 2 above SP at the call. `finish` needs the shadow stack.
 
 ### Backtrace
 
-`backtrace` asks the stub for the shadow call stack (`monitor bt`). The
-list has the current address and the return addresses, innermost first.
-The line of a return address is the line of the CALL before it. Each frame
-has a tag: `[shadow]` when the frame comes from the shadow stack, and
-`[guess]` when the stub has no shadow stack. The guess is a scan of the
-stack for words that follow a CALL instruction in the program.
+`backtrace` has two sources. The first is the shadow call stack of the stub
+(`monitor bt`). The list has the current address and the return addresses,
+innermost first. The second source is the frame records of `prog.dbg`. The
+second source needs only the registers and the memory, so it works with a stub
+that has no shadow call stack. [frame_records.md](frame_records.md) has the
+rules.
 
-The tag `[frame]` (frame records from the compiler) is not in udb80 yet.
+`backtrace` uses the shadow call stack when the stub has one. Otherwise
+`backtrace` uses the frame records. The line of a return address is the line of
+the CALL before it. Each frame has a tag:
+
+- `[shadow]`: the frame comes from the shadow call stack.
+- `[frame]`: the frame comes from the frame records. The IX range or the stack
+  depth of the routine gave the return address.
+- `[guess]`: the debugger could not find the return address from the records.
+  The debugger scanned the stack for a word that follows a CALL instruction in
+  the program. The frame can be wrong.
+
+You can choose the source: `backtrace shadow` and `backtrace frame`. A count
+can follow (`backtrace frame 3`). `set shadow off` makes `backtrace`, `next` and
+`finish` act as with a stub that has no shadow call stack.
 
 ```
 #0  BOTTOM () at rec.mac:9  [shadow]
@@ -208,12 +221,26 @@ A routine runs from its `;#func` record to its end. A program with no
 records uses its labels: a routine runs from a label to the next label or
 to the first data.
 
+## bt-dump
+
+```
+udb80 bt-dump [--ix IX] [-n COUNT] prog.dbg memory.bin SP PC
+```
+
+The command shows the backtrace of a program that has stopped, from a memory
+image and three register values. It uses the frame records only.
+
+Make the image
+with `cpmemu --save-memory=memory.bin prog.com`. The image has 65536 bytes,
+from address 0. SP and PC are the values at the stop. Give `--ix` when PC is
+in the IX range of a routine. The command checks the program in the image
+against `prog.dbg`, as `udb80` does at the start of a session.
+
 ## Limits
 
 - udb80 runs one program on one stub.
 - No `watch`, `ignore`, conditions, `call` or `set` of memory yet.
-- `[frame]` backtraces (compiler frame records) and variables with types
-  are later phases.
+- Variables with types are a later phase.
 - With `--run` and no `--batch`, the program and udb80 both read the
   terminal. Start cpmemu in a second terminal and use `--connect` for a
   program that reads the keyboard.
@@ -221,6 +248,8 @@ to the first data.
   names (`JMP`).
 
 ## Tests
+
+`tests/test_frames.py` compares `bt shadow` with `bt frame` at each stop of a step-through (live tests with the same skip rule), and tests `bt-dump`.
 
 `tests/test_udb80.py` runs the static tests always and the live tests when
 a cpmemu with `--gdb` is present: `$CPMEMU`, `../cpmemu/src/cpmemu`,

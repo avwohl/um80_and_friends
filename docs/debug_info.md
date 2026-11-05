@@ -95,7 +95,13 @@ lower case. Paths and names keep their case. A number is decimal digits.
   - `pops=N`. The number of bytes of stack that the routine removes from the
     caller's stack. The default is 0.
   - `ixbegin=LABEL` and `ixend=LABEL`. The two labels give the range of
-    addresses where IX holds the frame. Give both or none.
+    addresses where IX holds the frame. Give both or none. The range
+    includes both addresses. `ixbegin` is the address after `add ix,sp`.
+    `ixend` is the address of the last `pop ix` in front of a `ret`. In the
+    range, the saved IX is at IX+0 and the return address is at IX+2. Outside
+    the range, or with no range, a debugger uses the stack depth at the
+    address ([frame_records.md](frame_records.md)). A compiler writes the two
+    labels after its last text pass, because a label stops the optimizers.
   - um80 ignores other keys.
 - `;#endfunc`: `NAME`, when present, must be the name of the open routine.
   The bytes after `;#endfunc` have no source line until the next `;#line`.

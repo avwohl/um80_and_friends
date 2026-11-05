@@ -10,6 +10,7 @@ docs/debugger_plan.md in the cpmemu project.
     udb80 [options] PROG.dbg (--run 'cpmemu ARGS' | --connect HOST:PORT)
     udb80 addr2line [-r] [--asm] PROG.dbg ADDR...
     udb80 sizes PROG.dbg
+    udb80 bt-dump [--ix IX] PROG.dbg MEMORY.BIN SP PC
 """
 
 import argparse
@@ -25,6 +26,7 @@ import sys
 import tempfile
 import time
 
+from um80 import frames
 from um80.ud80 import Disassembler
 
 REG_NAMES = ['af', 'bc', 'de', 'hl', 'sp', 'pc', 'ix', 'iy',
@@ -104,6 +106,13 @@ class DebugInfo:
                 self._by_name[f['name'].upper()] = f['start']
         self.code_end = max([r[1] for r in self.asm] +
                             [r[1] for r in self.lines] + [0])
+        self._frame_program = None
+
+    def frame_program(self):
+        """The frame records and instruction rows, for um80.frames."""
+        if self._frame_program is None:
+            self._frame_program = frames.Program(self.data)
+        return self._frame_program
 
     # -- the D9 check -----------------------------------------------------
 
@@ -411,6 +420,7 @@ class Debugger:
         self.hist = 0
         self.started = False
         self._regs = None
+        self._pages = {}
         self.errors = 0
         self._handshake()
 
@@ -508,6 +518,7 @@ class Debugger:
     def _resume(self, packet):
         self.need_alive()
         self._regs = None
+        self._pages = {}
         self.started = True
         self.rsp.send(packet)
         try:
@@ -1127,29 +1138,69 @@ class Debugger:
     def cmd_finish(self, rest, fmt):
         self.do_finish()
 
+    def page_byte(self, addr):
+        """One byte of guest memory, read in pages of 256 bytes that are
+        forgotten when the program runs.  None when the stub refuses."""
+        if not 0 <= addr < 0x10000:
+            return None
+        page = addr >> 8
+        if page not in self._pages:
+            try:
+                data = self.read_mem(page << 8, 256)
+            except UdbError:
+                data = b''
+            self._pages[page] = data if len(data) == 256 else None
+        data = self._pages[page]
+        return None if data is None else data[addr & 255]
+
+    def frame_chain(self):
+        """D7 source 2: the frames from the frame records of prog.dbg and
+        the registers.  A list of (address, SP, tag), innermost first."""
+        regs = self.regs()
+        walker = frames.Walker(self.dbg.frame_program(), self.page_byte)
+        chain = walker.walk(regs['pc'], regs['sp'], regs['ix'])
+        # One frame is a whole answer only when the walker reached the
+        # bottom of the stack; else the walker could not unwind the frame.
+        return chain if len(chain) > 1 or walker.bottom else None
+
     def cmd_backtrace(self, rest, fmt):
         self.need_alive()
-        frames = self.shadow_frames()
-        pc = self.pc()
-        if frames is not None:
-            tag = '[shadow]'
-            addrs = frames
-        else:
-            tag = '[guess]'
-            addrs = [pc] + self.guess_frames()
+        source = 'auto'
         limit = None
-        if rest:
+        for word in rest.split():
+            if word in ('shadow', 'frame', 'frames'):
+                source = 'shadow' if word == 'shadow' else 'frame'
+                continue
             try:
-                limit = int(rest)
+                limit = int(word)
             except ValueError:
-                raise UdbError('Bad count: "%s"' % rest)
-        for i, a in enumerate(addrs):
+                raise UdbError('Bad count: "%s"' % word)
+        pc = self.pc()
+        chain = None
+        extra = ''
+        shadow = self.shadow_frames() if source != 'frame' else None
+        if shadow is not None:
+            entries = [(a, 'shadow') for a in shadow]
+            if getattr(self, 'out_of_step', False):
+                extra = '(the shadow stack is out of step: some frames can be wrong)'
+        elif source == 'shadow':
+            raise UdbError('The stub has no shadow call stack.')
+        else:
+            chain = self.frame_chain()
+            if chain is not None:
+                entries = [(a, tag) for a, _sp, tag in chain]
+            else:
+                entries = [(a, 'guess') for a in [pc] + self.guess_frames()]
+        self.print_frames(entries, limit)
+        if extra:
+            self.say(extra)
+
+    def print_frames(self, entries, limit=None):
+        for i, (a, tag) in enumerate(entries):
             if limit is not None and i >= limit:
                 self.say('(More stack frames follow...)')
                 break
-            self.say('#%-2d %s  %s' % (i, self.frame_text(a, i, i == 0), tag))
-        if frames is not None and getattr(self, 'out_of_step', False):
-            self.say('(the shadow stack is out of step: some frames can be wrong)')
+            self.say('#%-2d %s  [%s]' % (i, self.frame_text(a, i, i == 0), tag))
 
     def guess_frames(self):
         """D7 source 3: stack words that point after a CALL in the program."""
@@ -1570,6 +1621,71 @@ def cmd_sizes(argv):
     return 0
 
 
+class DumpView(Debugger):
+    """A memory dump and three registers instead of a running program: the
+    part of Debugger that bt-dump needs."""
+
+    def __init__(self, dbg, memory, regs, out=None):
+        self.dbg = dbg
+        self.out = out or sys.stdout
+        self.memory = memory
+        self._regs = regs
+        self.level = 'auto'
+        self.cpu_z80 = True
+        self.alive = True
+        self.src_cache = {}
+        self._pages = {}
+        self.errors = 0
+        self.src_dirs = []
+
+    def read_mem(self, addr, length):
+        return bytes(self.memory[addr:addr + length])
+
+    def page_byte(self, addr):
+        return self.memory[addr] if 0 <= addr < len(self.memory) else None
+
+
+def cmd_bt_dump(argv):
+    ap = argparse.ArgumentParser(
+        prog='udb80 bt-dump',
+        description='Show the backtrace of a memory dump from the frame '
+                    'records of PROG.dbg.  The dump is the file that '
+                    'cpmemu --save-memory=FILE writes.')
+    ap.add_argument('dbg')
+    ap.add_argument('memory', help='64K memory image, from address 0')
+    ap.add_argument('sp', help='the value of SP')
+    ap.add_argument('pc', help='the value of PC')
+    ap.add_argument('--ix', help='the value of IX (needed when PC is in the '
+                                 'IX range of a routine)')
+    ap.add_argument('--program', help='the program file for the image check')
+    ap.add_argument('-n', '--count', type=int, help='show only N frames')
+    args = ap.parse_args(argv)
+    dbg = DebugInfo(args.dbg)
+    dbg.check_program_file(args.program)
+    try:
+        with open(args.memory, 'rb') as f:
+            memory = f.read()
+    except OSError as e:
+        raise UdbError('cannot read %s: %s' % (args.memory, e))
+    if len(memory) != 0x10000:
+        raise UdbError('%s has %d bytes; a dump from cpmemu --save-memory '
+                       'has 65536' % (args.memory, len(memory)))
+    img = dbg.image
+    if img.get('kind') == 'com' and img.get('load') is not None:
+        dbg.check_memory(memory[img['load']:img['load'] + (img.get('length') or 0)])
+    sp, pc = parse_addr(args.sp), parse_addr(args.pc)
+    ix = parse_addr(args.ix) if args.ix else None
+    view = DumpView(dbg, memory, {'sp': sp, 'pc': pc, 'ix': ix})
+    walker = frames.Walker(dbg.frame_program(), view.page_byte)
+    chain = walker.walk(pc, sp, ix)
+    if len(chain) > 1 or walker.bottom:
+        entries = [(a, tag) for a, _sp, tag in chain]
+    else:
+        entries = [(a, 'guess') for a in [pc] + view.guess_frames()]
+    view.print_frames(entries, args.count)
+    return 0
+
+
 # ---------------------------------------------------------------------------
 # Starting and connecting
 # ---------------------------------------------------------------------------
@@ -1630,6 +1746,8 @@ def main(argv=None):
             return cmd_addr2line(argv[1:])
         if argv and argv[0] == 'sizes':
             return cmd_sizes(argv[1:])
+        if argv and argv[0] == 'bt-dump':
+            return cmd_bt_dump(argv[1:])
         return debug_main(argv)
     except UdbError as e:
         sys.stderr.write('udb80: %s\n' % e)
@@ -1641,7 +1759,7 @@ def debug_main(argv):
         prog='udb80',
         description='Source-level debugger for Z80 and 8080 programs. '
                     'Other forms: udb80 addr2line PROG.dbg ADDR..., '
-                    'udb80 sizes PROG.dbg.')
+                    'udb80 sizes PROG.dbg, udb80 bt-dump PROG.dbg MEMORY.BIN SP PC.')
     ap.add_argument('dbg', help='the prog.dbg file that ul80 --debug-info wrote')
     ap.add_argument('--run', metavar='CMD',
                     help="start cpmemu: --run 'cpmemu prog.com'; udb80 adds "
