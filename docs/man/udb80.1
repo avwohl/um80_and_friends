@@ -1,0 +1,405 @@
+.TH UDB80 1 "November 2026" "um80 0.4.0" "User Commands"
+.SH NAME
+udb80 \- source-level debugger for Z80 and 8080 programs in cpmemu
+.SH SYNOPSIS
+.B udb80
+[\fIoptions\fR]
+\fB\-\-run\fR \fI'cpmemu prog.com'\fR
+.I prog.dbg
+.br
+.B udb80
+[\fIoptions\fR]
+\fB\-\-connect\fR \fIHOST\fR:\fIPORT\fR
+.I prog.dbg
+.br
+.B udb80 addr2line
+[\fB\-r\fR] [\fB\-\-asm\fR] [\fB\-\-outer\fR] [\fB\-\-program\fR \fIFILE\fR]
+.I prog.dbg ADDRESS
+\&...
+.br
+.B udb80 sizes
+.I prog.dbg
+.br
+.B udb80 bt\-dump
+[\fB\-\-ix\fR \fIIX\fR] [\fB\-n\fR \fICOUNT\fR] [\fB\-\-program\fR \fIFILE\fR]
+.I prog.dbg memory.bin SP PC
+.SH DESCRIPTION
+.B udb80
+debugs a program that runs in
+.BR cpmemu .
+udb80 shows source lines, sets breakpoints on source lines, steps by
+line, shows the chain of calls and prints variables.
+udb80 speaks the GDB remote protocol to the stub of
+.BR "cpmemu \-\-gdb" .
+The program keeps all of its 64K.
+udb80 keeps the symbols and the source files on the host.
+.PP
+udb80 reads
+.IR prog.dbg ,
+the file that
+.B "ul80 \-\-debug\-info"
+writes.
+A source line comes from the
+.B ;#
+markers that a compiler writes with
+.B \-g
+.RB ( uc80 ,
+.BR uplm80 ).
+A program with no markers has the lines of its
+.I .mac
+files.
+.PP
+At the start, udb80 compares
+.I prog.dbg
+with the program.
+.I prog.dbg
+holds the length and the SHA-256 of the program file.
+udb80 refuses a
+.I prog.dbg
+that does not agree with the
+.I .com
+file beside it, or with guest memory at 0100H.
+.SH OPTIONS
+.TP
+.BI \-\-run " CMD"
+Start cpmemu with the command
+.IR CMD ,
+for example
+.BR "\-\-run 'cpmemu prog.com'" .
+udb80 adds
+.B \-\-gdb=0
+and
+.B \-\-gdb\-port\-file
+to the command, and reads the port that cpmemu chooses.
+.TP
+.BI \-\-connect " HOST:PORT"
+Connect to a stub that runs already, for example
+.B "cpmemu \-\-gdb prog.com"
+in a second terminal.
+.TP
+.BI \-ex " CMD"
+Run the command
+.IR CMD .
+You can give the option more than once.
+.TP
+.BR \-x " \fIFILE\fR, " \-\-command " \fIFILE\fR"
+Run the commands in
+.IR FILE .
+A line that starts with
+.B #
+is a comment.
+.TP
+.B \-\-batch
+Run the commands, end the program and quit.
+Without this option, udb80 reads more commands from the keyboard.
+.TP
+.B \-\-wait\-program
+For
+.BR romwbw_emu ,
+where CP/M and not the stub starts the program.
+udb80 tells the stub to stop when the program image of
+.I prog.dbg
+is at 0100H in bank 8EH.
+Then udb80 starts the session.
+.TP
+.BI \-\-program " FILE"
+The program file for the image check.
+The default is the file that
+.I prog.dbg
+names.
+.TP
+.BR \-d " \fIDIR\fR, " \-\-directory " \fIDIR\fR"
+A directory that holds source files.
+You can give the option more than once.
+.TP
+.B \-\-asm
+Start at the assembler level.
+.TP
+.B \-\-8080
+Disassemble as 8080.
+.TP
+.BR \-h ", " \-\-help
+Show the usage and stop.
+.SH LOCATIONS
+A location is
+.IR FILE : LINE ,
+a routine name, a label, or
+.BI * ADDRESS .
+.I FILE
+can be the base name of the file.
+A line can have more than one address.
+.B break
+then sets a breakpoint at each address.
+When a line has no code,
+.B break
+uses the next line that has code, and says so.
+.SH COMMANDS
+You can use a short form of a command name when only one command
+starts with the short form
+.RB ( b ", " c ", " s ", " n ", " bt ", " p ", " l ).
+.TP
+.BI break " LOCATION\fR, " tbreak " LOCATION"
+Set a breakpoint.
+A breakpoint from
+.B tbreak
+goes away after the first stop.
+.TP
+.BR delete " [\fIN\fR...], " "info breakpoints"
+Delete breakpoints, or list them.
+.TP
+.B continue
+Run until a breakpoint, the end of the program, or ^C.
+.TP
+.BR step " [\fIN\fR], " next " [\fIN\fR], " stepi " [\fIN\fR]"
+Run to the next source line.
+.B step
+goes into a call.
+.B next
+runs over a call.
+.B stepi
+runs one instruction.
+.TP
+.B finish
+Run until the current routine returns.
+.TP
+.BR backtrace " [" shadow | frame "] [\fIN\fR]"
+Show the frames
+.RB ( bt ).
+See
+.BR BACKTRACE .
+.TP
+.BR list " [\fILOCATION\fR], " list " \fIFIRST\fR,\fILAST\fR"
+Show source lines.
+.TP
+.BR disassemble " [\fISTART\fR,\fIEND\fR | \fISTART\fR,+\fILENGTH\fR | \fILOCATION\fR]"
+Show instructions.
+The default is the routine that holds the current address.
+.TP
+.BR "info registers" " [\fINAME\fR...]"
+Show the registers and the flags.
+.TP
+.BR "info symbols" " [\fIPATTERN\fR | \fIADDRESS\fR], " "info line" " [\fILOCATION\fR]"
+List the labels, name the label of an address, or show the address range
+of a line.
+.TP
+.BI x/ NFU " ADDRESS"
+Show memory.
+.I N
+is a count.
+.I F
+is
+.BR x ", " d ", " u ", " c ", " s
+or
+.BR i .
+.I U
+is
+.B b
+(1 byte),
+.B h
+(2 bytes) or
+.B w
+(4 bytes).
+.TP
+.BI print [/ F ] " EXPRESSION"
+Show a value: a number, a register
+.RB ( $pc ", " $sp ", " $hl ", " $a ),
+a label, a variable,
+.BR + ", " \- ", " &
+and
+.BR * .
+.BR print/x
+shows hex.
+.TP
+.BR "info locals" ", " "info args" ", " frame " [\fIN\fR], " up " [\fIN\fR], " down " [\fIN\fR], " ptype ", " whatis
+Show the variables of the selected frame, select a frame, or show a type.
+A variable that the optimizer keeps in a register can show
+.BR <not available> .
+Compile the routine with
+.B \-\-optnone
+to keep each variable in its slot.
+.TP
+.B sizes
+Show the bytes of each routine.
+.TP
+.BI monitor " COMMAND"
+Send a command to the stub, for example
+.BR "monitor bt" .
+.TP
+.BR "set level" " auto|src|asm|outer|both, " "set cpu" " z80|8080, " "set shadow" " on|off"
+Choose the level of the lines, the CPU of the disassembler, and the
+source of the backtrace.
+.TP
+.BR kill ", " quit ", " echo " \fITEXT\fR, " help
+.SH BACKTRACE
+.B backtrace
+has two sources.
+The first is the shadow call stack of the stub
+.RB ( "monitor bt" ).
+The second is the frame records of
+.IR prog.dbg ,
+which need only the registers and the memory.
+udb80 uses the shadow call stack when the stub has one.
+Each frame has a tag:
+.TP
+.B [shadow]
+The frame comes from the shadow call stack.
+.TP
+.B [frame]
+The frame comes from the frame records.
+.TP
+.B [guess]
+The records did not give the return address.
+udb80 found a word on the stack that follows a CALL instruction.
+The frame can be wrong.
+.SH OTHER FORMS
+.TP
+.B addr2line
+Show the routine and the line of each address.
+An address is
+.BR 0x0108 ,
+.B 0108H
+or a decimal number.
+With
+.BR \-r ,
+each address is a return address, and udb80 looks up the byte before it.
+Use
+.B \-r
+for the addresses of
+.BR "cpmemu \-\-backtrace" .
+.B \-\-asm
+shows the assembler line.
+.B \-\-outer
+shows the outer level (for example the C line under a BASIC line).
+.TP
+.B sizes
+Show the bytes of each routine, the biggest first, and the total.
+Use the list to choose the routines for
+.BR "uc80 \-\-optnone" .
+.TP
+.B bt\-dump
+Show the backtrace of a program that has stopped, from the frame records,
+a memory image and the values of SP and PC.
+Make the image with
+.BR "cpmemu \-\-save\-memory=memory.bin prog.com" .
+The image has 65536 bytes, from address 0.
+Give
+.B \-\-ix
+when PC is in the IX range of a routine.
+.B \-n
+shows only
+.I COUNT
+frames.
+.SH EXIT STATUS
+.TP
+.B 0
+Success.
+.TP
+.B 1
+With
+.BR \-\-batch ,
+a command gave an error.
+For
+.BR addr2line ,
+an address has no line.
+.TP
+.B 2
+udb80 could not start: for example,
+.I prog.dbg
+does not agree with the program, or the connection failed.
+.SH EXAMPLES
+Build a C program for the debugger:
+.PP
+.nf
+.RS
+LIB=$(uc80 \-\-print\-lib\-dir)
+uc80 \-g \-o prog.mac prog.c
+um80 \-\-debug\-info \-o prog.rel prog.mac
+ul80 \-\-debug\-info \-o prog.com prog.rel $LIB/libc.lib $LIB/runtime.lib
+.RE
+.fi
+.PP
+Start cpmemu, stop in a function, and show the frames:
+.PP
+.nf
+.RS
+udb80 prog.dbg \-\-run 'cpmemu prog.com'
+(udb80) break sum
+(udb80) continue
+(udb80) bt
+(udb80) print n
+.RE
+.fi
+.PP
+Run the same commands with no keyboard:
+.PP
+.nf
+.RS
+udb80 prog.dbg \-\-run 'cpmemu prog.com' \-\-batch \e
+    \-ex 'break prog.c:4' \-ex continue \-ex bt
+.RE
+.fi
+.PP
+Name the line of each return address that
+.B "cpmemu \-\-backtrace"
+printed:
+.PP
+.nf
+.RS
+udb80 addr2line \-r prog.dbg 0x0125 0x012e
+.RE
+.fi
+.SH REQUIREMENTS
+udb80 is in um80 0.4.0 and later
+.RB ( "pip install \(dqum80>=0.4.0\(dq" ).
+The emulator must have
+.BR \-\-gdb :
+cpmemu 4.11.0 and later, or romwbw_emu 1.50 and later with
+.BR \-\-wait\-program .
+udb80 does not need GDB.
+.SH LIMITS
+.IP \(bu 2
+udb80 runs one program on one stub.
+.IP \(bu 2
+No
+.BR watch ,
+conditions,
+.BR call ,
+or
+.B set
+of memory.
+.IP \(bu 2
+No cast, assignment, comparison,
+.B sizeof
+or function call in an expression.
+A float is not converted.
+.IP \(bu 2
+With
+.B \-\-run
+and no
+.BR \-\-batch ,
+the program and udb80 both read the terminal.
+For a program that reads the keyboard, start cpmemu in a second terminal
+and use
+.BR \-\-connect .
+.SH FILES
+.TP
+.I prog.dbg
+The linked debug file from
+.BR "ul80 \-\-debug\-info" .
+.TP
+.I prog.com
+The program.
+udb80 checks it against
+.IR prog.dbg .
+.SH SEE ALSO
+.BR dbg2elf (1),
+.BR ul80 (1),
+.BR um80 (1),
+.BR gdb (1)
+.PP
+docs/udb80.md, docs/debug_info.md and docs/frame_records.md of
+um80_and_friends: https://github.com/avwohl/um80_and_friends
+.PP
+docs/gdb_stub.md of cpmemu: https://github.com/avwohl/cpmemu
+.SH AUTHOR
+um80 project contributors.

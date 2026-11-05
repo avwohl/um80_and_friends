@@ -63,7 +63,7 @@ Each tool has many more options. [docs/tools.md](https://github.com/avwohl/um80_
 - [docs/index.md](https://github.com/avwohl/um80_and_friends/blob/main/docs/index.md): quick reference, examples, troubleshooting
 - [docs/ISSUES.md](https://github.com/avwohl/um80_and_friends/blob/main/docs/ISSUES.md): open issues
 - [CHANGELOG.md](https://github.com/avwohl/um80_and_friends/blob/main/CHANGELOG.md): release history
-- Man pages: `man um80`, `man ul80`, `man ulib80`, `man ucref80`, `man ud80`, `man ux80`
+- Man pages: `man um80`, `man ul80`, `man ulib80`, `man ucref80`, `man ud80`, `man ux80`, `man udb80`, `man dbg2elf`
 - Original Microsoft manuals, in the
   [retro_docs](https://github.com/avwohl/retro_docs/tree/main/um80_and_friends) archive:
   - [`m80.pdf`](https://github.com/avwohl/retro_docs/blob/main/um80_and_friends/m80.pdf) - MACRO-80 assembler

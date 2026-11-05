@@ -174,14 +174,14 @@ See `man ucref80` for full documentation.
 Reads `prog.dbg` (from `ul80 --debug-info`) and the program file. Writes an
 ELF32 file with the code, the routine symbols, DWARF line rows and inlined
 calls, so that GDB with a z80 target can debug the program on `cpmemu --gdb`.
-See [gdb.md](gdb.md). dbg2elf is in um80 0.4.0 and later.
+See [gdb.md](gdb.md) and `man dbg2elf`. dbg2elf is in um80 0.4.0 and later.
 
 ### udb80 - Debugger
 
 Debugs a program that runs in `cpmemu --gdb` (cpmemu 4.11.0 and later) by
 source line: `break`, `step`, `next`, `finish`, `bt` and `print` of
 variables. Reads `prog.dbg` from `ul80 --debug-info`. udb80 is in um80
-0.4.0 and later. See [udb80.md](udb80.md).
+0.4.0 and later. See [udb80.md](udb80.md) and `man udb80`.
 
 ### ud80 - Disassembler
 

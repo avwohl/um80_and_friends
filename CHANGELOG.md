@@ -4,6 +4,20 @@ All notable changes to the um80 toolchain are documented here.
 
 ## [Unreleased]
 
+### Man pages for udb80 and dbg2elf
+
+`docs/man/udb80.1` and `docs/man/dbg2elf.1`: the options, the commands of
+udb80 and its three other forms (`addr2line`, `sizes`, `bt-dump`), the exit
+statuses, examples, and which releases have the tools and `--gdb`. Both
+pass `mandoc -T lint` (the one warning is the date form, which the six other
+pages share). The examples were run on 2026-11-05 with um80 0.4.0 and uc80
+0.8.0 from PyPI and the cpmemu 4.11.0 release: `udb80 --batch` with
+`break sum`, `udb80 addr2line -r`, and the GDB command line of
+`dbg2elf.1`, which stopped at `break rs.c:4` with a 6-frame `bt`. The
+README, `docs/index.md` and `docs/tools.md` list the two pages. The
+`MANIFEST.in` line `recursive-include docs *.md *.1` already puts them in
+the sdist.
+
 ### Docs: udb80 and dbg2elf are in 0.4.0
 
 The README tool list and the table in `docs/index.md` (which said "five

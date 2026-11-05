@@ -1,0 +1,237 @@
+.TH DBG2ELF 1 "November 2026" "um80 0.4.0" "User Commands"
+.SH NAME
+dbg2elf \- write an ELF file with DWARF from prog.dbg, for GDB with a Z80 target
+.SH SYNOPSIS
+.B dbg2elf
+[\fB\-o\fR \fIprog.elf\fR]
+[\fB\-\-comp\-dir\fR \fIDIR\fR]
+[\fB\-\-asm\-lines\fR \fBauto\fR|\fBalways\fR|\fBnever\fR]
+[\fB\-\-keep\-underscore\fR]
+[\fB\-\-keep\-case\fR]
+[\fB\-\-no\-variables\fR]
+[\fB\-\-ix\-locals\fR \fBfbreg\fR|\fBoff\fR]
+[\fB\-\-language\fR \fBc\fR|\fBasm\fR]
+.I prog.dbg
+[\fIprog.com\fR]
+.br
+.B dbg2elf \-\-unwinder\-path
+.br
+.B dbg2elf \-\-vars\-path
+.SH DESCRIPTION
+.B dbg2elf
+reads
+.IR prog.dbg ,
+the file that
+.B "ul80 \-\-debug\-info"
+writes, and the program file.
+dbg2elf writes
+.IR prog.elf ,
+an ELF32 file with the code, the routine symbols, DWARF line rows,
+inlined calls, and the variables and types.
+GDB with a Z80 target reads
+.I prog.elf
+and debugs the program on
+.BR "cpmemu \-\-gdb" .
+.PP
+The program file is the file that
+.I prog.dbg
+names, or
+.IR prog.com .
+dbg2elf checks the length and the SHA-256 of the program file.
+A
+.I prog.dbg
+from an older build gives an error, and dbg2elf writes no ELF file.
+.PP
+The file has
+.B e_machine
+220 (EM_Z80), so GDB sets the z80 architecture from the file.
+The line table is DWARF 4.
+.PP
+GDB also needs two Python scripts from the um80 package.
+.B udb80_unwind.py
+unwinds the Z80 stack for
+.BR bt ,
+.BR up ,
+.B finish
+and
+.BR next .
+.B udb80_vars.py
+adds the commands
+.BR zlocals ,
+.BR zargs ,
+.B zprint
+and
+.B zptype
+for the variables that DWARF cannot describe, for example a variable in a
+register.
+The options
+.B \-\-unwinder\-path
+and
+.B \-\-vars\-path
+print where the scripts are.
+.SH OPTIONS
+.TP
+.BR \-o " \fIFILE\fR, " \-\-output " \fIFILE\fR"
+The ELF file.
+The default is
+.I prog.elf
+beside
+.IR prog.dbg .
+.TP
+.BI \-\-comp\-dir " DIR"
+The directory that relative source paths start from.
+The default is the directory of
+.IR prog.dbg .
+The compilers write paths relative to the directory where you ran them.
+.TP
+.BR \-\-asm\-lines " auto|always|never"
+Write the lines of the
+.I .mac
+files.
+.B auto
+(the default) writes the lines only when
+.I prog.dbg
+has no source lines, so an assembler program has lines.
+.B always
+also writes the lines of the
+.I .mac
+files for the bytes that have no source line.
+A step then goes into the runtime.
+.B never
+writes none.
+.TP
+.B \-\-keep\-underscore
+Keep the leading underscore of a C name.
+Without the option, GDB sees
+.B main
+for
+.BR _main .
+.TP
+.B \-\-keep\-case
+Keep the case of a label.
+um80 writes each label in upper case.
+Without the option, dbg2elf writes a label that has no lower case letter
+in lower case.
+A name from a
+.B ;#func
+marker keeps its case.
+.TP
+.B \-\-no\-variables
+Write no variables and no types.
+.TP
+.BR \-\-ix\-locals " fbreg|off"
+The variables at IX+N.
+.B fbreg
+(the default) writes them with
+.BR DW_OP_fbreg .
+The values are correct only when GDB has loaded
+.BR udb80_unwind.py .
+.B off
+writes no record for them.
+.B udb80_vars.py
+still reads them.
+.TP
+.BR \-\-language " c|asm"
+The language of the compile unit.
+The default is
+.BR c .
+.TP
+.B \-\-unwinder\-path
+Print the path of
+.B udb80_unwind.py
+and stop.
+.TP
+.B \-\-vars\-path
+Print the path of
+.B udb80_vars.py
+and stop.
+.TP
+.BR \-h ", " \-\-help
+Show the usage and stop.
+.SH EXIT STATUS
+.TP
+.B 0
+dbg2elf wrote the ELF file, or printed a path.
+.TP
+.B 1
+dbg2elf could not read
+.IR prog.dbg ,
+or the program file does not agree with
+.IR prog.dbg .
+.TP
+.B 2
+An option is not correct.
+.SH EXAMPLES
+Build a C program, write the ELF file, and debug the program with GDB:
+.PP
+.nf
+.RS
+LIB=$(uc80 \-\-print\-lib\-dir)
+uc80 \-g \-o prog.mac prog.c
+um80 \-\-debug\-info \-o prog.rel prog.mac
+ul80 \-\-debug\-info \-o prog.com prog.rel $LIB/libc.lib $LIB/runtime.lib
+dbg2elf prog.dbg
+.RE
+.fi
+.PP
+In one terminal:
+.PP
+.nf
+.RS
+cpmemu \-\-gdb prog.com
+.RE
+.fi
+.PP
+In a second terminal:
+.PP
+.nf
+.RS
+gdb \-ex "source $(dbg2elf \-\-unwinder\-path)" \e
+    \-ex "source $(dbg2elf \-\-vars\-path)" prog.elf
+(gdb) target remote :1234
+(gdb) break prog.c:4
+(gdb) continue
+(gdb) bt
+.RE
+.fi
+.PP
+GDB prints a warning about
+.B _break_handler
+when GDB connects.
+Ignore the warning.
+.SH REQUIREMENTS
+dbg2elf and the two scripts are in um80 0.4.0 and later
+.RB ( "pip install \(dqum80>=0.4.0\(dq" ).
+GDB must have the Z80 target (GDB 11.1 and later).
+A GDB built with
+.B \-\-enable\-targets=all
+has the target.
+The Homebrew formula
+.B gdb
+uses that option.
+.B "cpmemu \-\-gdb"
+is in cpmemu 4.11.0 and later.
+.SH FILES
+.TP
+.I prog.dbg
+The linked debug file from
+.BR "ul80 \-\-debug\-info" .
+.TP
+.I prog.elf
+The output file.
+.TP
+.I um80/gdb/udb80_unwind.py
+The GDB unwinder.
+.TP
+.I um80/gdb/udb80_vars.py
+The GDB variable commands.
+.SH SEE ALSO
+.BR udb80 (1),
+.BR ul80 (1),
+.BR um80 (1),
+.BR gdb (1)
+.PP
+docs/gdb.md and docs/debug_info.md of um80_and_friends:
+https://github.com/avwohl/um80_and_friends
+.SH AUTHOR
+um80 project contributors.

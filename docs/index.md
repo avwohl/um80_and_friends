@@ -163,6 +163,8 @@ man ulib80    # Library manager
 man ucref80   # Cross-reference
 man ud80      # Disassembler
 man ux80      # 8080 to Z80 translator
+man udb80     # Debugger
+man dbg2elf   # ELF and DWARF file for GDB
 ```
 
 ## Differences from Microsoft Tools
