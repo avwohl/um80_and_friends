@@ -518,3 +518,60 @@ def test_bt_dump_of_a_crashed_program(cpmemu, dead):
     assert [f[:3] for f in dump] == [f[:3] for f in shadow], run.stdout
     assert {f[3] for f in dump} == {'frame'}
     assert len(dump) == 4
+
+
+# uplm80's static procedure with a third, stacked argument pops its own
+# return address and puts it back with `ex (sp),hl` in the slot of the
+# argument.  A walk that counts only the depth looked 2 bytes below SP,
+# where the CALL to _leaf had left a stale copy of lback, and listed _mid
+# twice.
+CALLEE_POPS = """\
+\t.z80
+;#func _main 1 1 frame=none pops=0
+_main:\tld\thl,7
+\tpush\thl
+\tld\tbc,1
+\tld\tde,2
+\tcall\t_mid
+mback:\tjp\t0
+;#endfunc _main
+;#func _mid 1 5 frame=static pops=2
+_mid:\tpop\thl
+\tex\t(sp),hl
+\tld\t(arg),hl
+\tcall\t_leaf
+lback:\tinc\thl
+\tret
+;#endfunc _mid
+;#func _leaf 1 9 frame=none pops=0
+_leaf:\tld\thl,(arg)
+\tret
+;#endfunc _leaf
+arg:\tdw\t0
+"""
+
+
+def test_a_return_address_moved_by_ex_sp_hl(tmp_path_factory):
+    d = build_dir(tmp_path_factory, 'cpop', CALLEE_POPS)
+    img = Image(d, 'cpop')
+    mid, leaf = img.addr('_mid'), img.addr('_leaf')
+    states, _ = img.walker.depths(mid, leaf)
+    # pop hl takes the return address (in HL, the old slot 2 below SP);
+    # ex (sp),hl puts it back at the top of the stack
+    assert states[mid + 1] == ('HL', -2)
+    assert states[mid + 2] == 0
+    # In _leaf, called from _mid: SP = FEFE holds lback, FF00 holds mback
+    # (the argument's slot), and FEFC still holds a stale copy of lback.
+    img.put(0xFEFC, img.addr('lback'))
+    img.put(0xFEFE, img.addr('lback'))
+    img.put(0xFF00, img.addr('mback'))
+    chain = img.walker.walk(leaf, 0xFEFE, None)
+    assert [f[0] for f in chain][:3] == [leaf, img.addr('lback'), img.addr('mback')], chain
+    assert [f[2] for f in chain[:3]] == ['frame', 'frame', 'frame']
+
+
+def test_live_callee_pops_frames_equal_shadow(cpmemu, tmp_path_factory):
+    d = build_dir(tmp_path_factory, 'cpop_live', CALLEE_POPS)
+    stops, tags = compare_sources(cpmemu, d, 'cpop_live', '*0x100', 'stepi', 14)
+    assert stops >= 10
+    assert tags == {'frame'}

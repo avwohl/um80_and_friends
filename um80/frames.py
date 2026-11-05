@@ -43,6 +43,14 @@ JR_CC = (0x20, 0x28, 0x30, 0x38)
 RET_CC = (0xC0, 0xC8, 0xD0, 0xD8, 0xE0, 0xE8, 0xF0, 0xF8)
 
 CONFLICT = 'conflict'
+PAIR_OF_PUSH = {0xC5: 'BC', 0xD5: 'DE', 0xE5: 'HL', 0xF5: 'AF'}
+PAIR_OF_POP = {0xC1: 'BC', 0xD1: 'DE', 0xE1: 'HL', 0xF1: 'AF'}
+# While the return address is in a register pair, d is the tuple (pair,):
+# a routine that pops its own return address to reach its stacked
+# arguments, as uplm80's callee-pops prologue `pop hl / ex (sp),hl`, puts
+# the address back at the top of the stack in a new slot.  These do not
+# write a register pair, so the address stays where it is.
+KEEPS_PAIRS = (0x00, 0x22, 0x32, 0xC3, 0x18, 0xC9) + JP_CC + JR_CC + RET_CC
 BASE = 'base'      # SP was loaded with a constant: the stack starts here
 
 
@@ -271,10 +279,56 @@ class Walker(object):
                 return None
             return (a + at + 1 + (v - 256 if v >= 128 else v)) & 0xFFFF
 
+        if isinstance(d, tuple):
+            # (pair, stale): the return address is in the register pair, and
+            # the old slot at SP+stale still holds a copy, or stale is None
+            # when a write to the stack can have changed the old slot.
+            pair, stale = d
+
+            def moved(n, writes_top=False):
+                if stale is None:
+                    return None
+                if writes_top and -3 <= stale <= -1:
+                    return None             # a push wrote over the old slot
+                return stale + n
+
+            if op in PAIR_OF_PUSH:
+                if PAIR_OF_PUSH[op] == pair:
+                    return True, 0          # back on the stack, a new slot
+                return True, (pair, moved(2, True))
+            if op in PAIR_OF_POP:
+                if PAIR_OF_POP[op] == pair:
+                    # the register copy is gone; the old slot may still hold it
+                    return True, (stale - 2 if stale is not None else None)
+                return True, (pair, moved(-2))
+            if op == 0x33:
+                return True, (pair, moved(-1))      # inc sp
+            if op == 0x3B:
+                return True, (pair, moved(1))       # dec sp
+            if op == 0xE3:                  # ex (sp),hl
+                if pair == 'HL':
+                    return True, 0
+                return True, (pair, None if stale in (-1, 0, 1) else stale)
+            if op == 0xEB:                  # ex de,hl
+                return True, ({'HL': 'DE', 'DE': 'HL'}.get(pair, pair), stale)
+            if op == 0x10 and pair == 'BC':
+                return True, stale          # djnz writes B
+            if op == 0xED and self.read_byte(a + 1) in (0x43, 0x53, 0x63, 0x73):
+                return True, d              # ld (nn),rr
+            if op not in KEEPS_PAIRS and op != 0x10:
+                # The pair can be written; a call or a prefixed push also
+                # writes the stack.
+                if op == 0xCD or op in CALLS or op in (0xDD, 0xFD) or (op & 0xC7) == 0xC7:
+                    return True, None
+                return True, stale
         if op in PUSHES:
             return True, add(2)
         if op in POPS:
+            if d == 0:
+                return True, (PAIR_OF_POP[op], -2)  # the return address, popped
             return True, add(-2)
+        if op == 0xE3 and d == 0:
+            return True, ('HL', None)       # ex (sp),hl takes the return address
         if op == 0x33:
             return True, add(-1)            # inc sp
         if op == 0x3B:
@@ -432,6 +486,8 @@ class Walker(object):
             # called the routine.
             self.bottom = True
             return None
+        if isinstance(d, tuple):
+            d = d[1]                        # the old slot, if it is still there
         if d is None or d == CONFLICT:
             return self.guess(sp, rec, ix)
         caller_ix = ix

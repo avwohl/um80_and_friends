@@ -260,6 +260,18 @@ All notable changes to the um80 toolchain are documented here.
   `UDB80_REQUIRE_CPMEMU=1` makes that skip a failure.
 
 ### Fixed
+- `udb80 bt frame` and the GDB unwinder listed a uplm80 static procedure
+  twice when it had a third, stacked argument. The procedure pops its own
+  return address and puts it back with `ex (sp),hl` in the slot of the
+  argument; the frame walker counted only the stack depth, and read 2 bytes
+  below SP, where a stale copy of the return address from the next CALL was.
+  `um80/frames.py` now follows the return address into a register pair (`pop
+  rr`, `ex (sp),hl`, `ex de,hl`) and back onto the stack (`push rr`,
+  `ex (sp),hl`), and keeps the old slot only while no write can have changed
+  it. Measured on a uplm80 `-g` program at `-O0` and `-O2`: before, `bt
+  frame` gave LEAF, MID, MID, P; now LEAF, MID, P, as `bt shadow`. Two new
+  tests in `tests/test_frames.py` fail on the old walker. Suite 1631 -> 1633
+  passed, 1 skipped.
 - Messages and the .PRN listing now give the physical line of the source
   file. Before, um80 counted the lines of each macro or REPT expansion. A file
   of 9 lines (a 3-line macro called twice, then a wrong line 9) said "Error at
