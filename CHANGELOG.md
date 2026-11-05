@@ -2,6 +2,22 @@
 
 All notable changes to the um80 toolchain are documented here.
 
+## [0.4.2] - 2026-11-05
+
+### udb80 --wait-program takes the rule's stop as T05
+
+The wait-program rule of the stub (romwbw_emu, ioscpm, z80cpmw, cpmdroid)
+stopped with `T05swbreak`. GDB set no breakpoint at 0100H, so GDB continued
+past that stop with no message, and `monitor wait-program` could not stop a
+GDB session (measured with GDB 18.1 on romwbw_emu). cpmemu's stub now sends a
+plain `T05` for the rule's stop. udb80 0.4.1 read `T05` as a step and stopped
+with "the program ended before it started". udb80 now takes `T05` or
+`T05swbreak` with signal 5, and only when PC is the load address of the
+program in `prog.dbg`; a stop elsewhere is an error. `tests/test_udb80.py` has
+a fake stub that answers both ways (3 tests). The two that the old code fails
+fail with it (measured). Use udb80 0.4.2 or later with a stub newer than
+2026-11-05.
+
 ## [0.4.1] - 2026-11-05
 
 ### The wheel installs the man pages

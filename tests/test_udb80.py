@@ -501,6 +501,109 @@ def romwbw():
     return emu, rom, disk, cpm_disk
 
 
+class _FakeStub:
+    """A stub on 127.0.0.1 that answers the packets of a --wait-program
+    session: qSupported, ?, qRcmd, c (with the reply under test), g, m, k.
+    Guest memory is the program at 0100H and zeros elsewhere."""
+
+    def __init__(self, com_bytes, stop_reply, stop_pc=0x100):
+        import socket
+        import threading
+        self.mem = bytearray(65536)
+        self.mem[0x100:0x100 + len(com_bytes)] = com_bytes
+        self.stop_reply = stop_reply
+        self.pc = 0
+        self.stop_pc = stop_pc
+        self.packets = []
+        self.listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.listener.bind(('127.0.0.1', 0))
+        self.listener.listen(1)
+        self.port = self.listener.getsockname()[1]
+        self.thread = threading.Thread(target=self._serve, daemon=True)
+        self.thread.start()
+
+    def _answer(self, pkt):
+        self.packets.append(pkt)
+        if pkt.startswith('qSupported'):
+            return 'PacketSize=1000;swbreak+'
+        if pkt == '?':
+            return 'S05'
+        if pkt.startswith('qRcmd,'):
+            text = bytes.fromhex(pkt[6:]).decode()
+            if text.startswith('wait-program'):
+                return 'wait-program: armed\n'.encode().hex()
+            return ''
+        if pkt == 'c':
+            self.pc = self.stop_pc
+            return self.stop_reply
+        if pkt == 'g':
+            regs = [0, 0, 0, 0, 0xFFF0, self.pc] + [0] * 7
+            return ''.join('%02x%02x' % (r & 255, r >> 8) for r in regs)
+        if pkt.startswith('p'):
+            n = int(pkt[1:], 16)
+            v = self.pc if n == 5 else 0
+            return '%02x%02x' % (v & 255, v >> 8)
+        if pkt.startswith('m'):
+            addr, n = (int(x, 16) for x in pkt[1:].split(','))
+            return bytes(self.mem[addr:addr + n]).hex()
+        if pkt in ('k', 'D'):
+            return None
+        return ''
+
+    def _serve(self):
+        conn, _ = self.listener.accept()
+        buf = b''
+        with conn:
+            while True:
+                while b'#' not in buf or len(buf) < buf.index(b'#') + 3:
+                    data = conn.recv(4096)
+                    if not data:
+                        return
+                    buf += data
+                start = buf.index(b'$')
+                end = buf.index(b'#', start)
+                pkt = buf[start + 1:end].decode('latin-1')
+                buf = buf[end + 3:]
+                conn.sendall(b'+')
+                reply = self._answer(pkt)
+                if reply is None:
+                    conn.sendall(b'$OK#9a')
+                    return
+                body = reply.encode('latin-1')
+                conn.sendall(b'$' + body + b'#%02x' % (sum(body) & 255))
+
+
+@pytest.mark.parametrize('stop_reply', ['T05swbreak:;', 'T05'])
+def test_wait_program_takes_either_stop_reply(tmp_path, stop_reply):
+    # cpmemu's stub before 2026-11-05 sent T05swbreak for the rule's stop.
+    # The stub after sends T05, because GDB set no breakpoint there and
+    # continues past a swbreak it did not ask for.  udb80 takes both.
+    d = str(tmp_path)
+    with open(os.path.join(d, 'wp.mac'), 'w') as f:
+        f.write(ROMWBW_PROG)
+    _build(d, 'wp')
+    com = open(os.path.join(d, 'wp.com'), 'rb').read()
+    stub = _FakeStub(com, stop_reply)
+    out = udb('--batch', 'wp.dbg', '--connect', '127.0.0.1:%d' % stub.port, '--wait-program',
+              cwd=d).stdout
+    assert 'The program has started at 0x0100.' in out
+    assert any(p.startswith('qRcmd,') and bytes.fromhex(p[6:]).startswith(b'wait-program sha256 ')
+               for p in stub.packets)
+
+
+def test_wait_program_refuses_a_stop_elsewhere(tmp_path):
+    d = str(tmp_path)
+    with open(os.path.join(d, 'wp.mac'), 'w') as f:
+        f.write(ROMWBW_PROG)
+    _build(d, 'wp')
+    com = open(os.path.join(d, 'wp.com'), 'rb').read()
+    stub = _FakeStub(com, 'T05', stop_pc=0x0234)
+    r = udb('--batch', 'wp.dbg', '--connect', '127.0.0.1:%d' % stub.port, '--wait-program',
+            cwd=d, check=False)
+    assert r.returncode != 0
+    assert 'not at the start of the program' in r.stdout + r.stderr
+
+
 def test_live_wait_program_under_romwbw(romwbw, tmp_path):
     emu, rom, disk, cpm_disk = romwbw
     d = str(tmp_path)

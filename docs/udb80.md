@@ -53,7 +53,10 @@ Options:
 - `--program FILE`: the program file for the image check.
 - `--wait-program`: for romwbw_emu, where CP/M and not the stub starts the
   program. udb80 asks the stub to stop when the program image of prog.dbg is
-  at 0100H in bank 8EH, then starts the session.
+  at 0100H in bank 8EH, then starts the session. udb80 0.4.2 and later take
+  the stop as `T05` or as `T05swbreak`, at the load address only. A stub from
+  after 2026-11-05 sends `T05`, and udb80 0.4.1 refuses that stop, so use
+  udb80 0.4.2 or later with a newer stub.
 - `-d DIR`, `--directory DIR`: a directory that holds source files.
 - `--asm`: start at the assembler level. `--8080`: disassemble as 8080.
 

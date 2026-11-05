@@ -531,8 +531,16 @@ class Debugger:
             raise UdbError('the stub does not take wait-program: ' + said.strip())
         self.say('Waiting for the program (%d bytes, SHA-256 %s...)' % (length, sha[:12]))
         ev = self._resume('c')
-        if ev.kind != 'break':
+        # The rule's stop is a T05.  A stub from before 2026-11-05 calls it a
+        # breakpoint (T05swbreak); a newer one does not, because no debugger
+        # set a breakpoint there and GDB continues past a swbreak it did not
+        # ask for.  Take either, at the load address only.
+        if ev.kind not in ('break', 'step') or ev.code != 5:
             raise UdbError(f'the program ended before it started: {ev.raw}')
+        load = img.get('load', 0x100)
+        if load is not None and self.pc() != load:
+            raise UdbError(f'the stub stopped at {h4(self.pc())}, not at the start of '
+                           f'the program, {h4(load)}: {ev.raw}')
         self.say(f'The program has started at {h4(self.pc())}.')
 
     def check_memory(self):
