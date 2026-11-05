@@ -5,6 +5,17 @@ All notable changes to the um80 toolchain are documented here.
 ## [Unreleased]
 
 ### Added
+- `udb80 --wait-program`, for a stub that does not load the program itself
+  (romwbw_emu, phase 9 of the cpmemu debugger plan). udb80 sends `monitor
+  wait-program sha256 LENGTH SHA` with the image of prog.dbg, continues, and
+  starts the session when the stub stops at 0100H in bank 8EH with those bytes.
+  Without the option, udb80 compares guest memory at 0100H before CP/M has
+  loaded the program, and refuses the debug file as stale. Measured with
+  romwbw_emu ab42bd2 and the 3.6.0 ROM: a program started from a disk image
+  stops at 0100H, and `break`, `bt` and the exit work.
+  `tests/test_udb80.py::test_live_wait_program_under_romwbw` fails without the
+  option; it skips with the reason when romwbw_emu, the ROM or the disk is
+  missing, and `UDB80_REQUIRE_ROMWBW=1` turns the skip into a failure.
 - Backtrace from the frame records of prog.dbg (phase 6 of the cpmemu debugger
   plan, rule D7 source 2). `um80/frames.py` (standard library only) finds the
   chain of return addresses from PC, SP, IX, the memory and the `;#func`

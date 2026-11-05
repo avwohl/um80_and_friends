@@ -479,6 +479,29 @@ class Debugger:
             raise UdbError('Cannot access memory at address %s' % h4(addr))
         return b[0] | (b[1] << 8)
 
+    def wait_program(self):
+        """For a stub that cannot start the program (romwbw_emu): tell the
+        stub the length and SHA-256 of the program, run until the stub
+        finds a start at 0100H in the program bank that matches, and go on
+        from there."""
+        img = self.dbg.image
+        length, sha = img.get('length'), img.get('sha256')
+        if not length or not sha:
+            raise UdbError('the debug file has no image length and SHA-256')
+        text = 'wait-program sha256 %d %s' % (length, sha)
+        reply = self.rsp.cmd('qRcmd,' + text.encode().hex())
+        try:
+            said = bytes.fromhex(reply).decode('latin-1')
+        except ValueError:
+            said = reply
+        if 'armed' not in said:
+            raise UdbError('the stub does not take wait-program: ' + said.strip())
+        self.say('Waiting for the program (%d bytes, SHA-256 %s...)' % (length, sha[:12]))
+        ev = self._resume('c')
+        if ev.kind != 'break':
+            raise UdbError('the program ended before it started: %s' % ev.raw)
+        self.say('The program has started at %s.' % h4(self.pc()))
+
     def check_memory(self):
         img = self.dbg.image
         if img.get('kind') != 'com' or img.get('load') is None:
@@ -1772,6 +1795,9 @@ def debug_main(argv):
                     help='run the commands in FILE')
     ap.add_argument('--batch', action='store_true',
                     help='run the commands, then quit')
+    ap.add_argument('--wait-program', action='store_true',
+                    help='the stub starts the program itself (romwbw_emu): '
+                         'wait until it has started')
     ap.add_argument('--program', help='the program file for the image check')
     ap.add_argument('-d', '--directory', action='append', default=[],
                     help='a directory to look for source files')
@@ -1812,6 +1838,8 @@ def debug_main(argv):
             dbr.level = 'asm'
         if args.cpu8080:
             dbr.cpu_z80 = False
+        if args.wait_program:
+            dbr.wait_program()
         dbr.check_memory()
         dbr.say('Connected; the program is stopped before %s.' % h4(dbr.pc()))
         for c in commands:

@@ -43,6 +43,9 @@ Options:
 - `--batch`: run the commands, end the program and quit. Without
   `--batch`, udb80 reads more commands from the keyboard.
 - `--program FILE`: the program file for the image check.
+- `--wait-program`: for romwbw_emu, where CP/M and not the stub starts the
+  program. udb80 asks the stub to stop when the program image of prog.dbg is
+  at 0100H in bank 8EH, then starts the session.
 - `-d DIR`, `--directory DIR`: a directory that holds source files.
 - `--asm`: start at the assembler level. `--8080`: disassemble as 8080.
 

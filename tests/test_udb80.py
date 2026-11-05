@@ -14,6 +14,7 @@ job that must have cpmemu cannot pass without one.
 import os
 import shutil
 import subprocess
+import time
 import sys
 
 import pytest
@@ -451,3 +452,94 @@ def test_live_without_a_shadow_stack(cpmemu, sumto, recurse):
     out = live(cpmemu, recurse, 'rec', 'set shadow off', 'break rec.mac:7',
                'continue', 'delete', 'next').stdout
     in_order(out, ['Breakpoint 1, REC () at rec.mac:7', '8\t\tret'])
+
+
+# --- romwbw_emu: a program that CP/M starts from a disk image ---------------
+#
+# romwbw_emu does not load the program; CP/M does.  udb80 --wait-program
+# asks the stub to stop at 0100H in bank 8EH when the bytes there have the
+# length and SHA-256 of the image in prog.dbg.  Needs romwbw_emu built with
+# its stub (~/src/romwbw_emu or ROMWBW_EMU), the cached 3.6.0 ROM and
+# hd1k_cpm22 disk, and cpmemu's util/cpm_disk.py.  Skips with the reason;
+# UDB80_REQUIRE_ROMWBW=1 turns the skip into a failure.
+
+ROMWBW_PROG = """\
+\t.z80
+start:\tld\tc,9
+\tld\tde,msg
+\tcall\t5
+\tcall\touter
+\tjp\t0
+outer:\tcall\tinner
+\tret
+inner:\tld\ta,5
+\tinc\ta
+\tret
+msg:\tdb\t'WAITED',13,10,'$'
+"""
+
+
+@pytest.fixture(scope='module')
+def romwbw():
+    home = os.path.expanduser('~')
+    emu = os.environ.get('ROMWBW_EMU') or os.path.join(home, 'src', 'romwbw_emu', 'src', 'romwbw_emu')
+    assets = os.path.join(home, '.cache', 'romwbw_emu', 'v0', '3.6.0', 'assets')
+    rom = os.path.join(assets, 'emu_avw-v0-3.6.0.rom')
+    disk = os.path.join(assets, 'hd1k_cpm22-v0-3.6.0.img')
+    cpm_disk = os.environ.get('CPM_DISK') or os.path.join(home, 'src', 'cpmemu', 'util', 'cpm_disk.py')
+    for path, what in ((emu, 'romwbw_emu'), (rom, 'the 3.6.0 ROM'), (disk, 'the hd1k_cpm22 disk'),
+                       (cpm_disk, 'cpm_disk.py')):
+        if not os.path.isfile(path):
+            reason = 'no %s at %s' % (what, path)
+            if os.environ.get('UDB80_REQUIRE_ROMWBW') == '1':
+                pytest.fail(reason + ' (UDB80_REQUIRE_ROMWBW=1)')
+            pytest.skip(reason)
+    return emu, rom, disk, cpm_disk
+
+
+def test_live_wait_program_under_romwbw(romwbw, tmp_path):
+    emu, rom, disk, cpm_disk = romwbw
+    d = str(tmp_path)
+    with open(os.path.join(d, 'wp.mac'), 'w') as f:
+        f.write(ROMWBW_PROG)
+    _build(d, 'wp')
+    img = os.path.join(d, 'disk.img')
+    shutil.copyfile(disk, img)
+    subprocess.run([sys.executable, cpm_disk, 'add', '--slice', '0', img,
+                    os.path.join(d, 'wp.com')], check=True, stdout=subprocess.DEVNULL)
+    portfile = os.path.join(d, 'port')
+    proc = subprocess.Popen([emu, '--romwbw=' + rom, '--disk0=' + img, '--boot=2',
+                             '--no-config', '--max-instructions=0', '--gdb=0',
+                             '--gdb-port-file=' + portfile],
+                            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                            stderr=subprocess.DEVNULL)
+    try:
+        for _ in range(600):
+            if os.path.exists(portfile) and open(portfile).read().endswith('\n'):
+                break
+            time.sleep(0.05)
+        port = open(portfile).read().strip()
+        if not port:
+            reason = '%s gave no port: built without its GDB stub?' % emu
+            if os.environ.get('UDB80_REQUIRE_ROMWBW') == '1':
+                pytest.fail(reason)
+            pytest.skip(reason)
+        proc.stdin.write(b'WP\r')
+        proc.stdin.close()
+        out = udb('--batch', 'wp.dbg', '--connect', '127.0.0.1:' + port, '--wait-program',
+                  '-ex', 'break inner', '-ex', 'continue', '-ex', 'bt', '-ex', 'continue',
+                  cwd=d).stdout
+        in_order(out, [
+            'Waiting for the program (',
+            'The program has started at 0x0100.',
+            'Breakpoint 1, INNER () at wp.mac:9',
+            '#1  0x', 'in OUTER () at wp.mac:7  [shadow]',
+            '#2  0x', 'in START () at wp.mac:5  [shadow]',
+            '[Program exited normally]',
+        ])
+        proc.wait(timeout=30)
+        assert b'WAITED' in proc.stdout.read()
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
