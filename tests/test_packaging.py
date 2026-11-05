@@ -32,6 +32,23 @@ def test_every_file_the_manifest_names_exists():
             assert os.path.isdir(os.path.join(ROOT, words[1])), words[1]
 
 
+def test_every_command_has_a_man_page_in_the_wheel():
+    """pyproject.toml puts docs/man/*.1 into the wheel as data files, and
+    every console script has a page there (0.4.0 had udb80 and dbg2elf
+    without one, and no page reached a pip install)."""
+    text = _read('pyproject.toml')
+    section = re.search(r'^\[tool\.setuptools\.data-files\]\n(.*?)(?=^\[|\Z)',
+                        text, re.M | re.S)
+    assert section is not None
+    assert re.search(r'^"share/man/man1"\s*=\s*\["docs/man/\*\.1"\]',
+                     section.group(1), re.M)
+    scripts = re.search(r'^\[project\.scripts\]\n(.*?)(?=^\[|\Z)', text, re.M | re.S)
+    names = re.findall(r'^(\S+)\s*=', scripts.group(1), re.M)
+    assert names
+    for name in names:
+        assert os.path.exists(os.path.join(ROOT, 'docs', 'man', name + '.1')), name
+
+
 def test_every_package_data_file_exists():
     text = _read('pyproject.toml')
     section = re.search(r'^\[tool\.setuptools\.package-data\]\n(.*?)(?=^\[|\Z)',

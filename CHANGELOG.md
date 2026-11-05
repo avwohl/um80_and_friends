@@ -2,7 +2,20 @@
 
 All notable changes to the um80 toolchain are documented here.
 
-## [Unreleased]
+## [0.4.1] - 2026-11-05
+
+### The wheel installs the man pages
+
+`pip install um80` installed no man page: the pages were in the sdist only,
+and `docs/tools.md` told the reader to copy them from
+`$PKGDIR/../docs/man`, which a wheel install does not have.
+`[tool.setuptools.data-files]` now puts `docs/man/*.1` into the wheel, and
+pip installs them in `share/man/man1` beside the `bin` of the commands.
+Measured on 2026-11-05 (macOS 27 arm64): from the 0.4.1 wheel, a Python
+3.12 venv and a `--user` install both have the eight pages, and
+`man -w udb80` finds the page with only the `bin` directory on `PATH`.
+`docs/tools.md` says so; `tests/test_packaging.py` checks that the
+data-files line is there and that each console script has a page.
 
 ### Man pages for udb80 and dbg2elf
 

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "um80"
-version = "0.4.0"
+version = "0.4.1"
 description = "Microsoft MACRO-80 compatible assembler toolchain for Linux"
 readme = "README.md"
 license = "GPL-3.0-or-later"
@@ -53,6 +53,13 @@ dbg2elf = "um80.dbg2elf:main"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["um80*"]
+
+# The man pages go into the wheel as data files, so pip puts them in
+# <prefix>/share/man/man1 (a venv's share/man/man1, or ~/.local/share/man
+# with --user), where man finds them from the bin directory on PATH.
+# Without this the pages were in the sdist only.
+[tool.setuptools.data-files]
+"share/man/man1" = ["docs/man/*.1"]
 
 [project.optional-dependencies]
 dev = [

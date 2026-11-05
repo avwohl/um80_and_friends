@@ -253,15 +253,22 @@ See `man ux80` for full documentation.
 
 ## Installing Man Pages
 
-After pip installation, install the man pages manually:
+From um80 0.4.1, `pip install um80` installs the man pages. pip puts them
+in `share/man/man1` beside the `bin` directory of the commands: the
+`share/man/man1` folder of a virtual environment, or of the user base with
+`pip install --user`. `man` finds the pages when that `bin` directory is on
+`PATH`:
 
 ```bash
-# Find where the package is installed
-PKGDIR=$(python3 -c "import um80; print(um80.__path__[0])")
+man udb80
+man -w udb80        # show where the page is
+```
 
-# Copy man pages to system location (requires sudo)
-sudo cp "$PKGDIR/../docs/man/"*.1 /usr/local/share/man/man1/
-sudo mandb
+An older release has no man pages in the package. To install them from a
+checkout of this repository:
+
+```bash
+sudo cp docs/man/*.1 /usr/local/share/man/man1/
 ```
 
 Or view them directly, from the repository root:
