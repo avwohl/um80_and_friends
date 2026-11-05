@@ -8,6 +8,10 @@ shadow call stack (`bt shadow`) with the frames of the frame records
 with a uc80 program also skips when uc80 is missing (as in test_gdb.py).
 """
 
+# pytest fixtures are parameters with the name of the fixture function.
+# pylint: disable=redefined-outer-name
+# The test names say what each test checks.
+# pylint: disable=missing-function-docstring
 import json
 import os
 import re
@@ -368,7 +372,7 @@ def test_bt_dump_with_pc_inside_an_ix_range(odd):
     pc = img.addr('odd_stop')
     ix, sp = odd_stack(img, 'odd_stop')
     put_stack_and_dump(img, odd)
-    back = '%04x' % img.addr('odd_back')
+    back = f"{img.addr('odd_back'):04x}"
     # with --ix: exact frames
     run = udb('bt-dump', '--ix', hex(ix), 'odd.dbg', 'mem.bin', hex(sp), hex(pc),
               cwd=str(odd))
@@ -387,7 +391,7 @@ def test_bt_dump_with_pc_inside_an_ix_range(odd):
     run = udb('bt-dump', 'odd.dbg', 'mem.bin', hex(0xFEFC), hex(img.addr('clob_in')),
               cwd=str(odd))
     g = bt_groups(run.stdout)[0]
-    assert g[1][0] == '%04x' % img.addr('clob_back') and g[1][3] == 'frame', run.stdout
+    assert g[1][0] == f"{img.addr('clob_back'):04x}" and g[1][3] == 'frame', run.stdout
 
 
 # ---------------------------------------------------------------------------
@@ -418,7 +422,7 @@ def compare_sources(cpmemu, d, prog, start, motion, count, **kw):
     cmds = ['break ' + start, 'continue', 'delete']
     for _ in range(count):
         cmds += [motion, 'bt shadow', 'bt frame']
-    args = ['--batch', prog + '.dbg', '--run', '%s %s.com' % (cpmemu, prog)]
+    args = ['--batch', prog + '.dbg', '--run', f'{cpmemu} {prog}.com']
     for c in cmds:
         args += ['-ex', c]
     out = udb(*args, cwd=str(d), check=False).stdout

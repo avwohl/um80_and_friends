@@ -89,7 +89,7 @@ def _parse(text):
     m = _BASE.match(text)
     if m:
         return ('base', m.group(1), int(m.group(2))), text[m.end():]
-    raise VarError('unknown type "%s"' % text)
+    raise VarError(f'unknown type "{text}"')
 
 
 class Program(object):
@@ -116,7 +116,7 @@ class Program(object):
         while t[0] == 'typedef' and seen < 32:
             d = self.types.get(t[1])
             if d is None:
-                raise VarError('type %s is not defined' % t[1])
+                raise VarError(f'type {t[1]} is not defined')
             t = self.type(d['target'])
             seen += 1
         return t
@@ -133,7 +133,7 @@ class Program(object):
         if k in ('struct', 'union', 'enum'):
             d = self.types.get(t[1])
             if d is None or d.get('size') is None:
-                raise VarError('%s has no known size' % self.name(t))
+                raise VarError(f'{self.name(t)} has no known size')
             return d['size']
         if k == 'raw':
             return t[1]
@@ -159,7 +159,7 @@ class Program(object):
         if k in ('struct', 'union', 'enum'):
             tag = source_name(t[1].split(':', 1)[1])
             tag = '{...}' if tag.startswith('.') else tag
-            return ('%s %s %s' % (k, tag, inner)).rstrip().replace('  ', ' ')
+            return (f'{k} {tag} {inner}').rstrip().replace('  ', ' ')
         if k == 'typedef':
             return (source_name(t[1].split(':', 1)[1]) + ' ' + inner).rstrip()
         if k == 'raw':
@@ -197,7 +197,7 @@ class Program(object):
             decl = self.name(self.type(m[1]), m[0])
             if len(m) > 3:
                 decl += ' : %d' % m[3]
-            lines.append('    %s;' % decl)
+            lines.append(f'    {decl};')
         return head + ' {\n' + '\n'.join(lines) + '\n}'
 
     def member(self, t, name):
@@ -205,13 +205,13 @@ class Program(object):
         t = self.resolve(t)
         d = self.types.get(t[1]) if t[0] in ('struct', 'union') else None
         if d is None:
-            raise VarError('There is no member named %s.' % name)
+            raise VarError(f'There is no member named {name}.')
         for m in d['members']:
             if m[0] == name:
                 return (m[2], self.type(m[1]),
                         m[3] if len(m) > 3 else None,
                         m[4] if len(m) > 4 else None)
-        raise VarError('There is no member named %s.' % name)
+        raise VarError(f'There is no member named {name}.')
 
 
 class Var(object):
@@ -293,7 +293,7 @@ def lookup(program, frame, name):
                 if v.decl is not None and v.decl[0] == frame.pos[0]:
                     return v
         return found[0]
-    raise NoSuchName('No symbol "%s" in current context.' % name)
+    raise NoSuchName(f'No symbol "{name}" in current context.')
 
 
 # ---------------------------------------------------------------------------
@@ -362,8 +362,7 @@ class Context(object):
             return val.raw[:size].ljust(size, b'\0')
         data = self.read(val.addr, size)
         if len(data) < size:
-            raise VarError('Cannot access memory at address 0x%04x'
-                           % ((val.addr + len(data)) & 0xFFFF))
+            raise VarError(f'Cannot access memory at address 0x{val.addr + len(data) & 65535:04x}')
         return data
 
     def integer(self, val):
@@ -423,25 +422,23 @@ class Context(object):
             target = p.resolve(t[1])
             sym = self.symbolize(n)
             if target[0] == 'base' and target[1] in CHARS and n:
-                return '0x%04x%s %s' % (n, ' ' + sym if sym else '',
-                                        self.c_string(n))
+                return f"0x{n:04x}{' ' + sym if sym else ''} {self.c_string(n)}"
             if target[0] == 'func':
-                return '(%s) 0x%04x%s' % (p.name(val.type), n,
-                                          ' ' + sym if sym else '')
-            text = '0x%04x' % n
+                return f"({p.name(val.type)}) 0x{n:04x}{' ' + sym if sym else ''}"
+            text = f'0x{n:04x}'
             if sym:
                 text += ' ' + sym
-            return ('(%s) %s' % (p.name(val.type), text)) if top else text
+            return (f'({p.name(val.type)}) {text}') if top else text
         if k == 'arr':
             return self._array(val, t)
         if k in ('struct', 'union'):
             d = p.types.get(t[1])
             if d is None:
-                raise VarError('%s is not defined' % p.name(t))
+                raise VarError(f'{p.name(t)} is not defined')
             parts = []
             for m in d['members']:
                 sub = self.member(val, m[0])
-                parts.append('%s = %s' % (m[0], self.format(sub, False)))
+                parts.append(f'{m[0]} = {self.format(sub, False)}')
             return '{' + ', '.join(parts) + '}'
         if k == 'func':
             return '{%s} 0x%04x %s' % (p.name(val.type), val.addr or 0,
@@ -449,7 +446,7 @@ class Context(object):
         if k == 'void':
             return 'void'
         data = self.bytes_of(val)
-        return '{' + ', '.join('0x%02x' % b for b in data) + '}'
+        return '{' + ', '.join(f'0x{b:02x}' for b in data) + '}'
 
     def _array(self, val, t):
         p = self.program
@@ -460,7 +457,7 @@ class Context(object):
             data = self.bytes_of(val, n)
             end = data.find(b'\0')
             body = data if end < 0 else data[:end]
-            return '"%s"' % escape_bytes(body)
+            return f'"{escape_bytes(body)}"'
         items = []
         shown = min(n, MAX_ELEMENTS)
         for i in range(shown):
@@ -475,11 +472,11 @@ class Context(object):
         while len(out) < limit:
             chunk = self.read((addr + len(out)) & 0xFFFF, 1)
             if not chunk:
-                return '<error: Cannot access memory at address 0x%04x>' % addr
+                return f'<error: Cannot access memory at address 0x{addr:04x}>'
             if chunk == b'\0':
-                return '"%s"' % escape_bytes(out)
+                return f'"{escape_bytes(out)}"'
             out += chunk
-        return '"%s"...' % escape_bytes(out)
+        return f'"{escape_bytes(out)}"...'
 
     # -- navigation --------------------------------------------------------------
 
@@ -534,7 +531,7 @@ def register_bytes(regs, name):
 
 def char_text(n):
     if 32 <= n < 127 and n != 39 and n != 92:
-        return "'%s'" % chr(n)
+        return f"'{chr(n)}'"
     named = {0: '\\000', 7: '\\a', 8: '\\b', 9: '\\t', 10: '\\n', 12: '\\f',
              13: '\\r', 39: "\\'", 92: '\\\\'}
     return "'%s'" % named.get(n, '\\%03o' % n)
@@ -550,7 +547,7 @@ def escape_bytes(data):
         elif 32 <= b < 127:
             out += chr(b)
         else:
-            out += {10: '\\n', 9: '\\t', 13: '\\r'}.get(b, '\\%03o' % b)
+            out += {10: '\\n', 9: '\\t', 13: '\\r'}.get(b, f'\\{b:03o}')
     return out
 
 
@@ -584,7 +581,7 @@ def tokenize(text):
     while pos < len(text):
         m = _TOKEN.match(text, pos)
         if not m:
-            raise VarError('Invalid character in "%s".' % text[pos:])
+            raise VarError(f'Invalid character in "{text[pos:]}".')
         out.append(m.group(1))
         pos = m.end()
         while pos < len(text) and text[pos].isspace():
@@ -612,7 +609,7 @@ class Evaluator(object):
         self.toks, self.pos = toks, 0
         val = self.expr()
         if self.pos != len(toks):
-            raise VarError('Invalid expression near "%s".' % toks[self.pos])
+            raise VarError(f'Invalid expression near "{toks[self.pos]}".')
         return val
 
     # -- parser -------------------------------------------------------------
@@ -705,7 +702,7 @@ class Evaluator(object):
         if t[0].isdigit():
             return self.make_int(int(t, 0))
         if not (t[0].isalpha() or t[0] == '_'):
-            raise NoSuchName('Invalid token "%s".' % t)
+            raise NoSuchName(f'Invalid token "{t}".')
         v = lookup(self.p, self.ctx.frame, t)
         return self.ctx.variable(v)
 
@@ -750,5 +747,4 @@ class Evaluator(object):
         if t[0] == 'ptr':
             esize = self.p.size(t[1])
             return Value(t[1], addr=(self.ctx.integer(v) + i * esize) & 0xFFFF)
-        raise VarError('cannot subscript something of type `%s\''
-                       % self.p.name(v.type))
+        raise VarError(f'cannot subscript something of type `{self.p.name(v.type)}\'')

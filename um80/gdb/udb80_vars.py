@@ -36,7 +36,7 @@ its record; elsewhere GDB shows <not available>.
 import importlib.util
 import os
 
-import gdb
+import gdb  # pylint: disable=import-error
 
 
 def _vars_load(name, filename):
@@ -151,8 +151,8 @@ def _vars_lines(params):
         try:
             text = ctx.format(ctx.variable(v))
         except vardata.VarError as e:
-            text = '<%s>' % e
-        out.append('%s = %s' % (v.name, text))
+            text = f'<{e}>'
+        out.append(f'{v.name} = {text}')
     return out
 
 
@@ -210,8 +210,7 @@ class ZPtype(gdb.Command):
             if m:
                 key = m.group(1) + ':' + m.group(2)
                 if key not in program.types:
-                    raise gdb.GdbError('No %s type named %s.' % (m.group(1),
-                                                                 m.group(2)))
+                    raise gdb.GdbError(f'No {m.group(1)} type named {m.group(2)}.')
                 t = (m.group(1), key)
             elif 'typedef:' + text in program.types:
                 t = ('typedef', 'typedef:' + text)

@@ -38,8 +38,8 @@ import importlib.util
 import json
 import os
 
-import gdb
-from gdb.unwinder import Unwinder
+import gdb  # pylint: disable=import-error
+from gdb.unwinder import Unwinder  # pylint: disable=import-error
 
 
 def _load_frames():
@@ -99,7 +99,7 @@ class DbgFile(object):
         with open(path, encoding='utf-8') as f:
             data = json.load(f)
         if data.get('format') != 'um80-dbg':
-            raise ValueError('%s is not a um80-dbg file' % path)
+            raise ValueError(f'{path} is not a um80-dbg file')
         self.program = frames.Program(data)
         self.walker = frames.Walker(self.program, lambda a: None)
         self.funcs = sorted((f for f in data.get('funcs') or []
@@ -163,7 +163,7 @@ class State(object):
             try:
                 self.dbg = DbgFile(path)
             except (OSError, ValueError) as e:
-                gdb.write('udb80_unwind: cannot read %s: %s\n' % (path, e), gdb.STDERR)
+                gdb.write(f'udb80_unwind: cannot read {path}: {e}\n', gdb.STDERR)
 
     def find_dbg(self):
         if self.dbg_tried:
@@ -368,7 +368,7 @@ class ModeCommand(gdb.Command):
         STATE.use_shadow = word == 'auto'
         STATE.reset()
         gdb.execute('maintenance flush register-cache', False, True)
-        gdb.write('udb80-unwind-mode: %s\n' % word)
+        gdb.write(f'udb80-unwind-mode: {word}\n')
 
 
 class InfoCommand(gdb.Command):
@@ -380,7 +380,7 @@ class InfoCommand(gdb.Command):
     def invoke(self, arg, from_tty):
         st = STATE
         gdb.write('prog.dbg: %s\n' % (st.dbg_path or 'none'))
-        gdb.write('shadow call stack: %s\n' % ('works' if st.shadow_works else 'not available'))
+        gdb.write(f"shadow call stack: {'works' if st.shadow_works else 'not available'}\n")
         if st.out_of_step:
             gdb.write('the shadow stack is out of step\n')
         for lvl, pc, sp, how in st.log[-50:]:
@@ -388,7 +388,7 @@ class InfoCommand(gdb.Command):
 
 
 def install():
-    from gdb.unwinder import register_unwinder
+    from gdb.unwinder import register_unwinder  # pylint: disable=import-error
     register_unwinder(None, Z80Unwinder(), replace=True)
     # The cache is valid from one resume to the next one.  GDB makes the
     # frames of a stop before it sends the stop event, so the cache is not

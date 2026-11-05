@@ -9,6 +9,10 @@ missing tool skips the test with the reason; UDB80_REQUIRE_UC80=1,
 UDB80_REQUIRE_CPMEMU=1 and UDB80_REQUIRE_GDB=1 turn the skip into a failure.
 """
 
+# pytest fixtures are parameters with the name of the fixture function.
+# pylint: disable=redefined-outer-name
+# The test names say what each test checks.
+# pylint: disable=missing-function-docstring
 import json
 import os
 import re
@@ -536,7 +540,7 @@ def test_live_globals_statics_and_types(cpmemu, prog_default):
 
 
 def udb_err(cpmemu, d, *cmds):
-    args = ['--batch', 'p.dbg', '--run', '%s p.com' % cpmemu]
+    args = ['--batch', 'p.dbg', '--run', f'{cpmemu} p.com']
     for c in cmds:
         args += ['-ex', c]
     return udb(*args, cwd=d, check=False).stderr
@@ -630,7 +634,7 @@ def test_live_frame_commands(cpmemu, prog_default):
         'AT_DEEP', 'frame', 'up', 'up', 'down', 'frame 3', 'up')).stdout
     in_order(out, ['#0  _deep () at p.c:', '#1  0x', '#2  0x', '#1  0x',
                    '#3  0x'])
-    run = udb('--batch', 'p.dbg', '--run', '%s p.com' % cpmemu,
+    run = udb('--batch', 'p.dbg', '--run', f'{cpmemu} p.com',
               '-ex', 'break p.c:%d' % line_of('AT_DEEP'), '-ex', 'continue',
               '-ex', 'frame 40', '-ex', 'down', cwd=prog_default, check=False)
     assert 'No frame at level 40.' in run.stderr
@@ -734,7 +738,7 @@ def test_dbg2elf_ix_locals_off_writes_no_ix_variable(prog_optnone):
 # ---------------------------------------------------------------------------
 
 def gdb_vars(gdb_path, cpmemu, d, cmds, helper=False):
-    cmds = (['source %s' % VARS_HELPER] if helper else []) + list(cmds)
+    cmds = ([f'source {VARS_HELPER}'] if helper else []) + list(cmds)
     return gdb_session(gdb_path, cpmemu, str(d), 'p', cmds)
 
 
@@ -878,7 +882,7 @@ def test_live_info_line_and_levels(cpmemu, outer):
 def test_live_break_on_the_outer_level_file_is_not_supported_yet(cpmemu, outer):
     # a breakpoint names a line of the source level; the outer file has no
     # step points of its own
-    run = udb('--batch', 'p.dbg', '--run', '%s p.com' % cpmemu,
+    run = udb('--batch', 'p.dbg', '--run', f'{cpmemu} p.com',
               '-ex', 'break p.c:7', cwd=outer, check=False)
     assert 'No source file named p.c' in run.stderr or 'p.c' in run.stderr
 
@@ -977,7 +981,7 @@ def test_live_two_files_with_equal_static_and_tag_names(cpmemu, tmp_path):
                'print cnt', 'print vb', 'print vb.l', 'whatis vb').stdout
     in_order(out, ['$1 = 7', '$2 = {c = 3 \'\\003\', l = 4}', '$3 = 4',
                    'type = struct s'])
-    run = udb('--batch', 'p.dbg', '--run', '%s p.com' % cpmemu,
+    run = udb('--batch', 'p.dbg', '--run', f'{cpmemu} p.com',
               '-ex', 'ptype struct s', cwd=tmp_path, check=False)
     assert 'ambiguous' in run.stderr and 's__t0' in run.stderr
     out = live(cpmemu, tmp_path, 'p', 'break b.c:%d' % line, 'continue',

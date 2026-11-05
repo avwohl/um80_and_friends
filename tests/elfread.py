@@ -39,7 +39,7 @@ class Elf:
         for (name, typ, flags, addr, off, size, link, info, align, entsize) in raw:
             nm = self._cstr(blob, shstr[4] + name)
             if off + size > len(blob):
-                raise ElfError('section %s runs past the end of the file' % nm)
+                raise ElfError(f'section {nm} runs past the end of the file')
             sec = dict(name=nm, type=typ, flags=flags, addr=addr, offset=off, size=size,
                        link=link, info=info, align=align, entsize=entsize,
                        data=blob[off:off + size])

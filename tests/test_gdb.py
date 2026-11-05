@@ -22,6 +22,10 @@ the skip into a failure, so that a CI job that must have the tool cannot
 pass without it.
 """
 
+# pytest fixtures are parameters with the name of the fixture function.
+# pylint: disable=redefined-outer-name
+# The test names say what each test checks.
+# pylint: disable=missing-function-docstring
 import json
 import os
 import re
@@ -40,7 +44,7 @@ UNWINDER = os.path.join(ROOT, 'um80', 'gdb', 'udb80_unwind.py')
 
 def _skip(reason, require_var):
     if os.environ.get(require_var) == '1':
-        pytest.fail('%s (%s=1 turns the skip into a failure)' % (reason, require_var))
+        pytest.fail(f'{reason} ({require_var}=1 turns the skip into a failure)')
     pytest.skip(reason)
 
 
@@ -92,7 +96,7 @@ def cpmemu():
     except (OSError, subprocess.SubprocessError):
         has = False
     if not has:
-        _skip('%s has no --gdb option; build a cpmemu from 2026-11-04 or later' % path,
+        _skip(f'{path} has no --gdb option; build a cpmemu from 2026-11-04 or later',
               'UDB80_REQUIRE_CPMEMU')
     return path
 
@@ -461,7 +465,7 @@ def in_order(text, parts):
     pos = 0
     for p in parts:
         i = text.find(p, pos)
-        assert i >= 0, 'missing or out of order: %r\n%s' % (p, text)
+        assert i >= 0, f'missing or out of order: {p!r}\n{text}'
         pos = i + len(p)
 
 

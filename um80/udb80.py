@@ -41,7 +41,7 @@ class UdbError(Exception):
 
 
 def h4(value):
-    return '0x%04x' % (value & 0xFFFF)
+    return f'0x{value & 65535:04x}'
 
 
 def parse_int(text):
@@ -73,12 +73,11 @@ class DebugInfo:
             with open(path, encoding='utf-8') as f:
                 data = json.load(f)
         except (OSError, ValueError) as e:
-            raise UdbError('cannot read %s: %s' % (path, e))
+            raise UdbError(f'cannot read {path}: {e}') from e
         if data.get('format') != 'um80-dbg':
-            raise UdbError('%s is not a um80-dbg file' % path)
+            raise UdbError(f'{path} is not a um80-dbg file')
         if data.get('version') != 1:
-            raise UdbError('%s has format version %r; udb80 reads version 1'
-                           % (path, data.get('version')))
+            raise UdbError(f"{path} has format version {data.get('version')!r}; udb80 reads version 1")
         self.data = data
         self.image = data.get('image') or {}
         self.files = data.get('files') or []
@@ -152,16 +151,16 @@ class DebugInfo:
         path = self.program_path(override)
         if not path or not os.path.exists(path):
             if override:
-                raise UdbError('program file %s does not exist' % override)
+                raise UdbError(f'program file {override} does not exist')
             return None
         with open(path, 'rb') as f:
             blob = f.read()
-        self._compare(blob, 'the file %s' % path)
+        self._compare(blob, f'the file {path}')
         return path
 
     def check_memory(self, blob):
         """The D9 check against the first `length` bytes of guest memory."""
-        self._compare(blob, 'guest memory at %s' % h4(self.image.get('load') or 0))
+        self._compare(blob, f"guest memory at {h4(self.image.get('load') or 0)}")
 
     def _compare(self, blob, what):
         length = self.image.get('length')
@@ -221,7 +220,7 @@ class DebugInfo:
         r = self.func_at(addr)
         if r is None:
             return ''
-        return '<%s>' % r[0] if r[1] == 0 else '<%s+%d>' % r
+        return f'<{r[0]}>' if r[1] == 0 else '<%s+%d>' % r
 
     def resolve(self, name):
         key = name.upper()
@@ -249,7 +248,7 @@ class DebugInfo:
         then the assembler table.  Returns (addresses, line used)."""
         files = set(self.match_file(name))
         if not files:
-            raise UdbError('No source file named %s.' % name)
+            raise UdbError(f'No source file named {name}.')
         best = None
         for use in (line, None):
             addrs = []
@@ -297,9 +296,10 @@ class DebugInfo:
             out['src'] = (self.file_name(f), l, e[3] if len(e) > 3 else None)
             group = e[2][-1]
             if len(group) > 4:
-                out['outer'] = (self.file_name(group[3]), group[4])
+                outer = (self.file_name(group[3]), group[4])
+                out['outer'] = outer
                 if want_outer:
-                    out['src'] = (out['outer'][0], out['outer'][1], out['src'][2])
+                    out['src'] = (outer[0], outer[1], out['src'][2])
         r = self.asm_row(addr)
         out['asm'] = (self.file_name(r[3]), r[4]) if r else None
         return out
@@ -351,7 +351,7 @@ class Rsp:
 
     def send(self, payload):
         data = payload.encode('latin-1')
-        self.sock.sendall(b'$' + data + b'#' + ('%02x' % self._sum(data)).encode())
+        self.sock.sendall(b'$' + data + b'#' + f'{self._sum(data):02x}'.encode())
 
     def recv(self):
         """One packet payload (a str).  Blocks until one arrives.  A
@@ -414,7 +414,7 @@ def parse_stop(reply):
         if 'syscall' in reply:
             return Event('syscall', sig, reply)
         return Event('step', sig, reply)
-    raise UdbError('unexpected stop reply %r' % reply)
+    raise UdbError(f'unexpected stop reply {reply!r}')
 
 
 # ---------------------------------------------------------------------------
@@ -496,11 +496,11 @@ class Debugger:
             n = min(length, step, 0x10000 - addr)
             if n <= 0:
                 break
-            reply = self.rsp.cmd('m%x,%x' % (addr, n))
+            reply = self.rsp.cmd(f'm{addr:x},{n:x}')
             if reply.startswith('E'):
                 if out:
                     break
-                raise UdbError('Cannot access memory at address %s' % h4(addr))
+                raise UdbError(f'Cannot access memory at address {h4(addr)}')
             out += bytes.fromhex(reply)
             addr += n
             length -= n
@@ -509,7 +509,7 @@ class Debugger:
     def read_word(self, addr):
         b = self.read_mem(addr, 2)
         if len(b) < 2:
-            raise UdbError('Cannot access memory at address %s' % h4(addr))
+            raise UdbError(f'Cannot access memory at address {h4(addr)}')
         return b[0] | (b[1] << 8)
 
     def wait_program(self):
@@ -532,8 +532,8 @@ class Debugger:
         self.say('Waiting for the program (%d bytes, SHA-256 %s...)' % (length, sha[:12]))
         ev = self._resume('c')
         if ev.kind != 'break':
-            raise UdbError('the program ended before it started: %s' % ev.raw)
-        self.say('The program has started at %s.' % h4(self.pc()))
+            raise UdbError(f'the program ended before it started: {ev.raw}')
+        self.say(f'The program has started at {h4(self.pc())}.')
 
     def check_memory(self):
         img = self.dbg.image
@@ -593,13 +593,13 @@ class Debugger:
         n = self.z_refs.get(addr, 0)
         if on:
             if n == 0:
-                reply = self.rsp.cmd('Z0,%x,1' % addr)
+                reply = self.rsp.cmd(f'Z0,{addr:x},1')
                 if reply != 'OK':
-                    raise UdbError('the stub refused a breakpoint at %s' % h4(addr))
+                    raise UdbError(f'the stub refused a breakpoint at {h4(addr)}')
             self.z_refs[addr] = n + 1
         else:
             if n <= 1:
-                self.rsp.cmd('z0,%x,1' % addr)
+                self.rsp.cmd(f'z0,{addr:x},1')
                 self.z_refs.pop(addr, None)
             else:
                 self.z_refs[addr] = n - 1
@@ -665,7 +665,7 @@ class Debugger:
         for _guard in range(100000):
             lo, hi = ent[0], ent[1]
             sp0 = self.regs()['sp']
-            ev = self._resume('vCont;r%x,%x' % (lo, hi))
+            ev = self._resume(f'vCont;r{lo:x},{hi:x}')
             if ev.kind != 'step':
                 return self._finish_stop(ev, func0)
             regs = self.regs()
@@ -709,7 +709,7 @@ class Debugger:
                 into = (not over) and new is not None and pc == new[0] \
                     and self.is_step_point(new)
                 if not into:
-                    ev = self.run_temp(ret, ok, outer)
+                    ev = self.run_temp(ret, ok, outer)  # pylint: disable=possibly-used-before-assignment
                     if ev.kind != 'temp':
                         return self._finish_stop(ev, func0)
                     pc = self.pc()
@@ -743,7 +743,7 @@ class Debugger:
             raise UdbError('"finish" not meaningful in the outermost frame.')
         d = len(frames) - 1
         ret = frames[1]
-        self.say('Run till exit from #0  %s' % self.frame_text(frames[0], 0, True))
+        self.say(f'Run till exit from #0  {self.frame_text(frames[0], 0, True)}')
         func0 = self.frame_key()
         ev = self.run_temp(ret, lambda: (self.depth() or 0) < d, frames[2:])
         if ev.kind == 'temp':
@@ -776,7 +776,7 @@ class Debugger:
             if ev.code == 0:
                 self.say('[Program exited normally]')
             else:
-                self.say('[Program exited with code %02x]' % ev.code)
+                self.say(f'[Program exited with code {ev.code:02x}]')
             return
         if k == 'signal':
             self.say('[Program terminated by signal %d]' % ev.code)
@@ -813,7 +813,7 @@ class Debugger:
             where = ' at %s:%d' % info['asm']
         else:
             where = ''
-        return '%s ()%s' % (name, where), info
+        return f'{name} (){where}', info
 
     def print_location(self, pc, head, func0, instr=False):
         text, info = self.location_text(pc)
@@ -822,7 +822,7 @@ class Debugger:
         func_now = info['func']
         show_frame = (head is not None or instr or func0 is None
                       or func0 != self.frame_key())
-        lead = '' if at_start else '%s in ' % h4(pc)
+        lead = '' if at_start else f'{h4(pc)} in '
         if head and head.endswith('\n'):
             self.say(head.rstrip('\n'))
             head = ''
@@ -841,7 +841,7 @@ class Debugger:
             self.list_file, self.list_next = line[0], max(1, line[1] - 4)
             self._center = line[1]
         elif not show_frame:
-            self.say('%s in %s' % (h4(pc), text))
+            self.say(f'{h4(pc)} in {text}')
 
     def source_lines(self, fname):
         if fname in self.src_cache:
@@ -895,13 +895,13 @@ class Debugger:
         kind = 'Temporary breakpoint' if temp else 'Breakpoint'
         a0 = addrs[0]
         text, _ = self.location_text(a0)
-        more = ' (%d locations)' % len(addrs) if len(addrs) > 1 else ''
+        more = f' ({len(addrs)} locations)' if len(addrs) > 1 else ''
         info = self.dbg.addr2line(a0, self.level == 'asm')
         where = ''
         m = re.fullmatch(r'(.+):(\d+)', spec)
         if m and note is None:
             idx = self.dbg.match_file(m.group(1))
-            where = ': file %s, line %s.' % (self.dbg.file_name(idx[0]), m.group(2))
+            where = f': file {self.dbg.file_name(idx[0])}, line {m.group(2)}.'
         elif info['src'] is not None:
             where = ': file %s, line %d.' % (info['src'][0], info['src'][1])
         elif info['asm'] is not None:
@@ -928,7 +928,7 @@ class Debugger:
             return addrs, None
         a = self.dbg.resolve(spec)
         if a is None:
-            raise UdbError('Function "%s" not defined.' % spec)
+            raise UdbError(f'Function "{spec}" not defined.')
         return [a], None
 
     def delete_bp(self, bp):
@@ -949,7 +949,7 @@ class Debugger:
         while pos < len(text):
             m = self.TOKEN.match(text, pos)
             if not m:
-                raise UdbError('Invalid expression at "%s"' % text[pos:])
+                raise UdbError(f'Invalid expression at "{text[pos:]}"')
             out.append(m.group(1))
             pos = m.end()
             while pos < len(text) and text[pos].isspace():
@@ -981,7 +981,7 @@ class Debugger:
                     raise UdbError('A ")" is missing.')
                 return v
             if t.startswith('$'):
-                name = t[1:].lower()
+                name = t[1:].lower()  # pylint: disable=unsubscriptable-object
                 if name == 'ixh' or name == 'ixl':
                     pass
                 regs = self.regs()
@@ -994,14 +994,14 @@ class Debugger:
                     return ((v >> 8) if name in 'adbh' else (v & 0xFF)) & 0xFF, None
                 if name == 'f':
                     return regs['af'] & 0xFF, None
-                raise UdbError('Unknown register or variable "%s".' % t)
+                raise UdbError(f'Unknown register or variable "{t}".')
             try:
                 return parse_int(t), None
             except ValueError:
                 pass
             a = self.dbg.resolve(t)
             if a is None:
-                raise UdbError('No symbol "%s" in the current context.' % t)
+                raise UdbError(f'No symbol "{t}" in the current context.')
             return self.symbol_value(a), a
 
         def unary():
@@ -1032,7 +1032,7 @@ class Debugger:
 
         result = expr()
         if pos[0] != len(toks):
-            raise UdbError('Invalid expression near "%s".' % toks[pos[0]])
+            raise UdbError(f'Invalid expression near "{toks[pos[0]]}".')
         return result
 
     def symbol_value(self, addr):
@@ -1062,7 +1062,7 @@ class Debugger:
                         return val.addr & 0xFFFF
                     return ctx.integer(val) & 0xFFFF
                 except vardata.VarError as e:
-                    raise UdbError(str(e))
+                    raise UdbError(str(e)) from e
         v, a = self.eval_expr(text)
         return (a if a is not None else v) & 0xFFFF
 
@@ -1087,8 +1087,7 @@ class Debugger:
         while a < hi:
             size, text = self.instr_text(dis, a)
             sym = self.dbg.symbolize(a)
-            self.say('%s %s %s:\t%s' % ('=>' if a == mark else '  ', h4(a),
-                                         sym, text))
+            self.say(f"{'=>' if a == mark else '  '} {h4(a)} {sym}:\t{text}")
             a += size
 
     # -- listing ------------------------------------------------------------------
@@ -1096,7 +1095,7 @@ class Debugger:
     def list_lines(self, fname, first, last):
         lines = self.source_lines(fname)
         if lines is None:
-            raise UdbError('%s: No such file or directory.' % fname)
+            raise UdbError(f'{fname}: No such file or directory.')
         if first > len(lines):
             raise UdbError('Line number %d out of range; "%s" has %d lines.'
                            % (first, fname, len(lines)))
@@ -1123,7 +1122,7 @@ class Debugger:
             getattr(self, 'cmd_' + name)(rest, fmt)
         except UdbError as e:
             sys.stdout.flush()
-            sys.stderr.write('%s\n' % e)
+            sys.stderr.write(f'{e}\n')
             sys.stderr.flush()
             self.errors += 1
         except EOFError:
@@ -1153,7 +1152,7 @@ class Debugger:
             return hits[0]
         raise_name = word
         self.errors += 1
-        sys.stderr.write('Undefined command: "%s".  Try "help".\n' % raise_name)
+        sys.stderr.write(f'Undefined command: "{raise_name}".  Try "help".\n')
         return 'noop'
 
     def cmd_noop(self, rest, fmt):
@@ -1173,8 +1172,8 @@ class Debugger:
         for tok in rest.split():
             try:
                 n = int(tok)
-            except ValueError:
-                raise UdbError('Bad breakpoint argument: "%s"' % tok)
+            except ValueError as exc:
+                raise UdbError(f'Bad breakpoint argument: "{tok}"') from exc
             hit = [b for b in self.breakpoints if b.num == n]
             if not hit:
                 raise UdbError('No breakpoint number %d.' % n)
@@ -1185,8 +1184,8 @@ class Debugger:
             return 1
         try:
             return max(1, int(rest))
-        except ValueError:
-            raise UdbError('Bad count: "%s"' % rest)
+        except ValueError as exc:
+            raise UdbError(f'Bad count: "{rest}"') from exc
 
     def cmd_continue(self, rest, fmt):
         self.need_alive()
@@ -1251,8 +1250,8 @@ class Debugger:
                 continue
             try:
                 limit = int(word)
-            except ValueError:
-                raise UdbError('Bad count: "%s"' % word)
+            except ValueError as exc:
+                raise UdbError(f'Bad count: "{word}"') from exc
         pc = self.pc()
         chain = None
         extra = ''
@@ -1329,17 +1328,17 @@ class Debugger:
         if m:
             idx = self.dbg.match_file(m.group(1))
             if not idx:
-                raise UdbError('No source file named %s.' % m.group(1))
+                raise UdbError(f'No source file named {m.group(1)}.')
             return self.dbg.file_name(idx[0]), int(m.group(2))
         if re.fullmatch(r'\d+', text):
             return None, int(text)
         a = self.dbg.resolve(text)
         if a is None:
-            raise UdbError('Function "%s" not defined.' % text)
+            raise UdbError(f'Function "{text}" not defined.')
         info = self.dbg.addr2line(a, self.level == 'asm')
         src = info['src'] and info['src'][:2] or info['asm']
         if not src:
-            raise UdbError('"%s" has no source line.' % text)
+            raise UdbError(f'"{text}" has no source line.')
         return src
 
     def cmd_disassemble(self, rest, fmt):
@@ -1391,7 +1390,7 @@ class Debugger:
             if full.startswith(sub):
                 break
         else:
-            raise UdbError('Undefined info command: "%s".' % sub)
+            raise UdbError(f'Undefined info command: "{sub}".')
         if full in ('registers', 'all-registers'):
             self.info_registers(arg)
         elif full == 'breakpoints':
@@ -1401,8 +1400,8 @@ class Debugger:
         elif full == 'line':
             self.info_line(arg)
         elif full == 'source':
-            self.say('Debug file: %s' % self.dbg.path)
-            self.say('Files: %s' % ', '.join(self.dbg.files))
+            self.say(f'Debug file: {self.dbg.path}')
+            self.say(f"Files: {', '.join(self.dbg.files)}")
         elif full == 'locals':
             self.info_vars(False)
         elif full == 'args':
@@ -1415,7 +1414,7 @@ class Debugger:
         names = [n.lstrip('$').lower() for n in arg.split()] or REG_NAMES
         for n in names:
             if n not in regs:
-                raise UdbError('Invalid register `%s\'' % n)
+                raise UdbError(f'Invalid register `{n}\'')
             v = regs[n]
             extra = ''
             if n == 'pc':
@@ -1424,7 +1423,7 @@ class Debugger:
         if arg == '' or 'af' in names:
             f = regs['af'] & 0xFF
             flags = [c for bit, c in FLAG_BITS if f & (1 << bit)]
-            self.say('flags [ %s ]' % ' '.join(flags))
+            self.say(f"flags [ {' '.join(flags)} ]")
 
     def info_breakpoints(self):
         if not self.breakpoints:
@@ -1451,19 +1450,18 @@ class Debugger:
                     rx = re.compile(arg, re.I)
                     for a, n, g in d.sorted_labels:
                         if rx.search(n):
-                            self.say('%s  %s' % (h4(a), n))
+                            self.say(f'{h4(a)}  {n}')
                     return
             r = d.label_at_or_before(addr)
             if r is None:
-                self.say('No symbol matches %s.' % arg)
+                self.say(f'No symbol matches {arg}.')
             elif r[1] == 0:
-                self.say('%s in the program' % r[0])
+                self.say(f'{r[0]} in the program')
             else:
                 self.say('%s + %d in the program' % r)
             return
         for a, n, g in d.sorted_labels:
-            self.say('%s  %s%s' % (h4(a), n, '' if g or not any(
-                x[2] for x in d.sorted_labels) else ''))
+            self.say(f"{h4(a)}  {n}{'' if g or not any((x[2] for x in d.sorted_labels)) else ''}")
 
     def info_line(self, arg):
         if not arg:
@@ -1477,8 +1475,7 @@ class Debugger:
         if e is None:
             r = self.dbg.asm_row(addr)
             if r is None:
-                self.say('No line number information available for address %s'
-                         % h4(addr))
+                self.say(f'No line number information available for address {h4(addr)}')
                 return
             self.say('Assembler line %d of "%s" starts at address %s and ends at %s.'
                      % (r[4], self.dbg.file_name(r[3]), h4(r[0]), h4(r[1])))
@@ -1519,8 +1516,7 @@ class Debugger:
             mark = self.pc() if self.alive else None
             for _ in range(count):
                 size, text = self.instr_text(dis, a)
-                self.say('%s %s %s:\t%s' % ('=>' if a == mark else '  ', h4(a),
-                                             self.dbg.symbolize(a), text))
+                self.say(f"{'=>' if a == mark else '  '} {h4(a)} {self.dbg.symbolize(a)}:\t{text}")
                 a += size
             return
         if kind == 's':
@@ -1528,16 +1524,14 @@ class Debugger:
                 data = self.read_mem(addr, 256)
                 end = data.find(b'\0')
                 s = data[:end if end >= 0 else len(data)]
-                self.say('%s %s:\t"%s"' % (h4(addr), self.dbg.symbolize(addr),
-                                            s.decode('latin-1')))
+                self.say(f"{h4(addr)} {self.dbg.symbolize(addr)}:\t\"{s.decode('latin-1')}\"")
                 addr += len(s) + 1
             return
         per_line = 8 if unit == 1 else 8 // unit if unit <= 8 else 1
         per_line = max(1, per_line)
         data = self.read_mem(addr, count * unit)
         if len(data) < count * unit:
-            raise UdbError('Cannot access memory at address %s'
-                           % h4(addr + len(data)))
+            raise UdbError(f'Cannot access memory at address {h4(addr + len(data))}')
         items = []
         for i in range(count):
             chunk = data[i * unit:(i + 1) * unit]
@@ -1551,7 +1545,7 @@ class Debugger:
             elif kind == 'u':
                 items.append(str(v))
             elif kind == 'c':
-                ch = chr(v) if 32 <= v < 127 else '\\%03o' % v
+                ch = chr(v) if 32 <= v < 127 else f'\\{v:03o}'
                 items.append("%d '%s'" % (v, ch))
             else:
                 items.append('0x%0*x' % (unit * 2, v))
@@ -1623,15 +1617,15 @@ class Debugger:
                             continue
                         if v.loc[1] <= a < v.loc[1] + size:
                             off = a - v.loc[1]
-                            return '<%s>' % v.name if not off else \
+                            return f'<{v.name}>' if not off else \
                                 '<%s+%d>' % (v.name, off)
             rec = self.dbg.func_record(a)
             if rec is not None:
                 off = a - rec['start']
-                return '<%s>' % rec['name'] if not off else \
+                return f"<{rec['name']}>" if not off else \
                     '<%s+%d>' % (rec['name'], off)
             r = self.dbg.func_at(a)
-            return '<%s>' % r[0] if r is not None and r[1] == 0 else ''
+            return f'<{r[0]}>' if r is not None and r[1] == 0 else ''
         return vardata.Context(self.dbg.vars, self.read_mem, frame, symbolize)
 
     def eval_var(self, text):
@@ -1642,9 +1636,9 @@ class Debugger:
         except vardata.NoSuchName:
             raise
         except vardata.VarError as e:
-            raise UdbError(str(e))
+            raise UdbError(str(e)) from e
         except (TypeError, ValueError, IndexError, KeyError) as e:
-            raise UdbError('Cannot evaluate the expression (%s).' % e)
+            raise UdbError(f'Cannot evaluate the expression ({e}).') from e
 
     def info_vars(self, params):
         if not self.dbg.vars.has_vars():
@@ -1658,8 +1652,8 @@ class Debugger:
             try:
                 text = ctx.format(ctx.variable(v))
             except vardata.VarError as e:
-                text = '<%s>' % e
-            self.say('%s = %s' % (v.name, text))
+                text = f'<{e}>'
+            self.say(f'{v.name} = {text}')
             shown += 1
         if not shown:
             self.say('No arguments.' if params else 'No locals.')
@@ -1674,8 +1668,8 @@ class Debugger:
         if rest:
             try:
                 n = int(rest, 0)
-            except ValueError:
-                raise UdbError('Bad frame level: "%s"' % rest)
+            except ValueError as exc:
+                raise UdbError(f'Bad frame level: "{rest}"') from exc
             self.select_frame(n)
         self.show_frame()
 
@@ -1730,13 +1724,11 @@ class Debugger:
                        if k.startswith(m.group(1) + ':')
                        and vardata.source_name(k) == key]
                 if len(alt) > 1:
-                    raise UdbError('%s %s is ambiguous: %s.' % (
-                        m.group(1), m.group(2),
-                        ', '.join(k.split(':', 1)[1] for k in sorted(alt))))
+                    raise UdbError(f"{m.group(1)} {m.group(2)} is ambiguous: {', '.join((k.split(':', 1)[1] for k in sorted(alt)))}.")
                 if alt:
                     key = alt[0]
             if key not in prog.types:
-                raise UdbError('No %s type named %s.' % (m.group(1), m.group(2)))
+                raise UdbError(f'No {m.group(1)} type named {m.group(2)}.')
             return (m.group(1), key)
         alt = [k for k in prog.types if k.startswith('typedef:')
                and vardata.source_name(k) == 'typedef:' + text]
@@ -1759,14 +1751,14 @@ class Debugger:
             if t is None:
                 _ctx, val = self.eval_var(rest)
                 t = val.type
-        except vardata.NoSuchName:
-            raise UdbError('No symbol "%s" in current context.' % rest)
+        except vardata.NoSuchName as exc:
+            raise UdbError(f'No symbol "{rest}" in current context.') from exc
         except vardata.VarError as e:
-            raise UdbError(str(e))
+            raise UdbError(str(e)) from e
         if whatis:
-            self.say('type = %s' % prog.name(t))
+            self.say(f'type = {prog.name(t)}')
         else:
-            self.say('type = %s' % prog.describe(t))
+            self.say(f'type = {prog.describe(t)}')
 
     def cmd_whatis(self, rest, fmt):
         self.cmd_ptype(rest, fmt, True)
@@ -1783,9 +1775,9 @@ class Debugger:
         try:
             text = self.format_var(ctx, val, fmt)
         except vardata.VarError as e:
-            raise UdbError(str(e))
+            raise UdbError(str(e)) from e
         except (TypeError, ValueError, IndexError, KeyError) as e:
-            raise UdbError('Cannot print the value (%s).' % e)
+            raise UdbError(f'Cannot print the value ({e}).') from e
         self.hist += 1
         self.say('$%d = %s' % (self.hist, text))
         return True
@@ -1798,9 +1790,9 @@ class Debugger:
             size = max(ctx.program.size(val.type), 1)
             u = n & ((1 << (8 * size)) - 1)
             if fmt == 'x':
-                return '0x%x' % u
+                return f'0x{u:x}'
             if fmt == 'o':
-                return '0%o' % u if u else '0'
+                return f'0{u:o}' if u else '0'
             if fmt == 't':
                 return bin(u)[2:]
             if fmt == 'd':
@@ -1822,16 +1814,16 @@ class Debugger:
 
     def format_value(self, text, v, a, fmt):
         if fmt == 'x':
-            return '0x%04x' % (v & 0xFFFF)
+            return f'0x{v & 65535:04x}'
         if fmt == 'c':
             return "%d '%s'" % (v & 0xFF, chr(v & 0xFF) if 32 <= v & 0xFF < 127 else '?')
         if fmt == 'o':
-            return '0%o' % v
+            return f'0{v:o}'
         if fmt == 't':
             return bin(v & 0xFFFF)[2:]
         t = text.strip()
         if (a is not None and v == a) or t.lower() == '$pc' or t.startswith('&'):
-            return '%s %s' % (h4(v), self.dbg.symbolize(v))
+            return f'{h4(v)} {self.dbg.symbolize(v)}'
         return str(v)
 
     def cmd_sizes(self, rest, fmt):
@@ -1916,10 +1908,10 @@ def parse_addr(text):
     except ValueError:
         try:
             v = int(text, 16)
-        except ValueError:
-            raise UdbError('"%s" is not an address' % text)
+        except ValueError as exc:
+            raise UdbError(f'"{text}" is not an address') from exc
     if not 0 <= v <= 0xFFFF:
-        raise UdbError('address %s is out of range' % text)
+        raise UdbError(f'address {text} is out of range')
     return v
 
 
@@ -1959,7 +1951,7 @@ def cmd_addr2line(argv):
         elif info['asm'] is not None:
             line = '%s  %s  %s:%d  [asm]' % ((h4(addr), name) + info['asm'])
         else:
-            line = '%s  %s  ??:0' % (h4(addr), name)
+            line = f'{h4(addr)}  {name}  ??:0'
             status = 1
         print(line)
     return status
@@ -2024,10 +2016,9 @@ def cmd_bt_dump(argv):
         with open(args.memory, 'rb') as f:
             memory = f.read()
     except OSError as e:
-        raise UdbError('cannot read %s: %s' % (args.memory, e))
+        raise UdbError(f'cannot read {args.memory}: {e}') from e
     if len(memory) != 0x10000:
-        raise UdbError('%s has %d bytes; a dump from cpmemu --save-memory '
-                       'has 65536' % (args.memory, len(memory)))
+        raise UdbError(f'{args.memory} has {len(memory)} bytes; a dump from cpmemu --save-memory has 65536')
     img = dbg.image
     if img.get('kind') == 'com' and img.get('load') is not None:
         dbg.check_memory(memory[img['load']:img['load'] + (img.get('length') or 0)])
@@ -2060,7 +2051,7 @@ def start_cpmemu(run, stdin):
     try:
         proc = subprocess.Popen(argv, stdin=stdin)
     except OSError as e:
-        raise UdbError('cannot start %s: %s' % (argv[0], e))
+        raise UdbError(f'cannot start {argv[0]}: {e}') from e
     deadline = time.time() + 30
     port = None
     while time.time() < deadline:
@@ -2082,7 +2073,7 @@ def start_cpmemu(run, stdin):
         pass
     if port is None:
         proc.kill()
-        raise UdbError('%s did not write its port in 30 seconds' % argv[0])
+        raise UdbError(f'{argv[0]} did not write its port in 30 seconds')
     return proc, port
 
 
@@ -2093,7 +2084,7 @@ def connect(host, port):
             return socket.create_connection((host, port), timeout=10)
         except OSError as e:
             if time.time() > deadline:
-                raise UdbError('cannot connect to %s:%d: %s' % (host, port, e))
+                raise UdbError('cannot connect to %s:%d: %s' % (host, port, e)) from e
             time.sleep(0.05)
 
 
@@ -2108,7 +2099,7 @@ def main(argv=None):
             return cmd_bt_dump(argv[1:])
         return debug_main(argv)
     except UdbError as e:
-        sys.stderr.write('udb80: %s\n' % e)
+        sys.stderr.write(f'udb80: {e}\n')
         return 2
 
 
@@ -2150,7 +2141,7 @@ def debug_main(argv):
             with open(args.cmdfile, encoding='utf-8') as f:
                 commands += [l.rstrip('\n') for l in f]
         except OSError as e:
-            raise UdbError('cannot read %s: %s' % (args.cmdfile, e))
+            raise UdbError(f'cannot read {args.cmdfile}: {e}') from e
     commands = list(args.ex) + commands if not args.cmdfile else commands + list(args.ex)
     proc = None
     sock = None
@@ -2164,8 +2155,8 @@ def debug_main(argv):
             host = host or '127.0.0.1'
             try:
                 port = int(p)
-            except ValueError:
-                raise UdbError('--connect wants HOST:PORT')
+            except ValueError as exc:
+                raise UdbError('--connect wants HOST:PORT') from exc
         sock = connect(host, port)
         dbr = Debugger(dbg, Rsp(sock))
         dbr.src_dirs = args.directory
@@ -2176,7 +2167,7 @@ def debug_main(argv):
         if args.wait_program:
             dbr.wait_program()
         dbr.check_memory()
-        dbr.say('Connected; the program is stopped before %s.' % h4(dbr.pc()))
+        dbr.say(f'Connected; the program is stopped before {h4(dbr.pc())}.')
         for c in commands:
             if not dbr.execute(c):
                 break

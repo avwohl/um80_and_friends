@@ -2022,8 +2022,9 @@ class Linker:
                     previous = None
                     continue
                 if not fresh:
-                    if previous is not None and previous[1] == start:
-                        previous[1] = end
+                    # previous is the list of the last entry here
+                    if previous is not None and previous[1] == start:  # pylint: disable=unsubscriptable-object
+                        previous[1] = end  # pylint: disable=unsupported-assignment-operation
                         continue
                     group = group[-1:]
                 entry = [start, end, group]

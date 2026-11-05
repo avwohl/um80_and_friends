@@ -370,11 +370,11 @@ class Model:
         for e in self.lines:
             groups = [(g[0] + 1, g[1], not g[2]) for g in e[2]]
             stack = [tuple(s) for s in e[3]] if len(e) > 3 and e[3] else []
-            if prev is not None and prev[1] == e[0]:
+            if prev is not None and prev[1] == e[0]:  # pylint: disable=unsubscriptable-object
                 # ;#endinline puts the call line back as the position.  When
                 # more lines follow it at the same address, the call line is
                 # no statement of its own: drop it.
-                pstack = [tuple(s) for s in prev[3]] if len(prev) > 3 and prev[3] else []
+                pstack = [tuple(s) for s in prev[3]] if len(prev) > 3 and prev[3] else []  # pylint: disable=unsubscriptable-object
                 if (len(stack) < len(pstack) and pstack[:len(stack)] == stack
                         and len(groups) > 1):
                     closed = pstack[len(stack)]
@@ -931,12 +931,11 @@ def load_dbg(path):
         with open(path, encoding='utf-8') as f:
             data = json.load(f)
     except (OSError, ValueError) as e:
-        raise Dbg2ElfError('cannot read %s: %s' % (path, e))
+        raise Dbg2ElfError(f'cannot read {path}: {e}') from e
     if data.get('format') != 'um80-dbg':
-        raise Dbg2ElfError('%s is not a um80-dbg file' % path)
+        raise Dbg2ElfError(f'{path} is not a um80-dbg file')
     if data.get('version') != 1:
-        raise Dbg2ElfError('%s has format version %r; dbg2elf reads version 1'
-                           % (path, data.get('version')))
+        raise Dbg2ElfError(f"{path} has format version {data.get('version')!r}; dbg2elf reads version 1")
     return data
 
 
@@ -945,8 +944,7 @@ def read_image(dbg, dbg_path, com_path):
     image = dbg.get('image') or {}
     kind = image.get('kind')
     if kind not in ('com', 'bin'):
-        raise Dbg2ElfError('the image kind %r has no flat image; dbg2elf reads '
-                           'com and bin' % (kind,))
+        raise Dbg2ElfError(f'the image kind {kind!r} has no flat image; dbg2elf reads com and bin')
     path = com_path
     if path is None:
         name = image.get('file')
@@ -957,7 +955,7 @@ def read_image(dbg, dbg_path, com_path):
         with open(path, 'rb') as f:
             blob = f.read()
     except OSError as e:
-        raise Dbg2ElfError('cannot read the program file: %s' % e)
+        raise Dbg2ElfError(f'cannot read the program file: {e}') from e
     length, want = image.get('length'), image.get('sha256')
     if length is not None and want is not None:
         if len(blob) != length or hashlib.sha256(blob[:length]).hexdigest() != want:
@@ -971,7 +969,7 @@ def read_image(dbg, dbg_path, com_path):
     if load is None:
         raise Dbg2ElfError('prog.dbg has no load address')
     if load + len(blob) > 0x10000:
-        raise Dbg2ElfError('the image does not fit in 64K at %04XH' % load)
+        raise Dbg2ElfError(f'the image does not fit in 64K at {load:04X}H')
     return blob
 
 
@@ -1027,9 +1025,9 @@ def main(argv=None):
         with open(out, 'wb') as f:
             f.write(elf)
     except Dbg2ElfError as e:
-        print('dbg2elf: %s' % e, file=sys.stderr)
+        print(f'dbg2elf: {e}', file=sys.stderr)
         return 1
-    print('dbg2elf: wrote %s (%d bytes)' % (out, len(elf)))
+    print(f'dbg2elf: wrote {out} ({len(elf)} bytes)')
     return 0
 
 

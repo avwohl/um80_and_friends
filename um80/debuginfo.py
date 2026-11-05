@@ -151,8 +151,7 @@ def _parse_type_marker(words):
         raise MarkerError('#type needs a name')
     found = _TYPE_NAME.match(words[0])
     if not found:
-        raise MarkerError("#type name is struct:TAG, union:TAG, enum:TAG or "
-                          "typedef:NAME, not '%s'" % words[0])
+        raise MarkerError(f"#type name is struct:TAG, union:TAG, enum:TAG or typedef:NAME, not '{words[0]}'")
     fields = {'name': words[0], 'kind': found.group(1), 'size': None,
               'members': [], 'values': [], 'target': None}
     for word in words[1:]:
@@ -168,8 +167,7 @@ def _parse_type_marker(words):
             for item in _split_members(value):
                 m = _MEMBER.match(item)
                 if not m:
-                    raise MarkerError("#type member '%s' is not "
-                                      "NAME:TYPE@OFFSET" % item)
+                    raise MarkerError(f"#type member '{item}' is not NAME:TYPE@OFFSET")
                 row = [m.group(1), m.group(2), int(m.group(3))]
                 if m.group(4) is not None:
                     row += [int(m.group(4)), int(m.group(5))]
@@ -179,9 +177,8 @@ def _parse_type_marker(words):
                 name, eq, number = item.rpartition('=')
                 try:
                     fields['values'].append([name, int(number)])
-                except ValueError:
-                    raise MarkerError("#type value '%s' is not NAME=NUMBER"
-                                      % item)
+                except ValueError as exc:
+                    raise MarkerError(f"#type value '{item}' is not NAME=NUMBER") from exc
         # any other key: ignored
     if fields['kind'] == 'typedef' and not fields['target']:
         raise MarkerError('#type typedef needs target=TYPE')
@@ -206,8 +203,7 @@ def _parse_var_marker(words):
             continue
         if key == 'kind':
             if value.lower() not in VAR_KINDS:
-                raise MarkerError("kind= is global, static, local or param, "
-                                  "not '%s'" % value)
+                raise MarkerError(f"kind= is global, static, local or param, not '{value}'")
             fields['kind'] = value.lower()
         elif key == 'at':
             m = re.match(r'^([^\s;+]+)(?:([+-])(\d+))?$', value)
@@ -221,7 +217,7 @@ def _parse_var_marker(words):
             fields['ix'] = int(value)
         elif key == 'reg':
             if value.upper() not in _REG_NAMES:
-                raise MarkerError("reg= is a register name, not '%s'" % value)
+                raise MarkerError(f"reg= is a register name, not '{value}'")
             fields['reg'] = value.upper()
         elif key == 'range':
             a, sep2, b = value.partition(':')

@@ -14,6 +14,10 @@ prog.dbg data written by hand, so that each rule has a small case:
 - a stale program file is refused
 """
 
+# pytest fixtures are parameters with the name of the fixture function.
+# pylint: disable=redefined-outer-name
+# The test names say what each test checks.
+# pylint: disable=missing-function-docstring
 import argparse
 import hashlib
 import json

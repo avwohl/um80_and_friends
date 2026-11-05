@@ -11,6 +11,10 @@ reason.  UDB80_REQUIRE_CPMEMU=1 turns that skip into a failure, so that a CI
 job that must have cpmemu cannot pass without one.
 """
 
+# pytest fixtures are parameters with the name of the fixture function.
+# pylint: disable=redefined-outer-name
+# The test names say what each test checks.
+# pylint: disable=missing-function-docstring
 import os
 import shutil
 import subprocess
@@ -224,7 +228,7 @@ def cpmemu():
     except (OSError, subprocess.SubprocessError):
         has_gdb = False
     if not has_gdb:
-        reason = '%s has no --gdb option; build a cpmemu from 2026-11-04 or later' % path
+        reason = f'{path} has no --gdb option; build a cpmemu from 2026-11-04 or later'
         if os.environ.get('UDB80_REQUIRE_CPMEMU') == '1':
             pytest.fail(reason)
         pytest.skip(reason)
@@ -232,7 +236,7 @@ def cpmemu():
 
 
 def live(cpmemu, d, prog, *commands):
-    args = ['--batch', prog + '.dbg', '--run', '%s %s.com' % (cpmemu, prog)]
+    args = ['--batch', prog + '.dbg', '--run', f'{cpmemu} {prog}.com']
     for c in commands:
         args += ['-ex', c]
     return udb(*args, cwd=d)
@@ -242,7 +246,7 @@ def in_order(text, parts):
     pos = 0
     for p in parts:
         i = text.find(p, pos)
-        assert i >= 0, 'missing or out of order: %r\n%s' % (p, text)
+        assert i >= 0, f'missing or out of order: {p!r}\n{text}'
         pos = i + len(p)
 
 
@@ -301,7 +305,7 @@ def test_live_connect_mode(cpmemu, sumto):
     port = sumto / 'port.txt'
     if port.exists():
         port.unlink()
-    proc = subprocess.Popen([cpmemu, '--gdb=0', '--gdb-port-file=%s' % port,
+    proc = subprocess.Popen([cpmemu, '--gdb=0', f'--gdb-port-file={port}',
                              'sumto.com'], cwd=sumto, stdin=subprocess.DEVNULL,
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
@@ -311,7 +315,7 @@ def test_live_connect_mode(cpmemu, sumto):
                 break
             time.sleep(0.02)
         out = udb('--batch', 'sumto.dbg', '--connect',
-                  '127.0.0.1:%s' % port.read_text().strip(),
+                  f'127.0.0.1:{port.read_text().strip()}',
                   '-ex', 'break _add', '-ex', 'continue', '-ex', 'bt',
                   '-ex', 'continue', cwd=sumto).stdout
         in_order(out, ['Breakpoint 1, _ADD () at sumto.c:6',
@@ -324,7 +328,7 @@ def test_live_connect_mode(cpmemu, sumto):
 
 def test_live_command_file(cpmemu, sumto):
     (sumto / 'cmds.txt').write_text('# a comment\nbreak _add\ncontinue\nbt\n')
-    out = udb('--batch', 'sumto.dbg', '--run', '%s sumto.com' % cpmemu,
+    out = udb('--batch', 'sumto.dbg', '--run', f'{cpmemu} sumto.com',
               '-x', 'cmds.txt', cwd=sumto).stdout
     in_order(out, ['Breakpoint 1 at 0x0120', 'Breakpoint 1, _ADD ()', '#1  0x0111'])
 
@@ -414,7 +418,7 @@ def test_live_finish_stops_when_the_frame_unwinds_early(cpmemu, longjmp):
 def test_live_refuses_a_different_program_in_memory(cpmemu, sumto, tmp_path):
     (tmp_path / 'other.mac').write_text('\t.z80\n\tnop\n\tjp\t0\n')
     _build(tmp_path, 'other')
-    run = udb('--batch', 'sumto.dbg', '--run', '%s %s' % (cpmemu, tmp_path / 'other.com'),
+    run = udb('--batch', 'sumto.dbg', '--run', f"{cpmemu} {tmp_path / 'other.com'}",
               '-ex', 'continue', cwd=sumto, check=False)
     assert run.returncode == 2, run.stdout + run.stderr
     assert 'guest memory at 0x0100 does not match' in run.stderr
@@ -490,7 +494,7 @@ def romwbw():
     for path, what in ((emu, 'romwbw_emu'), (rom, 'the 3.6.0 ROM'), (disk, 'the hd1k_cpm22 disk'),
                        (cpm_disk, 'cpm_disk.py')):
         if not os.path.isfile(path):
-            reason = 'no %s at %s' % (what, path)
+            reason = f'no {what} at {path}'
             if os.environ.get('UDB80_REQUIRE_ROMWBW') == '1':
                 pytest.fail(reason + ' (UDB80_REQUIRE_ROMWBW=1)')
             pytest.skip(reason)
@@ -520,7 +524,7 @@ def test_live_wait_program_under_romwbw(romwbw, tmp_path):
             time.sleep(0.05)
         port = open(portfile).read().strip()
         if not port:
-            reason = '%s gave no port: built without its GDB stub?' % emu
+            reason = f'{emu} gave no port: built without its GDB stub?'
             if os.environ.get('UDB80_REQUIRE_ROMWBW') == '1':
                 pytest.fail(reason)
             pytest.skip(reason)

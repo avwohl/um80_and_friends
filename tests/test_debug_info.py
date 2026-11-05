@@ -18,6 +18,10 @@ nostmt line.  The checks:
   prototype computed from the .PRN
 """
 
+# pytest fixtures are parameters with the name of the fixture function.
+# pylint: disable=redefined-outer-name
+# The test names say what each test checks.
+# pylint: disable=missing-function-docstring
 import hashlib
 import json
 import os
