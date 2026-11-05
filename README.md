@@ -8,6 +8,8 @@ A complete Unix/Linux implementation of Microsoft's classic CP/M development too
 - **ucref80** - Cross-reference utility
 - **ud80** - 8080/Z80 disassembler for CP/M .COM files
 - **ux80** - 8080 to Z80 assembly source translator
+- **udb80** - source-level debugger for programs that run in cpmemu (0.4.0 and later)
+- **dbg2elf** - writes an ELF file with DWARF from `prog.dbg`, for GDB (0.4.0 and later)
 
 These tools can assemble, link, and manage 8080/Z80 assembly code to produce CP/M-compatible .COM executables on modern Linux systems.
 

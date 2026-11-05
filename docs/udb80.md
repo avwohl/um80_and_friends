@@ -5,11 +5,19 @@ shows source lines, sets breakpoints on source lines, steps by line and
 shows the chain of calls. udb80 is phase 3 of the debugger plan in the
 [cpmemu project](https://github.com/avwohl/cpmemu/blob/main/docs/debugger_plan.md).
 
+udb80 is in um80 0.4.0 and later. An older release has no udb80. Install
+um80 from PyPI:
+
+```
+pip install "um80>=0.4.0"
+```
+
 udb80 needs two things:
 
 - A `prog.dbg` file. Link the program with `ul80 --debug-info`. The format
   is in [debug_info.md](debug_info.md).
-- A cpmemu that has the `--gdb` option. udb80 speaks the GDB remote
+- A cpmemu that has the `--gdb` option: cpmemu 4.11.0 or later, or
+  romwbw_emu 1.50 or later with `--wait-program`. udb80 speaks the GDB remote
   protocol to the stub in cpmemu. The program keeps all of its 64K,
   because udb80 keeps the symbols and the source files on the host.
 

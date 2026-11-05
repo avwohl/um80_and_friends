@@ -9,6 +9,9 @@ The debug information does not change the code. The `.rel` file and the
 output file of ul80 are the same, byte for byte, with and without the
 options in this file. The tests in `tests/test_debug_info.py` check the byte match.
 
+The `--debug-info` options of um80 and ul80, the `.dbm` files in a ulib80
+library, udb80 and dbg2elf are in um80 0.4.0 and later.
+
 ## How the information goes through the tools
 
 ```

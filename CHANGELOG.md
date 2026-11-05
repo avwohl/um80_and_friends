@@ -4,6 +4,15 @@ All notable changes to the um80 toolchain are documented here.
 
 ## [Unreleased]
 
+### Docs: udb80 and dbg2elf are in 0.4.0
+
+The README tool list and the table in `docs/index.md` (which said "five
+command-line tools" over a table of six) now name udb80 and dbg2elf, with
+"0.4.0 and later". `docs/udb80.md`, `docs/gdb.md`, `docs/debug_info.md`
+and `docs/tools.md` say which um80 release has udb80, dbg2elf, the GDB
+scripts and `--debug-info`, and which cpmemu (4.11.0) and romwbw_emu (1.50)
+have `--gdb`; `docs/tools.md` gains a udb80 entry beside dbg2elf's.
+
 ### Docs: Homebrew's `gdb` has the Z80 target
 
 `docs/gdb.md` said that Homebrew has no formula and that GDB must be built from

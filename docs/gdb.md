@@ -11,6 +11,8 @@ Four parts work together:
 
 The program keeps all of its 64K. GDB keeps the symbols and the source files on the host.
 
+`dbg2elf`, `udb80_unwind.py` and `udb80_vars.py` are in um80 0.4.0 and later. An older release has none of them. `pip install "um80>=0.4.0"` installs them, and `dbg2elf --unwinder-path` and `dbg2elf --vars-path` print where the two scripts are. `cpmemu --gdb` is in cpmemu 4.11.0 and later.
+
 ## Build GDB 18.1 for the Z80
 
 GDB has had a Z80 target since GDB 11.1. A GDB that is built with `--enable-targets=all` has the target. The Homebrew formula `gdb` (GDB 18.1) uses that option, so `brew install gdb` can be sufficient.

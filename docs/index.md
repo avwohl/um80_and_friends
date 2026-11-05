@@ -5,7 +5,7 @@ assembler suite for 8080/Z80 development on Linux.
 
 ## Overview
 
-The um80 toolchain provides five command-line tools:
+The um80 toolchain provides eight command-line tools:
 
 | Tool | Description | Microsoft Equivalent |
 |------|-------------|---------------------|
@@ -15,6 +15,8 @@ The um80 toolchain provides five command-line tools:
 | ucref80 | Cross-reference utility | CREF80 |
 | ud80 | Disassembler | (none) |
 | ux80 | 8080 to Z80 translator | (none) |
+| udb80 | Source-level debugger for cpmemu (0.4.0 and later) | (none) |
+| dbg2elf | `prog.dbg` to an ELF file with DWARF, for GDB (0.4.0 and later) | (none) |
 
 ## Quick Reference
 
