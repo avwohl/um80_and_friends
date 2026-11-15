@@ -32,7 +32,7 @@ gpg --verify gdb-18.1.tar.xz.sig gdb-18.1.tar.xz
 tar xf gdb-18.1.tar.xz
 mkdir build && cd build
 ../gdb-18.1/configure --target=z80-unknown-elf --disable-nls --disable-werror \
-    --with-python=/opt/homebrew/bin/python3.14 --with-gmp=/opt/homebrew \
+    --with-python=/opt/homebrew/bin/python3 --with-gmp=/opt/homebrew \
     --with-mpfr=/opt/homebrew --without-guile --disable-sim
 make -j10 all-gdb
 ```
