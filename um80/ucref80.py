@@ -17,6 +17,10 @@ from collections import defaultdict
 from um80 import __version__
 
 
+# The name of a symbol, as MACRO-80 reads it.
+NAME = r'[A-Za-z_$@?.][A-Za-z0-9_$@?.]*'
+
+
 class Symbol:
     """Symbol cross-reference entry."""
     def __init__(self, name):
@@ -35,12 +39,16 @@ class CrossReference:
         self.current_file = ""
         self.files_processed = []
 
-        # Patterns for parsing
-        self.label_pattern = re.compile(r'^([A-Za-z_$@?][A-Za-z0-9_$@?]*)\s*:', re.IGNORECASE)
-        self.equ_pattern = re.compile(r'^([A-Za-z_$@?][A-Za-z0-9_$@?]*)\s+(equ|set|defl)\s+', re.IGNORECASE)
+        # Patterns for parsing.  A name is as in MACRO-80: letters, digits
+        # and $ . ? @ _, and a digit does not start one.  A leading '.' is a
+        # name character (.FOO, ..BAR, .201B), and so is a '.' inside a name
+        # (X.1); only a word that begins a statement and is a dot-directive
+        # (.Z80, .PHASE, ...) is a reserved word.
+        self.label_pattern = re.compile(r'^(' + NAME + r')\s*:', re.IGNORECASE)
+        self.equ_pattern = re.compile(r'^(' + NAME + r')\s+(equ|set|defl)\s+', re.IGNORECASE)
         self.public_pattern = re.compile(r'^\s*public\s+(.+)', re.IGNORECASE)
         self.extrn_pattern = re.compile(r'^\s*extrn\s+(.+)', re.IGNORECASE)
-        self.macro_pattern = re.compile(r'^([A-Za-z_$@?][A-Za-z0-9_$@?]*)\s+macro\b', re.IGNORECASE)
+        self.macro_pattern = re.compile(r'^(' + NAME + r')\s+macro(?![A-Za-z0-9_$@?.])', re.IGNORECASE)
 
         # Reserved words that shouldn't be treated as symbols
         self.reserved = {
@@ -97,6 +105,16 @@ class CrossReference:
         sym = self.get_symbol(name)
         sym.references.append((filename, line_num))
 
+    def is_label_name(self, name, after):
+        """A word in front of a colon is a label, except a reserved word.
+
+        A dot-directive that is followed at once by ':' is a label in
+        MACRO-80 (.Z80: defines a label and does not change the mode).
+        """
+        if name.startswith('.') and after.startswith(':'):
+            return True
+        return not self.is_reserved(name)
+
     def is_reserved(self, name):
         """Check if a name is a reserved word."""
         return name.upper() in self.reserved
@@ -108,8 +126,13 @@ class CrossReference:
         text = re.sub(r'"[^"]*"', "", text)
 
         # Find all identifier-like tokens
-        symbols = re.findall(r'[A-Za-z_$@?][A-Za-z0-9_$@?]*', text)
-        return [s for s in symbols if not self.is_reserved(s)]
+        # (a token that follows a name character or a digit is part of a
+        # number or a name: 0FFH and 1.5 hold no symbol).  A dot-directive
+        # is a reserved word only as the first word of a statement, which
+        # is not an operand.
+        symbols = re.findall(r'(?<![A-Za-z0-9_$@?.])' + NAME, text)
+        return [s for s in symbols
+                if s.startswith('.') or not self.is_reserved(s)]
 
     def process_line(self, line, filename, line_num):
         """Process a single line of assembly source."""
@@ -129,7 +152,7 @@ class CrossReference:
         match = self.label_pattern.match(code_part)
         if match:
             label = match.group(1)
-            if not self.is_reserved(label):
+            if self.is_label_name(label, code_part[match.end(1):]):
                 self.add_definition(label, filename, line_num)
             # Continue processing rest of line for references
             code_part = code_part[match.end():]
@@ -176,9 +199,9 @@ class CrossReference:
         skip_directives = ['TITLE', 'SUBTTL', '.PRINTX', 'NAME', 'PAGE', 'EJECT',
                           '.COMMENT', '.SALL', '.LALL', '.XALL', '.LIST', '.XLIST',
                           '.SFCOND', '.LFCOND', '.RADIX', '.REQUEST']
-        for directive in skip_directives:
-            if upper_code.startswith(directive):
-                return
+        first = re.match(NAME, upper_code)
+        if first and first.group(0) in skip_directives:
+            return
 
         # For all other lines, extract symbol references
         # Skip the opcode/directive at the start
@@ -223,7 +246,7 @@ class CrossReference:
         for line_num, line in enumerate(lines, 1):
             # Track macro depth (don't process macro bodies for references)
             upper_line = line.upper().strip()
-            if re.match(r'^\w+\s+MACRO\b', upper_line) or upper_line.startswith('MACRO '):
+            if re.match(r'^' + NAME + r'\s+MACRO(?![A-Za-z0-9_$@?.])', upper_line) or upper_line.startswith('MACRO '):
                 in_macro = True
                 macro_depth += 1
             elif upper_line.strip() == 'ENDM':
@@ -239,7 +262,7 @@ class CrossReference:
                 match = self.label_pattern.match(line)
                 if match:
                     label = match.group(1)
-                    if not self.is_reserved(label):
+                    if self.is_label_name(label, line[match.end(1):]):
                         self.add_definition(label, self.current_file, line_num)
                 continue
 

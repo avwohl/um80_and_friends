@@ -68,6 +68,10 @@ Macro names
 All symbol references in instructions and expressions
 .PP
 Reserved words (instructions, directives, registers) are excluded from the listing.
+A name is read as MACRO-80 reads it: letters, digits and \fB$ . ? @ _\fR, and a digit
+does not start one.  A dot may begin a name or be inside it (\fB.FOO\fR, \fBX.1\fR).
+A dot-directive (\fB.Z80\fR, ...) is reserved, but with a colon at once after it
+the word is a label.  A number, a string and a comment give no symbol.
 .SH EXAMPLES
 .TP
 Analyze a single file:

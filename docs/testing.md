@@ -1,6 +1,6 @@
 # Testing
 
-The test suite (1645 tests) runs under `pytest`:
+The test suite (1750 tests) runs under `pytest`:
 
 ```bash
 pip install -e ".[dev]"
@@ -42,6 +42,8 @@ Digital Research's MAC 2.0 and RMAC 1.1:
 | `test_module_name.py` | The module name from `NAME('X')` and, without it, from the last `TITLE` |
 | `test_extrn_declared.py` | An `EXTRN` never used is written as an empty chain, and it pulls a library module; ul80 warns if nothing defines it |
 | `test_hash_external.py` | `X##` names an external by its whole name, as `EXTRN` does; `-t` cuts the name to 6 in the .REL only (issue #6) |
+| `test_dot_names.py` | A name may begin with `.`, as in M80 (issue #7): labels, `EQU`/`SET`/`DEFL`, operands, macros, `.Z80:` and the other dot-directives with a colon are labels, a two-module link equals L80's. Expected bytes read from M80 3.44 and L80 3.44 |
+| `test_ucref80.py` | ucref80 reads `.FOO`, `..BAR` and `X.1` as names, and reads no symbol in a number, a string or a comment |
 | `test_truncate_m80.py` | `-t` cuts names to M80's 6 characters, so a um80 object links with an M80 object's `FBUFP2` |
 | `test_parity_bit.py` | (DRI) A source byte's bit 7 is cleared: a line ending CR 8AH ends the line, C1H in a string is `A`, and an 8AH not after a CR is left out, as in M80; with `--dri` it is a LF (0AH in a string, text in a macro call's arguments) and an 8DH a CR whose LF is the next item, as MAC and RMAC read them |
 | `test_equ_name_column.py` | (DRI) The name of an `EQU`, `SET`, `DEFL`, `ASET` or `MACRO` may be indented |

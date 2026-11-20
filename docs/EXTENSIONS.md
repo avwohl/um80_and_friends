@@ -186,6 +186,12 @@ um80 drops each such `$` from a statement as it reads it, so the listing shows
 the statement without them. A `$` in a number (`0001$1111B`) is ignored with
 or without `--dri`.
 
+MAC does not read a `.` in a name, and `--dri` keeps that for a word with no
+colon: `.BAR NOP` is an error, so a mistyped dot-directive is not a label.
+A label with a colon may begin with a dot (`.FOO:`) in both modes: that is an
+extension of `--dri` over MAC, and M80 sources that have such labels
+assemble. The parameter of a macro keeps MAC's rule, and a `.` ends its name.
+
 Without `--dri`, a `$` is part of the name, as in MACRO-80 3.44: there
 `NMBLST EQU 5` then `LDA NMB$LST` is an undefined symbol, and `AB EQU 1` with
 `A$B EQU 2` defines two symbols, where MAC reports `AB` defined twice.

@@ -100,7 +100,7 @@ INSTRUCTIONS_Z80 = frozenset(
 # A name that begins a statement, and the name of an EQU, SET, DEFL, ASET or
 # MACRO in front of its directive (see Assembler.parse_line()).
 NAME_WORD = re.compile(r'([$A-Za-z_@?][A-Za-z0-9_@?$.]*)\s*')
-NAME_DEFINITION = re.compile(r'([$A-Za-z_@?][A-Za-z0-9_@?$.]*)\s+'
+NAME_DEFINITION = re.compile(r'([$A-Za-z_@?.][A-Za-z0-9_@?$.]*)\s+'
                              r'(?:EQU|SET|DEFL|ASET|MACRO)(?![A-Za-z0-9_@?$.])',
                              re.IGNORECASE)
 # MAC's line number in front of a statement, and its assembly controls
@@ -109,7 +109,7 @@ LINE_NUMBER = re.compile(r'\d[0-9A-Za-z$]*(?:\s+|$)')
 DRI_CONTROL = re.compile(r'\$[-+*][A-Za-z]')
 # A word with no colon, and the directive after it that a line of a body
 # being defined is read for (Assembler._body_word()).
-BODY_WORD = re.compile(r'\s*([$A-Za-z_@?&][A-Za-z0-9_@?$.&]*)[ \t]+'
+BODY_WORD = re.compile(r'\s*([$A-Za-z_@?.&][A-Za-z0-9_@?$.&]*)[ \t]+'
                        r'(MACRO|REPT|IRPC|IRP|ENDM|LOCAL)(?![A-Za-z0-9_@?$.&])',
                        re.IGNORECASE)
 
@@ -1667,7 +1667,7 @@ class Assembler:
         if self.prefix_word(expr, 'TYPE') is not None:
             self.reading_pure = False
             arg = expr[4:].strip()
-            if re.match(r'^[A-Za-z_@?][A-Za-z0-9_@?$.]*$', arg):
+            if re.match(r'^[$A-Za-z_@?.][A-Za-z0-9_@?$.]*$', arg):
                 if (arg.upper() in REG_VALUES and not self.z80_mode
                         and not self.names_symbol(arg)):
                     return ExprValue(0x20)  # a number, as M80 has it
@@ -1703,7 +1703,7 @@ class Assembler:
             return self.symbol_value(sym)
 
         # Try as simple symbol
-        if re.match(r'^[$A-Za-z_@?][A-Za-z0-9_@?$.]*$', expr):
+        if re.match(r'^[$A-Za-z_@?.][A-Za-z0-9_@?$.]*$', expr):
             upper = expr.upper()
 
             # A register name, but for a symbol of that name (M80 reads
@@ -2121,7 +2121,7 @@ class Assembler:
         elif line[:6].upper() == '*EJECT':
             # MACRO-80's page eject, in column 1 only.
             return (None, '*EJECT', line[6:].strip(), comment)
-        match = re.match(r'^([$A-Za-z_@?][A-Za-z0-9_@?$.]*)(::|:)\s*', stripped)
+        match = re.match(r'^([$A-Za-z_@?.][A-Za-z0-9_@?$.]*)(::|:)\s*', stripped)
         if match:
             label = match.group(1)
             colons = match.group(2)
@@ -4970,7 +4970,7 @@ class Assembler:
                             and operator not in ('IRP', 'IRPC')):
             return dropped
         # The label and the operator, as parse_line() finds them.
-        head = re.match(r'\s*' + (r'[$A-Za-z_@?][A-Za-z0-9_@?$.]*(?:::?)?\s*'
+        head = re.match(r'\s*' + (r'[$A-Za-z_@?.][A-Za-z0-9_@?$.]*(?:::?)?\s*'
                                   if label else '')
                         + r'([$A-Za-z_@?.][A-Za-z0-9_@?$.]*)\s*', line)
         if not head or drop_name_dollars(head.group(1)).upper() != operator:
@@ -5348,7 +5348,7 @@ class Assembler:
         end it there.
         """
         if '&' in line:
-            m = re.match(r'\s*([$A-Za-z_@?&][A-Za-z0-9_@?$.&]*)::?(\s.*)?$', line)
+            m = re.match(r'\s*([$A-Za-z_@?.&][A-Za-z0-9_@?$.&]*)::?(\s.*)?$', line)
             if m and '&' in m.group(1):
                 return m.group(1), self.parse_line('\t' + (m.group(2) or ''))[1]
         # M80 reads a REPT body for the first word only (_body_word()).

@@ -42,6 +42,29 @@ assembles as `DB` (after `FOO EQU 5`, `FOO` alone is 05), so `LAB DS 1` is an
 error there, and in um80. DRI's MAC and RMAC take such a word for a label, in
 any column: `um80 --dri` reads it as they do.
 
+### A name may begin with a dot
+
+As in M80, a name is letters, digits and `$ . ? @ _`, and a digit does not
+start one. A `.` may begin a name or be inside it: `.FOO`, `..BAR`, `.XC.0`,
+`.201B`, `.1H` and `X.1` are names, and `.201B` is never a number. A name
+that begins with a dot works in every place where a name without the dot
+works: a label (`.FOO:` and `.FOO::`), the name of an `EQU`, `SET`, `DEFL`,
+`ASET` or `MACRO`, a `PUBLIC` or `EXTRN` name, and an operand or an operator
+operand. The `.` alone is a name too, and it is not the location counter: `$`
+is. M80 has no `.AND.` operator: `.AND.` is an undefined name.
+
+A dot-directive (`.Z80`, `.8080`, `.PHASE`, `.DEPHASE`, `.RADIX`, `.LIST`,
+`.XLIST`, `.PRINTX`, `.REQUEST`, `.COMMENT` and the other `.` directives) is
+the directive when it is the first word of a statement and no `:` follows it
+at once. A `:` or `::` at once after the word makes it a label, in column 1 or
+not. The mode, the listing and the phase do not change. `.Z80:` defines the
+label `.Z80`, and um80 assembles a `NOP` after it. Before issue #7, um80 took
+`.Z80:` for the directive and dropped the rest of the line without an error.
+
+A dot word with no colon that is no directive and no macro is an operation, as
+any name is. It is a list of values, and an error if the name has no
+definition. `.Z80 EQU 5` defines a symbol `.Z80`, as in M80.
+
 ## Extended Symbol Names
 
 The original Microsoft REL format limits symbol names to 8 characters (and LINK-80 3.44 reads at most 7). um80/ul80 extend this to support symbols up to 255 characters, which is essential for:
