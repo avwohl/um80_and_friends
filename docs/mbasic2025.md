@@ -158,8 +158,8 @@ list as M80 does, and it warns about the `>` that it ignores. The sources need
 that change, all four builds of each file are historic.
 
 **`FBUFP27`: 6-character names (not a defect; `um80 -t`).** `BINTRP.MAC`
-declares `public fbufp27`, and `F4.MAC` uses it. M80 keeps 6 characters and
-writes `FBUFP2`. um80 writes the whole name (a documented extension). If the
+declares `public fbufp27`, and `F4.MAC` uses it. M80 writes the first 6
+characters of a PUBLIC or external name in the .REL: `FBUFP2`. um80 writes the whole name (a documented extension). If the
 modules come from the same assembler, the link is correct. If `BINTRP.REL`
 and `F4.REL` come from different assemblers, the names do not match. This is
 true of 4 of the 28 mixed .REL sets. L80 reports "1 Undefined Global(s)" and

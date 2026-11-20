@@ -406,7 +406,8 @@ Symbol names are converted to uppercase.
 The .REL file format is binary-compatible with the original: LINK-80 3.44
 loads um80's objects. LINK-80 refuses a symbol of more than 7 characters
 (more than 6 for an external inside a link-time expression), which um80
-writes in an extended form only ul80 reads; M80 itself keeps 6, as
+writes in an extended form only ul80 reads. M80 itself writes the first 6
+characters of a PUBLIC or external name in the .REL, as
 .B \-t
 does.
 .SH AUTHOR

@@ -55,8 +55,9 @@ A-field: 2-bit address type + 16-bit value
 B-field: 3-bit length (0-7, but 0 means 8 chars) + 8 bits per character.
 LINK-80 3.44 refuses a count of 0 ("?Loading Error"), so an L80-readable
 B-field has at most 7 bytes: a symbol of 7 characters, or an extension item
-'B' naming an external of at most 6.  MACRO-80 truncates every symbol to 6
-characters, so it never writes more.
+'B' naming an external of at most 6.  MACRO-80 keeps 16 characters of a name
+in its symbol table but writes at most the first 6 of a PUBLIC or external
+name in the .REL, so it never writes more.
 
 Extension link items (special item 4)
 -------------------------------------
@@ -267,8 +268,9 @@ EXT_OP_NAMES = {
 }
 
 
-# MACRO-80 3.44 keeps the first six characters of a name: PUBLIC FBUFP27 is
-# FBUFP2 in its .REL, and in the .REL of the module that uses it.  um80 -t
+# MACRO-80 3.44 writes the first six characters of a PUBLIC or external name
+# in the .REL (its symbol table keeps 16): PUBLIC FBUFP27 is FBUFP2 in its
+# .REL, and in the .REL of the module that uses it.  um80 -t
 # does the same, so its objects link with M80's (um80 otherwise writes the
 # whole name, and a 7-character one did not match M80's six).
 SYMBOL_CHARS_M80 = 6

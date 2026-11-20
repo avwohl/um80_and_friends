@@ -1682,7 +1682,7 @@ class Assembler:
                 return ExprValue(0)
             return ExprValue(self.type_of(arg))
 
-        # Handle ## suffix (makes the name external, implies external)
+        # NAME## makes NAME external, unless this module defines it
         if expr.endswith('##'):
             self.reading_pure = False
             # The whole name, as EXTRN, PUBLIC and :: use it.  M80 keeps 16
@@ -6973,7 +6973,8 @@ def main():
                              'labels (docs/debug_info.md). The .rel is the same '
                              'with and without it')
     parser.add_argument('-t', '--truncate', action='store_true',
-                        help='Cut PUBLIC, EXTRN and module names to 6 characters, as M80 does')
+                        help='Cut PUBLIC, EXTRN, ## external and module names '
+                             'to 6 characters in the .REL, as M80 does')
     parser.add_argument('--aseg', action='store_true',
                        help='Assemble as absolute code, the way DRI\'s MAC does: '
                             'the file starts in ASEG, so ORG is an absolute address')
