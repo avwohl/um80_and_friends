@@ -49,7 +49,9 @@ The original Microsoft REL format limits symbol names to 8 characters (and LINK-
 - Long descriptive symbol names in modern code
 - Compatibility with source code written for other assemblers
 
-Use `-t` or `--truncate` to cut symbol names to 6 characters, as MACRO-80 does. An object that is to be linked with objects that M80 assembled needs it if a PUBLIC or EXTRN name is longer than 6 characters: M80 writes `FBUFP27` as `FBUFP2`. For objects that the original LINK-80 is to read, keep names to 7 characters (6 for an external used in a link-time expression), or use `-t`.
+Use `-t` or `--truncate` to cut symbol names to 6 characters, as MACRO-80 does. An object that is to be linked with objects that M80 assembled needs it if a PUBLIC, EXTRN or `##` name is longer than 6 characters: M80 writes `FBUFP27` as `FBUFP2`. `X##` makes a name external by its whole name, as `EXTRN` and `PUBLIC` do. `-t` cuts the name in the .REL only.
+
+For objects that the original LINK-80 is to read, keep names to 7 characters (6 for an external used in a link-time expression), or use `-t`.
 
 See [EXTENSIONS.md](EXTENSIONS.md) for technical details on the extended REL format.
 

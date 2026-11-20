@@ -45,9 +45,9 @@ files for debugging. The linker can then output all symbols with their final
 relocated addresses using the \fB\-S\fR option.
 .TP
 .B \-t\fR, \fB\-\-truncate
-Cut every PUBLIC, EXTRN and module name in the .REL file to 6 characters, as
+Cut every PUBLIC, EXTRN, ## external and module name in the .REL file to 6 characters, as
 MACRO-80 does. Use it for an object that is to be linked with objects that
-M80 assembled, when a PUBLIC or EXTRN name is longer than 6 characters.
+M80 assembled, when a PUBLIC, EXTRN or ## name is longer than 6 characters.
 .TP
 .B \-\-aseg
 Start the file in ASEG, so that an ORG is an absolute address, as in

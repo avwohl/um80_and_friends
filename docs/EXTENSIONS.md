@@ -8,7 +8,7 @@ This document describes extensions to the Microsoft MACRO-80 and LINK-80 compati
 
 The original Microsoft REL format encodes symbol names in a "B-field" using a 3-bit length (0-7, where 0 means 8 characters) followed by the ASCII characters. This limits symbol names to 8 characters maximum.
 
-This limitation causes problems when assembling code that uses longer symbol names. (M80 itself keeps only the first 6 characters of every symbol.)
+This limitation causes problems when assembling code that uses longer symbol names. (M80 3.44 keeps 16 characters of a name in its symbol table, and writes only the first 6 characters of a PUBLIC or external name in the .REL.)
 
 ### Extended B-Field Format
 
@@ -44,7 +44,7 @@ Checked against the genuine L80 under a CP/M emulator.
 ### Command-Line Control
 
 Use `-t` or `--truncate` to disable extended format and cut every name in the
-.REL - PUBLIC, EXTRN, module name - to 6 characters, as MACRO-80 3.44 does:
+.REL - PUBLIC, EXTRN, `##` external, module name - to 6 characters, as MACRO-80 3.44 does:
 
 ```bash
 um80 -t program.mac          # Names cut to 6 chars, as M80
@@ -534,7 +534,7 @@ a label with no colon and a `*` comment line need `--dri`, `BNKBDOS.ASM`,
 - `--aseg`, for MAC's sources: MAC has no relocatable segments, so its `ORG`
   is an absolute address. RMAC's sources are relocatable, like M80's.
 - `-t`, for RMAC's objects: RMAC, like M80, writes the first six characters of
-  a `PUBLIC` or `EXTRN` name. MP/M II's nucleus depends on it (`DSPTCH.ASM`'s
+  a `PUBLIC` or `EXTRN` name (and an external made with `##`). MP/M II's nucleus depends on it (`DSPTCH.ASM`'s
   `extrn userprocess` is `MEMMGR.ASM`'s `userpr`).
 
 Another difference between MAC/RMAC and M80 that `--dri` does not cover (none

@@ -1682,11 +1682,15 @@ class Assembler:
                 return ExprValue(0)
             return ExprValue(self.type_of(arg))
 
-        # Handle ## suffix (6-character truncation operator, implies external)
+        # Handle ## suffix (makes the name external, implies external)
         if expr.endswith('##'):
             self.reading_pure = False
-            # Truncate symbol to 6 chars and look it up
-            sym_name = expr[:-2][:6]
+            # The whole name, as EXTRN, PUBLIC and :: use it.  M80 keeps 16
+            # characters of a name in its symbol table and writes the first
+            # 6 of an external name in the .REL; -t cuts to 6 only in the
+            # .REL writer.  Cutting here made STAYTOP## an external STAYTO
+            # that no `STAYTOP::' of another module met (issue #6).
+            sym_name = expr[:-2]
             sym = self.lookup_symbol(sym_name)
             if sym.external:
                 return ExprValue(0, ext=True, name=sym.name)

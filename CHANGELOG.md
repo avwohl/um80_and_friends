@@ -2,6 +2,29 @@
 
 All notable changes to the um80 toolchain are documented here.
 
+## [0.4.3] - 2026-11-20
+
+### X## names an external by its whole name (issue #6)
+
+um80 cut the name of a `##` reference to 6 characters before the symbol
+lookup. `STAYTOP##` made an external `STAYTO`. A `STAYTOP::` in another
+module did not meet that external, and ul80 said "Undefined symbol: STAYTO".
+`STAYTOP##` followed by a plain `STAYTOP` in one module gave "Undefined
+symbol". `##` now uses the whole name, as `EXTRN`, `PUBLIC` and `::` do. `-t`
+cuts the name to 6 characters in the .REL only.
+
+Measured with MACRO-80 3.44 and LINK-80 3.44 on 2026-11-20: M80 keeps 16
+characters of a name in its symbol table and writes the first 6 characters of
+a PUBLIC or external name in the .REL. `LONGNAME1##` and `LONGNAME2##` are two
+externals, both written `LONGNA`. With `-t`, um80 now writes the same .REL
+items. `docs/EXTENSIONS.md` said that M80 keeps 6 characters of every symbol;
+that was wrong, and the text is corrected.
+
+Two changes for old sources. `STAYTOP##` followed by `STAYTO` is now
+"Undefined symbol", as M80 flags U. An object that M80 assembled, linked with
+a um80 object, needs `-t` for long `##` names, as `EXTRN` names already do.
+`tests/test_hash_external.py` has 8 tests; 7 fail with the old code.
+
 ## [0.4.2] - 2026-11-05
 
 ### udb80 --wait-program takes the rule's stop as T05
