@@ -1,24 +1,28 @@
 # Compatibility and Syntax Extensions
 
-Where um80 matches or differs from Microsoft MACRO-80, and a summary of the
-syntax extensions. [EXTENSIONS.md](EXTENSIONS.md) has the full details.
+This document shows where um80 matches or differs from Microsoft MACRO-80
+(M80). This document also summarizes the syntax extensions.
+[EXTENSIONS.md](EXTENSIONS.md) has the full details.
 
 ## Compatibility Notes
 
-These tools aim for compatibility with the original Microsoft tools while running on modern Unix/Linux systems:
+These tools aim to be compatible with the original Microsoft tools. The tools run on
+modern Unix and Linux systems:
 
-- Source files use Unix line endings (LF), but CR/LF is also accepted
-- File names are case-insensitive for symbols (converted to uppercase)
+- Source files use Unix line endings (LF). um80 also accepts CR/LF
+- Symbol names are case-insensitive (um80 converts them to uppercase)
 - Default origin is 0100h (standard CP/M load address)
-- Output files are binary-compatible with original CP/M tools
+- Output files are binary-compatible with the original CP/M tools
 
 ### 8080 is the default; Z80 mnemonics need `.Z80`
 
-Like M80, um80 assembles 8080 mnemonics until a `.Z80` directive appears (use
-`um80 -e .z80 file.mac` to set the mode from the command line without editing
-the source). Where a Z80 instruction is spelled with an 8080 mnemonic — `RET
-NZ`, `RLC B`, `RRC C` — um80 rejects it in 8080 mode instead of dropping the
-operand:
+Like M80, um80 assembles 8080 mnemonics until a `.Z80` directive appears. To
+set the mode from the command line without a change to the source, use
+`um80 -e .z80 file.mac`.
+
+Some Z80 instructions have the spelling of an 8080 mnemonic: `RET NZ`,
+`RLC B` and `RRC C`. In 8080 mode, um80 rejects these instructions. um80 does
+not ignore the operand:
 
 ```
 $ um80 z80source.mac
@@ -26,65 +30,108 @@ Error at line 5: RET takes no operand, but was given 'NZ' RET NZ is Z80 syntax;
 the 8080 spelling is RNZ. Add a .Z80 directive to assemble Z80 mnemonics.
 ```
 
-Genuine M80 3.44 only flags these `Q` and emits the operand-less opcode, so
-`RET NZ` assembles as an unconditional `RET` (C9) and the .REL is still
-written. um80 makes it an error because that is a silent miscompile; this is a
-deliberate divergence, recorded in CHANGELOG.md. Nothing is written and the
-exit status is 1, as for any other assembly error.
+Genuine M80 3.44 only flags these statements `Q` and writes the operand-less opcode.
+As a result, `RET NZ` assembles as an unconditional `RET` (C9). M80 still
+writes the REL file.
+
+um80 makes these statements an error, because the code that M80 writes is
+wrong and the assembly does not stop. The difference from M80 is deliberate.
+CHANGELOG.md records the difference. um80 writes nothing, and the exit status
+is 1, as for any other assembly error.
 
 ### A label needs a colon
 
-As in M80, the first word of a statement is its operation, in column 1 or not
-(`NOP` in column 1 is a NOP), and a label is a name with a colon after it; the
-name in front of an `EQU`, `SET` or `MACRO` needs none. A statement whose
-first word is no instruction, directive or macro is a list of values M80
-assembles as `DB` (after `FOO EQU 5`, `FOO` alone is 05), so `LAB DS 1` is an
-error there, and in um80. DRI's MAC and RMAC take such a word for a label, in
-any column: `um80 --dri` reads it as they do.
+As in M80:
+
+- The first word of a statement is its operation, in column 1 or in any other column. `NOP` in
+  column 1 is a NOP.
+- A label is a name with a colon after it. The name in front of an `EQU`,
+  `SET` or `MACRO` needs no colon.
+- A statement whose first word is not an instruction, a directive or a macro is a
+  list of values. M80 assembles the list as `DB`. After `FOO EQU 5`, `FOO` alone is
+  05.
+- `LAB DS 1` is an error in M80, and in um80.
+
+MAC and RMAC read such a word as a label, in any column. `um80 --dri` reads
+such a word as MAC and RMAC read it.
 
 ### A name may begin with a dot
 
-As in M80, a name is letters, digits and `$ . ? @ _`, and a digit does not
-start one. A `.` may begin a name or be inside it: `.FOO`, `..BAR`, `.XC.0`,
-`.201B`, `.1H` and `X.1` are names, and `.201B` is never a number. A name
-that begins with a dot works in every place where a name without the dot
-works: a label (`.FOO:` and `.FOO::`), the name of an `EQU`, `SET`, `DEFL`,
-`ASET` or `MACRO`, a `PUBLIC` or `EXTRN` name, and an operand or an operator
-operand. The `.` alone is a name too, and it is not the location counter: `$`
-is. M80 has no `.AND.` operator: `.AND.` is an undefined name.
+As in M80, a name has letters, digits and the characters `$ . ? @ _`. A digit
+does not start a name. A `.` may begin a name or be inside a name. These are
+names: `.FOO`, `..BAR`, `.XC.0`, `.201B`, `.1H` and `X.1`. `.201B` is never a
+number.
 
-A dot-directive (`.Z80`, `.8080`, `.PHASE`, `.DEPHASE`, `.RADIX`, `.LIST`,
-`.XLIST`, `.PRINTX`, `.REQUEST`, `.COMMENT` and the other `.` directives) is
-the directive when it is the first word of a statement and no `:` follows it
-at once. A `:` or `::` at once after the word makes it a label, in column 1 or
-not. The mode, the listing and the phase do not change. `.Z80:` defines the
-label `.Z80`, and um80 assembles a `NOP` after it. Before issue #7, um80 took
-`.Z80:` for the directive and dropped the rest of the line without an error.
+A name that begins with a dot works in every place where a name without the dot
+works:
 
-A dot word with no colon that is no directive and no macro is an operation, as
-any name is. It is a list of values, and an error if the name has no
-definition. `.Z80 EQU 5` defines a symbol `.Z80`, as in M80.
+- a label (`.FOO:` and `.FOO::`)
+- the name of an `EQU`, `SET`, `DEFL`, `ASET` or `MACRO`
+- a `PUBLIC` or `EXTRN` name
+- an operand or an operator operand
+
+The `.` alone is a name too. The `.` alone is not the location counter. The
+location counter is `$`. M80 has no `.AND.` operator. `.AND.` is an undefined
+name.
+
+These directives start with a dot:
+
+- `.Z80`, `.8080`, `.PHASE`, `.DEPHASE` and `.RADIX`
+- `.LIST`, `.XLIST`, `.PRINTX`, `.REQUEST` and `.COMMENT`
+- the other directives that start with a `.`
+
+Such a word is the directive when it is the first word of a statement and no
+`:` immediately follows the word.
+
+A `:` or `::` immediately after the word makes the word a label, in column 1
+or in any other column. The mode, the listing and the phase do not change. `.Z80:` defines the
+label `.Z80`, and um80 assembles a `NOP` after the label. Before issue #7,
+um80 read `.Z80:` as the directive. um80 then ignored the rest of the line and
+gave no error.
+
+A word that starts with a dot and has no colon is an operation, as any other name is.
+The rule applies when the word is not a directive and not a macro. The
+statement is then a list of values. The statement is an error if the name has no definition. `.Z80 EQU 5` defines
+a symbol `.Z80`, as in M80.
 
 ## Extended Symbol Names
 
-The original Microsoft REL format limits symbol names to 8 characters (and LINK-80 3.44 reads at most 7). um80/ul80 extend this to support symbols up to 255 characters, which is essential for:
+The original Microsoft REL format limits symbol names to 8 characters.
+LINK-80 (L80) 3.44 reads at most 7 characters of a name. um80 and ul80 extend
+this limit. um80 and ul80 accept symbols of up to 255 characters. This
+extension is essential for:
 
 - Long descriptive symbol names in modern code
 - Compatibility with source code written for other assemblers
 
-Use `-t` or `--truncate` to cut symbol names to 6 characters, as MACRO-80 does. Use `-t` when you link the object with objects that M80 assembled and a PUBLIC, EXTRN or `##` name is longer than 6 characters. M80 writes `FBUFP27` as `FBUFP2`. `X##` makes a name external by its whole name, as `EXTRN` and `PUBLIC` do. `-t` cuts the name in the .REL only.
+To cut symbol names to 6 characters, as M80 does, use `-t` or `--truncate`.
+Use `-t` when both of these conditions are true:
 
-For objects that the original LINK-80 is to read, keep names to 7 characters (6 for an external used in a link-time expression), or use `-t`.
+- You link the REL file with REL files that M80 assembled.
+- A PUBLIC, EXTRN or `##` name is longer than 6 characters.
 
-See [EXTENSIONS.md](EXTENSIONS.md) for technical details on the extended REL format.
+For example, M80 writes `FBUFP27` as `FBUFP2`. `X##` makes a name external by
+its whole name, as `EXTRN` and `PUBLIC` do. `-t` cuts the name in the REL file
+only.
+
+If L80 must read the REL file, do one of these:
+
+- Keep each name to 7 characters, or to 6 characters for an external used in a
+  link-time expression.
+- Use `-t`.
+
+For technical details of the extended REL format, see
+[EXTENSIONS.md](EXTENSIONS.md).
 
 ## DRI Extensions
 
-um80 supports several Digital Research (DRI) assembly syntax extensions commonly found in CP/M and MP/M source code. These extensions are compatible with DRI's ASM, MAC, and RMAC assemblers.
+um80 reads several syntax extensions of Digital Research (DRI). The source
+code of CP/M and MP/M often has these extensions. The extensions are
+compatible with the DRI assemblers ASM, MAC and RMAC.
 
 ### Multi-Statement Lines (`!` separator)
 
-Multiple instructions can be placed on a single line, separated by `!`:
+Write more than one instruction on a line, with `!` between the instructions:
 
 ```asm
         PUSH H! PUSH D! PUSH B      ; Save registers
@@ -94,7 +141,8 @@ Multiple instructions can be placed on a single line, separated by `!`:
 
 ### LOW and HIGH Operators
 
-Extract the low or high byte of a 16-bit value using function-call syntax:
+To extract the low byte or the high byte of a 16-bit value, use the syntax of
+a function call:
 
 ```asm
         MVI L,LOW(BUFFER)           ; Load low byte of address
@@ -103,22 +151,35 @@ Extract the low or high byte of a 16-bit value using function-call syntax:
         MVI B,HIGH(1234H)           ; B = 12H
 ```
 
-Both `LOW(expr)` and `HIGH(expr)` syntax (with parentheses) and `LOW expr` / `HIGH expr` syntax (with space) are supported.
-M80 applies them to the term after them (`HIGH(X)+1` is `HIGH(X)` plus 1), and
-so does um80; MAC and RMAC to all that follows (`HIGH(X+1)`), and so does
-`um80 --dri`, which also takes MAC's `=`, `<`, `<=`, `>`, `>=` and `<>`.
+um80 accepts both of these syntaxes:
 
-When the operand is relocatable or external (`LOW(BUFFER)` above, with BUFFER
-in CSEG or DSEG), the byte depends on where the linker puts the segment, so
-um80 passes the expression to ul80 as REL extension link items — the same form
-MACRO-80 3.44 writes for LINK-80 3.44. The same happens for any relocatable or
-external value in a one-byte field (`MVI A,BUFFER`, `DB LABEL`). In MP/M
-`.PRL`/`.SPR` output a `HIGH` byte is marked in the relocation bitmap and a
-`LOW` byte is not. See [EXTENSIONS.md](EXTENSIONS.md#link-time-expressions-rel-extension-link-items).
+- `LOW(expr)` and `HIGH(expr)`, with parentheses
+- `LOW expr` and `HIGH expr`, with a space
+
+The assemblers differ in the part of the expression that `LOW` and `HIGH`
+take:
+
+- M80 applies `LOW` and `HIGH` to the term after the operator. `HIGH(X)+1` is
+  `HIGH(X)` plus 1. um80 without `--dri` does the same.
+- MAC and RMAC apply `LOW` and `HIGH` to the whole expression that follows
+  (`HIGH(X+1)`). `um80 --dri` does the same.
+- `um80 --dri` also takes the operators `=`, `<`, `<=`, `>`, `>=` and `<>` of
+  MAC.
+
+The operand can be relocatable or external. For example, `LOW(BUFFER)` above
+can have BUFFER in CSEG or DSEG. In that case, the byte depends on where
+the linker puts the segment. um80 passes the expression to ul80 as REL extension link items.
+M80 3.44 writes the same form for L80 3.44.
+
+um80 also passes any relocatable or external value in a one-byte field to
+ul80 as link items (`MVI A,BUFFER`, `DB LABEL`). In MP/M `.PRL` and `.SPR` output, a `HIGH`
+byte is marked in the relocation bitmap, and a `LOW` byte is not. See
+[EXTENSIONS.md](EXTENSIONS.md#link-time-expressions-rel-extension-link-items).
 
 ### Digit Separators in Numbers (`$`)
 
-The `$` character can be used as a visual separator within numeric literals for readability:
+You can use the `$` character as a visual separator in a numeric literal. The
+separator makes the literal easier to read:
 
 ```asm
         MVI A,1111$0000B            ; Binary with separator
@@ -126,25 +187,49 @@ The `$` character can be used as a visual separator within numeric literals for 
         MVI B,1$000D                ; Decimal: 1000
 ```
 
-The `$` characters are ignored during parsing and do not affect the numeric value.
+The parser ignores the `$` characters. The `$` characters do not affect the
+numeric value.
 
 ### `$` Inside Names (`--dri`)
 
-DRI's MAC and RMAC also ignore a `$` inside a name: `NMB$LST` and `NMBLST` are
-one symbol. MACRO-80 keeps it, so by default um80 does too. `um80 --dri` reads
-names as MAC and RMAC do; MP/M II's sources need it (`MPM.ASM` stores to
-`nmb$lst`, which `DATAPG.ASM` defines as `nmblst`). It also takes a word with no
-colon for a label, as MAC does, and ignores a line number, a `*` comment line
-and MAC's `$-MACRO` controls. See
-[EXTENSIONS.md](EXTENSIONS.md#dri-sources---dri) for exactly what it
-changes.
+MAC and RMAC also ignore a `$` inside a name. `NMB$LST` and `NMBLST` are one
+symbol. M80 keeps the `$`, so by default um80 keeps the `$` too.
+
+`um80 --dri` reads names as MAC and RMAC read them. The sources of MP/M II need
+`um80 --dri`. For example, `MPM.ASM` stores to `nmb$lst`, and `DATAPG.ASM`
+defines the same name as `nmblst`.
+
+`um80 --dri` also does these things:
+
+- Reads a word with no colon as a label, as MAC does.
+- Ignores a line number.
+- Ignores a `*` comment line.
+- Ignores the `$-MACRO` controls of MAC.
+
+For the exact changes, see
+[EXTENSIONS.md](EXTENSIONS.md#dri-sources---dri).
 
 ### Register Names as Values
 
-In 8080 code um80 gives each register name a number, in any expression, and
-reads a register operand as an expression, as MACRO-80 and DRI's MAC and RMAC
-do: B 0, C 1, D 2, E 3, H 4, L 5, M 6, A 7, SP and PSW 6 (`DB B` is 00, `X EQU
-D+1` is 3). A symbol equated to a register name names that register:
+In 8080 code, um80 gives each register name a number in any expression. um80
+also reads a register operand as an expression. M80, MAC and RMAC do the same.
+These are the numbers:
+
+Register | Number
+--- | ---
+B | 0
+C | 1
+D | 2
+E | 3
+H | 4
+L | 5
+M | 6
+A | 7
+SP | 6
+PSW | 6
+
+Two examples: `DB B` is 00, and `X EQU D+1` is 3. If an EQU gives a register
+name to a symbol, the symbol names that register:
 
 ```asm
 UR      EQU     B                   ; 0: register B
@@ -156,16 +241,25 @@ RD      EQU     D                   ; 2: register D, or the pair DE
         PUSH RD                     ; Same as PUSH D
 ```
 
-A register pair operand is the number of its first register: 0 B, 2 D, 4 H,
-6 SP or PSW. An odd number (`DAD E`) is an error, as in M80 and MAC. An
-address is its offset in its segment, as in M80 (`DAD LAB`, with `LAB` two
-bytes into the code, is `DAD D`), with a warning. See
+A register pair operand has the number of its first register:
+
+- B pair: 0
+- D pair: 2
+- H pair: 4
+- SP or PSW: 6
+
+An odd number (`DAD E`) is an error, as in M80 and MAC.
+
+An address is its offset in its segment, as in M80. For example, `DAD LAB`,
+with `LAB` two bytes into the code, is `DAD D`. um80 gives a warning in this
+case. See
 [EXTENSIONS.md](EXTENSIONS.md#register-names-as-values-equ-of-a-register).
 
 ### PUSH A / POP A
 
-DRI's MAC and RMAC take `PUSH A` and `POP A` for `PUSH PSW` and `POP PSW`, and
-so does `um80 --dri`; M80 flags them, and without `--dri` they are an error:
+MAC and RMAC read `PUSH A` and `POP A` as `PUSH PSW` and `POP PSW`. `um80 --dri`
+does the same. M80 flags `PUSH A` and `POP A`. Without `--dri`, `PUSH A` and
+`POP A` are errors in um80:
 
 ```asm
         PUSH A                      ; PUSH PSW (push A and flags), with --dri
@@ -174,7 +268,8 @@ so does `um80 --dri`; M80 flags them, and without `--dri` they are an error:
 
 ### External Symbol Aliases (EQU external+offset)
 
-Symbols can be defined as aliases to external symbols with an optional offset, then exported as PUBLIC:
+You can define a symbol as an alias of an external symbol, with an optional
+offset. You can then declare the alias PUBLIC:
 
 ```asm
 ; In library module - define entry points
@@ -185,12 +280,13 @@ Symbols can be defined as aliases to external symbols with an optional offset, t
 ADD10_SKIP  EQU ADD10+2
 ```
 
-This is useful for:
-- Defining alternate entry points into routines (skipping initialization code)
-- Creating symbolic offsets into data structures defined in other modules
-- Porting code from assemblers that support this feature (like z88dk)
+An alias is useful for:
 
-The alias is resolved at link time:
+- Alternate entry points into routines, which skip the initialization code
+- Symbolic offsets into data structures that other modules define
+- Code from other assemblers that have this feature (like z88dk)
+
+The linker resolves the alias at link time:
 
 ```asm
 ; In main module - use both symbols
@@ -201,4 +297,5 @@ START:  CALL    ADD10           ; Call full routine
         CALL    ADD10_SKIP      ; Call at offset (skips first 2 bytes)
 ```
 
-For more details on these extensions and compatibility notes, see [EXTENSIONS.md](EXTENSIONS.md).
+For more details of these extensions and compatibility notes, see
+[EXTENSIONS.md](EXTENSIONS.md).

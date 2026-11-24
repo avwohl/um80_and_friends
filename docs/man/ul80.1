@@ -16,43 +16,63 @@ ul80 \- Microsoft LINK-80 compatible linker for 8080/Z80
 [\fIfile.rel\fR]...
 .SH DESCRIPTION
 .B ul80
-is a Microsoft LINK-80 compatible linker that combines relocatable object files
-(.REL) produced by
+is a linker that is compatible with Microsoft LINK-80.
+.B ul80
+combines the REL files that
 .BR um80 (1)
-into executable CP/M .COM files.
+writes into CP/M COM files.
 .PP
-The linker resolves external references, allocates memory for code, data, and
-COMMON blocks, and produces a binary executable suitable for running under CP/M
-or a CP/M emulator.
+The linker resolves external symbols.
+The linker places the code, the data and the COMMON blocks in memory.
+The linker writes a binary program that can run under CP/M or in a CP/M
+emulator.
 .SH OPTIONS
 .TP
 .B \-v\fR, \fB\-\-version
-Display version information and exit.
+Write the version information and exit.
 .TP
 .BI \-o " output.com"
-Specify the output file name. Default is the first input file name with a .com extension.
+Name of the output file.
+The default is the name of the first input file, with the extension .com.
 .TP
 .B \-x
-Output Intel HEX format instead of binary. Useful for EPROM programmers.
+Write a HEX file (Intel HEX format) instead of a binary file.
+The HEX file is useful for EPROM programmers.
 .TP
 .B \-\-prl
-Output MP/M .PRL (Page Relocatable) format instead of binary .COM.
-PRL files can be loaded at any page boundary in memory, useful for MP/M's
-multi-user environment. The output file contains a 256-byte header with
-code/BSS sizes, the code section, and a relocation bitmap that marks which
-bytes need page adjustment when loaded at a different address.
+Write an MP/M PRL file (Page Relocatable format) instead of a COM file.
+MP/M can load a PRL file at any page boundary in memory.
+The PRL format is useful in the multi-user environment of MP/M.
+The output file has a 256-byte header with the code size and the BSS size,
+the code section, and a relocation bitmap.
+The relocation bitmap marks the bytes that need page adjustment when the
+program loads at a different address.
 .TP
 .B \-\-allow\-overlap
-Link absolute code that loads over other code \- a patch or overlay module \-
-with a warning, as LINK-80 does, instead of failing. The image has the byte
-loaded last: a later module's over an earlier one's, and in one module the
-byte it loaded later, as LINK-80 writes it when given /D.
+Link absolute code that loads over other code, with a warning, as LINK-80
+does.
+A patch module and an overlay module are examples of such code.
+Without this option, such code is an error.
+The image has the byte that ul80 loads last:
+.RS
+.IP \(bu 2
+When two modules load a byte at one address, the byte of the later module
+is in the image.
+.IP \(bu 2
+When one module loads a byte at one address more than one time, the byte
+that the module loads later is in the image.
+.RE
+.IP
+ul80 writes the image as LINK-80 writes it when LINK-80 has the option /D.
 .TP
 .B \-\-fatal\-mult\-def
-Make a global that more than one module defines an error: ul80 writes no
-output and exits 1. Without it such a global is a warning, as in LINK-80
-("%Mult. Def. Global"): every reference uses the first definition loaded, and
-the output is written. Either way ul80 names both modules:
+Make a public symbol that more than one module defines an error.
+Then ul80 writes no output and sets the exit status to 1.
+Without this option, such a public symbol is a warning, as in LINK-80
+("%Mult. Def. Global").
+Then every reference uses the first definition that ul80 loads, and ul80
+writes the output.
+In both cases, ul80 names both modules:
 .RS
 .nf
 Warning: %Mult. Def. Global FOO: defined in A and in B; A's definition is used
@@ -60,12 +80,15 @@ Warning: %Mult. Def. Global FOO: defined in A and in B; A's definition is used
 .RE
 .TP
 .B \-s
-Generate a symbol file (.SYM) with an auto-generated name based on the output file.
-The symbol file contains all PUBLIC symbols and their final relocated addresses.
+Write a symbol file (.SYM).
+The name of the symbol file is based on the name of the output file.
+ul80 makes this name.
+The symbol file has all PUBLIC symbols and their final relocated addresses.
 .TP
 .BI \-S " file.sym"
-Generate a symbol file with the specified name. Use this with the assembler's
-\fB\-g\fR option to generate a complete symbol file including all labels:
+Write a symbol file with the name that you give.
+To write a complete symbol file with all labels, use this option with the
+option \fB\-g\fR of the assembler:
 .RS
 .nf
 um80 \-g program.mac
@@ -74,76 +97,102 @@ ul80 \-S program.sym program.rel
 .RE
 .TP
 .BI \-d " addr" ", " \-\-data\-origin " addr"
-Place DSEG at \fIaddr\fR (hex), COMMON after it (LINK-80 /D:).
+Place DSEG at \fIaddr\fR (hexadecimal) and COMMON after DSEG (LINK-80 /D:).
 .TP
 .BI \-\-common\-origin " addr"
-Place COMMON (BSS) at \fIaddr\fR (hex).
+Place COMMON (BSS) at \fIaddr\fR (hexadecimal).
 .TP
 .B \-\-rom\-data
-Store the initial bytes of DSEG in the image after the code; DSEG symbols keep
-their RAM addresses (needs \fB\-d\fR). Defines __DATA_ROM, __DATA_RAM,
-__DATA_LEN and __DATA_END. With \fB\-x\fR, each run of bytes is written at its
-load address and gaps are skipped.
+Store the initial bytes of DSEG in the image, after the code.
+The DSEG symbols keep their RAM addresses.
+This option needs \fB\-d\fR.
+ul80 defines __DATA_ROM, __DATA_RAM, __DATA_LEN and __DATA_END.
+With \fB\-x\fR, ul80 writes each sequence of consecutive bytes at its load
+address and skips the gaps.
 .TP
 .B \-\-equ\-file \fIfile\fR
-Write every global as NAME EQU 0xxxxH, for a bank module to INCLUDE.
+Write every public symbol as NAME EQU 0xxxxH, for a bank module to INCLUDE.
 .TP
 .B \-\-bin
-Write a raw image from the origin, without the 128-byte CP/M padding.
+Write a BIN file: a raw image from the origin, with no 128-byte CP/M padding.
 .TP
 .BI \-\-fill " byte"
-Fill byte (hex) of gaps and padding with \fB\-\-bin\fR (default FF).
+Fill byte (hexadecimal) for the gaps and the padding with \fB\-\-bin\fR
+(default FF).
 .TP
 .BI \-\-rom\-size " n"
-ROM size (hex). \fB\-\-bin\fR pads the image to \fIn\fR bytes; a larger image is an error.
+ROM size (hexadecimal).
+The option \fB\-\-bin\fR pads the image to \fIn\fR bytes.
+A larger image is an error.
 .TP
 .BI \-\-ram\-end " addr" ", " \-\-ram\-size " n"
-End (first address after) or size of RAM (hex); data and BSS past it are an error.
+End of RAM (the first address after RAM) or size of RAM, in hexadecimal.
+Data and BSS past the end of RAM are an error.
 .TP
 .BI \-\-min\-stack " n"
-Bytes (hex) that must stay free in RAM after BSS.
+Bytes (hexadecimal) that must remain free in RAM after BSS.
 .TP
 .B \-\-verbose
-Print a one-line ROM and RAM usage summary.
+Write a one-line summary of ROM usage and RAM usage.
 .TP
 .BI \-p " origin"
-Set the program origin address. Default is 100 (hex), the standard CP/M transient
-program load address. Values are interpreted as hexadecimal by default (e.g., E000),
-or can use prefixes: 0x for hex, 0o for octal.
+Set the origin of the program.
+The default is 100 (hexadecimal).
+The address 100 is the standard load address of a CP/M transient program.
+The value is hexadecimal by default, for example E000.
+The value can have a prefix: 0x for hexadecimal, 0o for octal.
 .SH MEMORY LAYOUT
 The linker arranges memory as follows:
 .IP 1. 3
-Code segment (CSEG) starting at the origin address, each module's after
-the previous module's
+The code segment (CSEG) starts at the origin address.
+The code of each module starts after the code of the module before it.
 .IP 2.
-Data segment (DSEG) immediately following code
+The data segment (DSEG) starts immediately after the code.
 .IP 3.
-COMMON blocks following data
+The COMMON blocks start after the data.
 .PP
-Absolute code (ASEG) is loaded at its own address. A module's code starts
-above the highest absolute location that the modules before it reached,
-when that is above where the code would go, as LINK-80 places it: after
-\fBASEG\fR / \fBORG 100H\fR in one module, the next module's code starts
-after that code. Absolute code that lands on a module's code, on the data
-or COMMON, or on another module's absolute code is an error, and no output
-is written (a warning with \fB\-\-allow\-overlap\fR). LINK-80 starts at 0103H when not given /P, which leaves room
-for a JMP at 0100H in absolute code; ul80 starts at the origin, 0100H by
-default, so link such a program with \fB\-p 103\fR.
+ul80 loads absolute code (ASEG) at its own address.
+When the highest absolute location that the earlier modules reached is above
+where the code of a module would go, the code of the module starts above that
+location.
+LINK-80 places the code in the same way.
+For example, after
+.B ASEG
+/
+.B ORG 100H
+in one module, the code of the next module starts after that absolute code.
+.PP
+Absolute code is an error in these cases, and ul80 writes no output:
+.IP \(bu 2
+The absolute code overlaps the code of a module.
+.IP \(bu 2
+The absolute code overlaps the data or COMMON.
+.IP \(bu 2
+The absolute code overlaps the absolute code of another module.
+.PP
+With \fB\-\-allow\-overlap\fR, each of these cases is a warning.
+.PP
+When LINK-80 does not have the option /P, LINK-80 starts at 0103H.
+The address 0103H leaves room for a JMP at 0100H in absolute code.
+ul80 starts at the origin, 0100H by default.
+To link such a program, use \fB\-p 103\fR.
 .SH LINKING PROCESS
+The linker does these steps:
 .IP 1. 3
-Load all input .REL files
+Load all input REL files
 .IP 2.
-Resolve external references between modules
+Resolve external symbols between modules
 .IP 3.
-Allocate final addresses for all segments
+Give final addresses to all segments
 .IP 4.
-Perform address fixups for relocatable references
+Apply the address fixups for relocatable references
 .IP 5.
-Write output file
+Write the output file
 .PP
-If an external symbol is not found in any loaded module, the linker reports an
-error. The linker searches library files (.LIB) for undefined symbols when
-specified on the command line.
+If the linker does not find an external symbol in any loaded module, the
+linker reports an error.
+The linker searches for undefined symbols in the library files (.LIB) that
+the command line names.
 .SH EXAMPLES
 .TP
 Link a single module:
@@ -152,54 +201,57 @@ Link a single module:
 Link multiple modules:
 .B ul80 \-o app.com main.rel io.rel util.rel
 .TP
-Generate symbol file:
+Write a symbol file:
 .B ul80 \-s program.rel
 .TP
-Set custom origin (bare hex):
+Set a custom origin (hexadecimal with no prefix):
 .B ul80 \-p E000 program.rel
 .TP
-Generate named symbol file:
+Write a symbol file with a name:
 .B ul80 \-S program.sym program.rel
 .TP
-Output Intel HEX:
+Write a HEX file:
 .B ul80 \-x \-o program.hex program.rel
 .TP
-Output MP/M PRL:
+Write a PRL file:
 .B ul80 \-\-prl program.rel
 .TP
-Link with library:
+Link with a library file:
 .B ul80 \-o program.com main.rel mylib.lib
 .SH EXIT STATUS
 .TP
 .B 0
-Linking successful.
+The link step succeeded.
 .TP
 .B 1
-Linking failed due to errors (undefined symbols, absolute code overlapping
-other code, a global defined twice with \fB\-\-fatal\-mult\-def\fR, etc.).
-No output is written.
+The link step failed because of errors.
+Examples of such errors are undefined symbols, absolute code that overlaps
+other code, and a public symbol that more than one module defines
+(with \fB\-\-fatal\-mult\-def\fR).
+Other errors also give this exit status.
+ul80 writes no output.
 .SH FILES
 .TP
 .I input.rel
-Relocatable object file (from um80).
+REL file (from um80).
 .TP
 .I input.lib
 Library file (from ulib80).
 .TP
 .I output.com
-CP/M executable binary: the image from the origin, or from the lowest
-absolute address if absolute code lies below it.
+COM file: the image from the origin, or from the lowest absolute address if
+absolute code is at an address below the origin.
 .TP
 .I output.hex
-Intel HEX format (with \-x option).
+HEX file, in Intel HEX format (with the option \-x).
 .TP
 .I output.prl
-MP/M Page Relocatable format (with \-\-prl option).
+PRL file, in MP/M Page Relocatable format (with the option \-\-prl).
 .TP
 .I output.sym
-Symbol file (with \-s option).
+Symbol file (with the option \-s).
 .SH SYMBOL FILE FORMAT
-The symbol file contains one line per symbol:
+The symbol file has one line for each symbol:
 .PP
 .RS
 .nf
@@ -207,7 +259,7 @@ SYMBOL_NAME  XXXX
 .fi
 .RE
 .PP
-Where XXXX is the 16-bit hexadecimal address of the symbol.
+XXXX is the 16-bit address of the symbol, in hexadecimal.
 .SH SEE ALSO
 .BR um80 (1),
 .BR ulib80 (1),
@@ -218,50 +270,78 @@ The original Microsoft LINK-80 manual is in the retro_docs archive,
 https://github.com/avwohl/retro_docs/blob/main/um80_and_friends/l80.pdf
 .SH COMPATIBILITY
 .B ul80
-is compatible with Microsoft LINK-80 (L80). The .REL file format is
-binary-compatible, allowing object files created by the original M80 to be
-linked with ul80, and vice versa.
+is compatible with Microsoft LINK-80 (L80).
+The REL format is binary-compatible.
+Thus ul80 can link REL files that M80 writes, and L80 can link REL files
+that um80 writes.
 .SH NOTES
 .IP \(bu 2
-Libraries are searched in the order specified on the command line, and the
-modules of each in library order, as LINK-80 does.
+ul80 searches the libraries in the order that the command line gives.
+ul80 searches the modules of each library in library order.
+LINK-80 does the same.
 .IP \(bu 2
-Only modules containing symbols that satisfy undefined references are
-included from libraries. A library may be one made by ulib80 or by
-Microsoft's LIB-80 (.REL modules one after another).
+ul80 takes from a library only the modules that have symbols that satisfy
+undefined references.
+A library can be one that ulib80 made or one that LIB-80 made
+(REL modules one after another).
 .IP \(bu 2
-Every module of a .REL file holding several is loaded.
+ul80 loads every module of a REL file that has more than one module.
 .IP \(bu 2
-COMMON blocks with the same name in different modules share storage;
-the largest size requested is allocated. Each named block is placed on its
-own, after the data, in the order blocks are first declared. Bytes a module
-assembles into a COMMON block are loaded there.
+COMMON blocks that have the same name in different modules share storage.
+The block gets the largest size that a module requests.
+ul80 places each named block separately, after the data, in the order in
+which the modules first declare the blocks.
+The bytes that a module assembles into a COMMON block are loaded in that
+block.
 .IP \(bu 2
-A chain (the references to an external, or a FORTRAN-80 forward reference
-closed by special item 12) is followed through every word by the type of its
-links; an absolute link is an address in ASEG, except in an object from um80
-0.3.48 or earlier, where it is an offset in the segment of the word holding it.
-(um80 0.2.0 to 0.3.34 chained an external's references through such untyped
-links across segments, which cannot be followed where they cross: assemble
-such an object again.)
+A chain is the list of references to an external symbol.
+A chain can also be a FORTRAN-80 forward reference that the special link item 12
+closes.
+ul80 follows a chain through every word.
+For each chain entry, ul80 uses the type of the chain entry.
+An absolute chain entry is an address in ASEG.
+In a REL file from um80 0.3.48 or earlier, the rule is different.
+There, an absolute chain entry is an offset in the segment of the word that
+holds the chain entry.
 .IP \(bu 2
-If a module defines the global $MEMRY, the word there is set to the first free
-address after the data and COMMON, as LINK-80 sets it (FORTRAN-80's library
-allocates from it).
+um80 0.2.0 to 0.3.34 chained the references to an external symbol through
+such untyped chain entries across segments.
+ul80 cannot follow such chain entries where the chain entries cross segments.
+Assemble such a REL file again.
 .IP \(bu 2
-The layout is code, then data, then COMMON: LINK-80's with /D: at the end of
-the code, except that LINK-80 puts COMMON at the start of the data area.
-Without /D LINK-80 loads each module's data before its code; ul80 does not.
-Like LINK-80 without /D, ul80 starts a module's code above absolute code the
-modules before it loaded (LINK-80 with /D does not). LINK-80 writes a .COM
-from 0100H whatever /P says, and from 0000H after a set-location to ASEG
-0000H; ul80 writes it from the origin. See docs/EXTENSIONS.md.
+If a module defines the public symbol $MEMRY, ul80 sets the word at that
+symbol to the first free address after the data and COMMON, as LINK-80 sets
+the word.
+The library of FORTRAN-80 allocates from that word.
 .IP \(bu 2
-Link-time expressions (REL extension link items, written by MACRO-80 3.44 and
-um80 for HIGH/LOW of relocatable or external values and the like) are
-evaluated after all modules are placed. In .PRL/.SPR output a byte that is HIGH
-of an address is marked in the relocation bitmap and a byte that is LOW of an
-address is not; an expression that would not move by exactly 0 or 1 page is an
+The layout of ul80 is code, then data, then COMMON.
+This layout is the layout of LINK-80 with /D: at the end of the code, except
+that LINK-80 puts COMMON at the start of the data area.
+.IP \(bu 2
+Without /D, LINK-80 loads the data of each module before the code of the
+module.
+ul80 does not.
+.IP \(bu 2
+ul80 starts the code of a module above the absolute code that the earlier
+modules loaded.
+LINK-80 does the same without /D.
+LINK-80 with /D does not.
+.IP \(bu 2
+LINK-80 writes a COM file from 0100H, whatever /P says.
+After a set-location item to ASEG 0000H, LINK-80 writes the COM file from
+0000H.
+ul80 writes the COM file from the origin.
+See docs/EXTENSIONS.md.
+.IP \(bu 2
+A link-time expression is an extension link item in a REL file.
+MACRO-80 3.44 and um80 write these items for HIGH or LOW of relocatable or
+external values, and for similar expressions.
+ul80 evaluates the expressions after it places all modules.
+.IP \(bu 2
+In a PRL file or an SPR file, ul80 marks a byte that is HIGH of an address
+in the relocation bitmap.
+ul80 does not mark a byte that is LOW of an address.
+If an expression would not move by exactly 0 or 1 page, the expression is an
 error.
 .SH AUTHOR
 um80 project contributors.

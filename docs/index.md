@@ -5,18 +5,18 @@ assembler suite for 8080/Z80 development on Linux.
 
 ## Overview
 
-The um80 toolchain provides eight command-line tools:
+The um80 toolchain has eight command-line tools:
 
 | Tool | Description | Microsoft Equivalent |
 |------|-------------|---------------------|
 | um80 | MACRO-80 assembler | M80 |
 | ul80 | LINK-80 linker | L80 |
-| ulib80 | LIB-80 library manager | LIB80 |
-| ucref80 | Cross-reference utility | CREF80 |
+| ulib80 | LIB-80 library manager | LIB-80 |
+| ucref80 | Cross-reference program | CREF |
 | ud80 | Disassembler | (none) |
 | ux80 | 8080 to Z80 translator | (none) |
 | udb80 | Source-level debugger for cpmemu (0.4.0 and later) | (none) |
-| dbg2elf | `prog.dbg` to an ELF file with DWARF, for GDB (0.4.0 and later) | (none) |
+| dbg2elf | Writes an ELF file with DWARF data from `prog.dbg`, for GDB (0.4.0 and later) | (none) |
 
 ## Quick Reference
 
@@ -117,13 +117,13 @@ ucref80 -o xref.txt *.mac       # Output to file
 
 | Extension | Description | Tool |
 |-----------|-------------|------|
-| .mac | Assembly source | um80 input |
-| .rel | Relocatable object | um80 output, ul80 input |
-| .com | CP/M executable | ul80 output |
+| .mac | Assembly source file | um80 input |
+| .rel | Relocatable object file | um80 output, ul80 input |
+| .com | COM file (CP/M program) | ul80 output |
 | .lib | Library archive | ulib80 |
 | .prn | Assembly listing | um80 -l |
 | .sym | Symbol file | ul80 -s |
-| .hex | Intel HEX format | ul80 -x |
+| .hex | HEX file (Intel HEX format) | ul80 -x |
 
 ## Microsoft Manual References
 
@@ -150,11 +150,12 @@ archive:
   - Programming techniques
 
 These manuals document the original CP/M tools. The um80 tools are compatible
-with the documented behavior except where noted.
+with the behavior that the manuals document, except where the documents note a
+difference.
 
 ## Man Pages
 
-Detailed command-line documentation is available via man pages:
+The man pages give detailed command-line documentation:
 
 ```bash
 man um80      # Assembler
@@ -171,27 +172,28 @@ man dbg2elf   # ELF and DWARF file for GDB
 
 ### um80 vs M80
 
-- Unix line endings (LF) accepted in addition to DOS (CR/LF)
-- File paths use Unix conventions
-- Error messages are more verbose
-- Same .REL output format
+- um80 accepts Unix line endings (LF) and DOS line endings (CR/LF).
+- File paths use Unix conventions.
+- The error messages of um80 are more verbose than the error messages of M80.
+- um80 writes REL files in the same format as M80.
 
 ### ul80 vs L80
 
-- Same .REL input format
-- Same .COM output format
-- Syntax matches original for compatibility
+- ul80 reads REL files in the same format as L80.
+- ul80 writes COM files in the same format as L80.
+- The syntax of ul80 matches the syntax of L80, for compatibility.
 
 ### ulib80 vs LIB80
 
-- Uses custom ULIB library format (not bit-compatible with LIB80)
-- Functionally equivalent
-- Libraries can be rebuilt from .REL files
+- ulib80 uses the custom ULIB library format.
+  The ULIB format is not bit-compatible with LIB-80.
+- ulib80 is functionally equivalent to LIB-80.
+- You can rebuild libraries from .REL files.
 
 ### ud80
 
-New tool with no Microsoft equivalent. Designed to complement the toolchain
-by enabling disassembly of existing CP/M programs.
+ud80 is a new tool that has no Microsoft equivalent. The design of ud80
+complements the toolchain, because ud80 can disassemble existing CP/M programs.
 
 ## Examples
 
@@ -214,12 +216,12 @@ MSG:    DB      'Hello, World!$'
         END     START
 ```
 
-Build and run:
+Build and run the program:
 
 ```bash
 um80 hello.mac
 ul80 hello.rel
-cpm hello.com    # Using a CP/M emulator
+cpmemu hello.com # Using a CP/M emulator
 ```
 
 ### Multi-Module Project
@@ -251,7 +253,7 @@ PUTNUM: ; ... implementation ...
         END
 ```
 
-Build:
+Build the program:
 
 ```bash
 um80 main.mac
@@ -278,23 +280,25 @@ ul80 -o program.com main.rel stdlib.lib
 
 ### "Undefined symbol" errors
 
-- Check spelling (symbols are case-insensitive)
-- Ensure PUBLIC declaration in defining module
-- Ensure EXTRN declaration in referencing module
-- Verify all needed .rel files are on link command
+- Make sure that you wrote the symbol correctly. Symbols are case-insensitive.
+- Make sure that the module that defines the symbol has a `PUBLIC` declaration.
+- Make sure that the module that uses the symbol has an `EXTRN` declaration.
+- Make sure that the ul80 command line names all the .REL files that the
+  program needs.
 
 ### "Phase error" warnings
 
-- Label defined at different address in pass 1 vs pass 2
-- Usually caused by forward reference in expression
-- Try rearranging code or using explicit ORG
+A phase error occurs when a label has a different address in pass 1 and in
+pass 2. A forward reference in an expression usually causes a phase error.
+
+- Try to rearrange the code, or try to use an explicit ORG.
 
 ### Disassembly produces garbage
 
-- Code might be data - use `-d` to mark data ranges
-- Missing entry points - use `-e` to add them
-- Wrong processor mode - try `-z` for Z80 code
+- If code in the program can be data, use `-d` to mark the data ranges.
+- If entry points are missing, use `-e` to add the entry points.
+- If the CPU mode is wrong, try `-z` for Z80 code.
 
 ## Support
 
-For issues and feature requests, visit the project repository.
+To report issues or request features, go to the project repository.

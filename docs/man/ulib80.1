@@ -34,52 +34,58 @@ ulib80 \- Microsoft LIB-80 compatible library manager for 8080/Z80
 [\fImodule\fR]...
 .SH DESCRIPTION
 .B ulib80
-is a Microsoft LIB-80 compatible library manager for creating and maintaining
-libraries of relocatable object modules (.REL files) for use with the
+is a Microsoft LIB-80 compatible library manager.
+It creates and maintains libraries of relocatable object modules (.REL files).
+The
 .BR ul80 (1)
-linker.
+linker uses these libraries.
 .PP
-Libraries allow commonly used routines to be collected into a single file. When
-linking, only the modules needed to satisfy undefined references are included
-in the output, keeping executables small.
+A library collects commonly used routines in one file.
+When ul80 links a program, ul80 includes in the output only the modules
+that satisfy undefined references.
+This keeps executables small.
 .SH OPTIONS
 .TP
 .B \-v\fR, \fB\-\-version
-Display version information and exit.
+Display the version information and exit.
 .PP
-Exactly one operation must be specified:
+Specify exactly one of these operations:
 .TP
 .B \-c
-Create a new library from the specified .REL files. If the library file exists,
-it is overwritten.
+Create a new library from the specified .REL files.
+If the library file exists, ulib80 overwrites the library file.
 .TP
 .B \-l
-List the modules contained in the library, showing module names and sizes.
+List the modules in the library.
+Show the module names and the sizes.
 .TP
 .B \-p
-Print the public symbols defined in each module of the library.
+Print the public symbols that each module of the library defines.
 .TP
 .B \-x
-Extract modules from the library. If no module names are given, all modules
-are extracted. Extracted modules are written as \fImodule\fR.rel files.
+Extract modules from the library.
+If you give no module name, ulib80 extracts all modules.
+ulib80 writes each extracted module to the file \fImodule\fR.rel.
 .TP
 .B \-a
-Add .REL files to an existing library. The library must already exist.
+Add .REL files to an existing library.
+The library must already exist.
 .TP
 .B \-d
 Delete the named modules from the library.
 .SH ARGUMENTS
 .TP
 .I library.lib
-The library file to operate on. By convention, library files use the .lib extension.
+The library file to operate on.
+By convention, library files have the .lib extension.
 .TP
 .I file.rel
-Relocatable object files to add to the library.
+Relocatable object files (.REL files) to add to the library.
 .TP
 .I module
-Module name (without .rel extension) for extraction or deletion.
+Module name, without the .rel extension, for extraction or deletion.
 .SH LIBRARY FORMAT
-The ulib80 library format (ULIB) consists of:
+The ULIB format of ulib80 has these parts:
 .IP \(bu 2
 Magic header "ULIB"
 .IP \(bu 2
@@ -89,8 +95,9 @@ Module directory with names, offsets, and public symbol lists
 .IP \(bu 2
 Concatenated module data
 .PP
-This format is specific to ulib80 and differs from the original Microsoft LIB-80
-format, but serves the same purpose.
+The ULIB format is specific to ulib80.
+The ULIB format differs from the original Microsoft LIB-80 format, but the
+ULIB format has the same purpose.
 .SH EXAMPLES
 .TP
 Create a library:
@@ -116,19 +123,18 @@ Delete a module:
 .SH EXIT STATUS
 .TP
 .B 0
-Operation successful.
+The operation succeeded.
 .TP
 .B 1
-Operation failed due to errors.
+The operation failed because of errors.
 .SH FILES
 .TP
 .I library.lib
-Library archive file.
+The library archive file.
 .TP
 .I module.rel
-Relocatable object file.
+The relocatable object file.
 .SH TYPICAL WORKFLOW
-.PP
 .RS
 .nf
 # Assemble source files
@@ -153,12 +159,13 @@ The original Microsoft LIB-80 manual is in the retro_docs archive,
 https://github.com/avwohl/retro_docs/blob/main/um80_and_friends/cref_lib.pdf
 .SH NOTES
 .IP \(bu 2
-Module names are derived from the .REL file name (without extension) and are
-converted to uppercase.
+ulib80 derives each module name from the name of the .REL file, without the
+extension.
+ulib80 converts the module name to uppercase.
 .IP \(bu 2
 A library cannot contain duplicate module names.
 .IP \(bu 2
-When the linker searches a library, it only includes modules that define
-symbols referenced by other modules.
+When the linker searches a library, the linker includes only the modules that
+define symbols that other modules reference.
 .SH AUTHOR
 um80 project contributors.

@@ -28,8 +28,8 @@ udb80 \- source-level debugger for Z80 and 8080 programs in cpmemu
 debugs a program that runs in
 .BR cpmemu .
 udb80 shows source lines, sets breakpoints on source lines, steps by
-line, shows the chain of calls and prints variables.
-udb80 speaks the GDB remote protocol to the stub of
+line, shows the backtrace and prints variables.
+udb80 uses the GDB remote protocol to talk to the stub of
 .BR "cpmemu \-\-gdb" .
 The program keeps all of its 64K.
 udb80 keeps the symbols and the source files on the host.
@@ -58,7 +58,9 @@ udb80 refuses a
 .I prog.dbg
 that does not agree with the
 .I .com
-file beside it, or with guest memory at 0100H.
+file beside
+.IR prog.dbg ,
+or with emulated memory at 0100H.
 .SH OPTIONS
 .TP
 .BI \-\-run " CMD"
@@ -73,7 +75,7 @@ and
 to the command, and reads the port that cpmemu chooses.
 .TP
 .BI \-\-connect " HOST:PORT"
-Connect to a stub that runs already, for example
+Connect to a stub that already runs, for example
 .B "cpmemu \-\-gdb prog.com"
 in a second terminal.
 .TP
@@ -96,7 +98,7 @@ Without this option, udb80 reads more commands from the keyboard.
 .B \-\-wait\-program
 For
 .BR romwbw_emu ,
-where CP/M and not the stub starts the program.
+where CP/M, not the stub, starts the program.
 udb80 tells the stub to stop when the program image of
 .I prog.dbg
 is at 0100H in bank 8EH.
@@ -142,7 +144,7 @@ starts with the short form
 Set a breakpoint.
 A breakpoint from
 .B tbreak
-goes away after the first stop.
+is deleted after the first stop.
 .TP
 .BR delete " [\fIN\fR...], " "info breakpoints"
 Delete breakpoints, or list them.
@@ -153,9 +155,9 @@ Run until a breakpoint, the end of the program, or ^C.
 .BR step " [\fIN\fR], " next " [\fIN\fR], " stepi " [\fIN\fR]"
 Run to the next source line.
 .B step
-goes into a call.
+enters a call.
 .B next
-runs over a call.
+runs the whole call as one step.
 .B stepi
 runs one instruction.
 .TP
@@ -201,14 +203,16 @@ is
 (4 bytes).
 .TP
 .BI print [/ F ] " EXPRESSION"
-Show a value: a number, a register
+Show the value of an expression.
+An expression can have a number, a register
 .RB ( $pc ", " $sp ", " $hl ", " $a ),
-a label, a variable,
+a label or a variable.
+The operators are
 .BR + ", " \- ", " &
 and
 .BR * .
-.BR print/x
-shows hex.
+.B print/x
+shows the value in hexadecimal.
 .TP
 .BR "info locals" ", " "info args" ", " frame " [\fIN\fR], " up " [\fIN\fR], " down " [\fIN\fR], " ptype ", " whatis
 Show the variables of the selected frame, select a frame, or show a type.
@@ -261,7 +265,8 @@ An address is
 or a decimal number.
 With
 .BR \-r ,
-each address is a return address, and udb80 looks up the byte before it.
+each address is a return address.
+Then udb80 looks up the byte before the address.
 Use
 .B \-r
 for the addresses of
@@ -303,7 +308,8 @@ For
 an address has no line.
 .TP
 .B 2
-udb80 could not start: for example,
+udb80 could not start.
+For example,
 .I prog.dbg
 does not agree with the program, or the connection failed.
 .SH EXAMPLES
@@ -360,18 +366,19 @@ udb80 does not need GDB.
 .IP \(bu 2
 udb80 runs one program on one stub.
 .IP \(bu 2
-No
-.BR watch ,
-conditions,
-.BR call ,
-or
+udb80 has no
+.B watch
+command and no conditions.
+udb80 has no
+.B call
+command and no
 .B set
-of memory.
+command for memory.
 .IP \(bu 2
-No cast, assignment, comparison,
+An expression cannot have a cast, an assignment, a comparison,
 .B sizeof
-or function call in an expression.
-A float is not converted.
+or a function call.
+udb80 does not convert a float.
 .IP \(bu 2
 With
 .B \-\-run

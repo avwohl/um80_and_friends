@@ -26,8 +26,23 @@ the file that
 writes, and the program file.
 dbg2elf writes
 .IR prog.elf ,
-an ELF32 file with the code, the routine symbols, DWARF line rows,
-inlined calls, and the variables and types.
+an ELF32 file.
+The file
+.I prog.elf
+has these items:
+.RS
+.IP \(bu 2
+the code
+.IP \(bu 2
+the routine symbols
+.IP \(bu 2
+DWARF line rows
+.IP \(bu 2
+inlined calls
+.IP \(bu 2
+the variables and types
+.RE
+.PP
 GDB with a Z80 target reads
 .I prog.elf
 and debugs the program on
@@ -40,14 +55,21 @@ names, or
 dbg2elf checks the length and the SHA-256 of the program file.
 A
 .I prog.dbg
-from an older build gives an error, and dbg2elf writes no ELF file.
+from an older build gives an error.
+In this case, dbg2elf writes no ELF file.
 .PP
-The file has
+The file
+.I prog.elf
+has
 .B e_machine
-220 (EM_Z80), so GDB sets the z80 architecture from the file.
+220 (EM_Z80).
+GDB therefore sets the z80 architecture from
+.IR prog.elf .
 The line table is DWARF 4.
 .PP
-GDB also needs two Python scripts from the um80 package.
+GDB also needs two Python scripts from the um80 package:
+.RS
+.IP \(bu 2
 .B udb80_unwind.py
 unwinds the Z80 stack for
 .BR bt ,
@@ -55,15 +77,18 @@ unwinds the Z80 stack for
 .B finish
 and
 .BR next .
+.IP \(bu 2
 .B udb80_vars.py
 adds the commands
 .BR zlocals ,
 .BR zargs ,
 .B zprint
 and
-.B zptype
-for the variables that DWARF cannot describe, for example a variable in a
-register.
+.BR zptype .
+The commands show the variables that DWARF cannot describe.
+An example is a variable in a register.
+.RE
+.PP
 The options
 .B \-\-unwinder\-path
 and
@@ -75,30 +100,39 @@ print where the scripts are.
 The ELF file.
 The default is
 .I prog.elf
-beside
+in the same directory as
 .IR prog.dbg .
 .TP
 .BI \-\-comp\-dir " DIR"
 The directory that relative source paths start from.
 The default is the directory of
 .IR prog.dbg .
-The compilers write paths relative to the directory where you ran them.
+The compilers write paths relative to the directory where you ran the
+compilers.
 .TP
 .BR \-\-asm\-lines " auto|always|never"
 Write the lines of the
 .I .mac
 files.
+.RS
+.IP \(bu 2
 .B auto
 (the default) writes the lines only when
 .I prog.dbg
-has no source lines, so an assembler program has lines.
+has no source lines.
+An assembler program has no source lines, so the program gets the lines.
+.IP \(bu 2
 .B always
 also writes the lines of the
 .I .mac
 files for the bytes that have no source line.
 A step then goes into the runtime.
+.IP \(bu 2
 .B never
-writes none.
+does not write the lines of the
+.I .mac
+files.
+.RE
 .TP
 .B \-\-keep\-underscore
 Keep the leading underscore of a C name.
@@ -109,9 +143,9 @@ for
 .TP
 .B \-\-keep\-case
 Keep the case of a label.
-um80 writes each label in upper case.
-Without the option, dbg2elf writes a label that has no lower case letter
-in lower case.
+um80 writes each label in uppercase.
+Without the option, dbg2elf writes a label that has no lowercase letter
+in lowercase.
 A name from a
 .B ;#func
 marker keeps its case.
@@ -121,15 +155,19 @@ Write no variables and no types.
 .TP
 .BR \-\-ix\-locals " fbreg|off"
 The variables at IX+N.
+.RS
+.IP \(bu 2
 .B fbreg
-(the default) writes them with
+(the default) writes the variables with
 .BR DW_OP_fbreg .
 The values are correct only when GDB has loaded
 .BR udb80_unwind.py .
+.IP \(bu 2
 .B off
-writes no record for them.
+writes no record for the variables.
 .B udb80_vars.py
-still reads them.
+still reads the variables.
+.RE
 .TP
 .BR \-\-language " c|asm"
 The language of the compile unit.
@@ -200,7 +238,7 @@ GDB prints a warning about
 when GDB connects.
 Ignore the warning.
 .SH REQUIREMENTS
-dbg2elf and the two scripts are in um80 0.4.0 and later
+dbg2elf and the two scripts are in package um80 0.4.0 and later
 .RB ( "pip install \(dqum80>=0.4.0\(dq" ).
 GDB must have the Z80 target (GDB 11.1 and later).
 A GDB built with

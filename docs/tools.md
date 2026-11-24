@@ -1,7 +1,8 @@
 # um80 Tools Reference
 
-Command summaries and reference notes for each tool of the um80 toolchain.
-The man pages (`man um80` and the rest) have the full option lists.
+This document gives command summaries and reference notes for each tool of
+the um80 toolchain. The man pages (`man um80` and the rest) have the full
+option lists.
 
 ## Command Summary
 
@@ -73,23 +74,29 @@ ux80 -o output.mac program.mac      # Specify output name
 
 ### um80 - Assembler
 
-Microsoft MACRO-80 compatible assembler supporting:
+um80 is a Microsoft MACRO-80 (M80) compatible assembler. um80 has these functions:
 
 - 8080 and Z80 instruction sets
 - Macros with parameters (MACRO/ENDM)
 - Repeat blocks (REPT, IRP, IRPC)
-- Conditional assembly (IF/ELSE/ENDIF, IFDEF, etc.)
+- Conditional assembly (IF/ELSE/ENDIF, IFDEF and others)
 - Segments (CSEG, DSEG, ASEG, COMMON)
-- PUBLIC/EXTRN for module linking
+- PUBLIC and EXTRN, which connect modules
 - Include files
-- All standard directives (ORG, EQU, SET, DB, DW, DS, etc.)
-- `--debug-info`: also writes `NAME.dbm` beside the `.rel` file, with the
-  source line of each instruction, the `;#` markers in force and all
-  labels. The `.rel` file does not change. See [debug_info.md](debug_info.md).
+- All standard directives (ORG, EQU, SET, DB, DW, DS and others)
+- `--debug-info`: um80 also writes `NAME.dbm` in the same directory as the
+  `.rel` file. The `.dbm` file has these data:
+  - The source line of each instruction.
+  - The active `;#` markers.
+  - All labels.
+
+  The `.rel` file does not change. See [debug_info.md](debug_info.md).
 
 #### Command-Line Pre-Execution (`-e` and `--pre`)
 
-Code can be injected before the main source file using `-e` (inline code) and `--pre` (include file). Both options can be repeated and are processed in the order specified:
+The option `-e` (inline code) and the option `--pre` (include file) put code
+before the main source file. You can repeat both options. um80 processes the
+options in the order that you give them. Examples:
 
 ```bash
 # Set Z80 mode from command line
@@ -105,33 +112,42 @@ um80 --pre stdmacros.mac program.mac
 um80 -e ".z80" --pre macros.mac -e "MYVAL equ 42" program.mac
 ```
 
-This is useful for:
-- Switching CPU mode (`.z80` or `.8080`) without modifying source files
-- Defining conditional assembly symbols (`DEBUG equ 1`)
-- Including project-wide macro libraries
+These options are useful for these tasks:
 
-See `man um80` for full documentation, or refer to the original [Microsoft M80 Manual](https://github.com/avwohl/retro_docs/blob/main/um80_and_friends/m80.pdf).
+- Switch the CPU mode (`.z80` or `.8080`) without a change to the source files.
+- Define conditional assembly symbols (`DEBUG equ 1`).
+- Include project-wide macro libraries.
+
+For full documentation, read `man um80`, or read the original [Microsoft M80 Manual](https://github.com/avwohl/retro_docs/blob/main/um80_and_friends/m80.pdf).
 
 ### ul80 - Linker
 
-LINK-80 compatible linker that:
+ul80 is a LINK-80 (L80) compatible linker. ul80 has these functions:
 
-- Links multiple .REL relocatable object files
-- Resolves external references
-- Produces CP/M .COM executables
-- Supports COMMON blocks
-- Can output Intel HEX format
-- Can output MP/M .PRL (Page Relocatable) format
-- Provides `__END__` symbol for dynamic memory allocation
-- `--debug-info`: reads the `.dbm` file of each module and writes
-  `NAME.dbg` beside the output file, with the addresses of the source lines,
-  the routines and all labels, and the length and SHA-256 of the output file.
+- Links more than one REL file (.REL, relocatable)
+- Resolves the references to external symbols
+- Writes CP/M COM files (.COM)
+- Accepts COMMON blocks
+- Can write Intel HEX files
+- Can write MP/M PRL files (.PRL, page relocatable)
+- Defines the `__END__` symbol for dynamic memory allocation
+- `--debug-info`: ul80 reads the `.dbm` file of each module. ul80 writes
+  `NAME.dbg` in the same directory as the output file. The `.dbg` file has
+  these data:
+  - The addresses of the source lines.
+  - The addresses of the routines.
+  - The addresses of all labels.
+  - The length of the output file.
+  - The SHA-256 of the output file.
+
   `--debug-file FILE` names the `.dbg` file. The output file and the `.SYM`
   file do not change. See [debug_info.md](debug_info.md).
 
 #### Predefined Symbols
 
-The linker provides a predefined `__END__` symbol that points to the first free byte after all linked segments (code + data + common blocks). This is useful for implementing heap allocation:
+ul80 has a predefined `__END__` symbol. The `__END__` symbol points to the
+first free byte after all linked segments (code + data + common blocks). The
+`__END__` symbol is useful for heap allocation:
 
 ```asm
         EXTRN   __END__         ; Import linker symbol
@@ -144,66 +160,70 @@ START:  LXI     H,__END__       ; Load end of program
 HEAP:   DW      0               ; Heap pointer
 ```
 
-See `man ul80` for full documentation, or refer to the original [Microsoft L80 Manual](https://github.com/avwohl/retro_docs/blob/main/um80_and_friends/l80.pdf).
+For full documentation, read `man ul80`, or read the original [Microsoft L80 Manual](https://github.com/avwohl/retro_docs/blob/main/um80_and_friends/l80.pdf).
 
 ### ulib80 - Library Manager
 
-LIB-80 compatible library manager for:
+ulib80 is a LIB-80 compatible library manager. ulib80 does these tasks:
 
-- Creating .LIB library archives
-- Listing library contents and public symbols
-- Adding/removing/extracting modules
-- Storing the `.dbm` file beside a `.rel` file with the module. A library
-  with a `.dbm` is a version 2 `ULIB` file. ul80 reads versions 1 and 2.
-  See [debug_info.md](debug_info.md).
+- Creates .LIB library files
+- Lists the contents of a library file and the public symbols
+- Adds, removes and extracts modules
+- Stores the module with the `.dbm` file that is in the same directory as the
+  `.rel` file. A library file with a `.dbm` file is a version 2 `ULIB` file.
+  ul80 reads versions 1 and 2. See [debug_info.md](debug_info.md).
 
-See `man ulib80` for full documentation, or refer to the original [Microsoft CREF/LIB Manual](https://github.com/avwohl/retro_docs/blob/main/um80_and_friends/cref_lib.pdf).
+For full documentation, read `man ulib80`, or read the original [Microsoft CREF/LIB Manual](https://github.com/avwohl/retro_docs/blob/main/um80_and_friends/cref_lib.pdf).
 
 ### ucref80 - Cross-Reference
 
-Generates cross-reference listings showing:
+ucref80 writes cross-reference listings. A cross-reference listing has:
 
 - Symbol definitions
 - Symbol references by file and line
 - PUBLIC and EXTRN declarations
 
-See `man ucref80` for full documentation.
+For full documentation, read `man ucref80`.
 
 ### dbg2elf - ELF and DWARF file for GDB
 
-Reads `prog.dbg` (from `ul80 --debug-info`) and the program file. Writes an
-ELF32 file with the code, the routine symbols, DWARF line rows and inlined
-calls, so that GDB with a z80 target can debug the program on `cpmemu --gdb`.
-See [gdb.md](gdb.md) and `man dbg2elf`. dbg2elf is in um80 0.4.0 and later.
+dbg2elf reads `prog.dbg` (from `ul80 --debug-info`) and the program file.
+dbg2elf writes an ELF file (ELF32). The ELF file has the code, the routine
+symbols, DWARF line rows and inlined calls. With the ELF file, GDB with a z80
+target can debug the program on `cpmemu --gdb`. See [gdb.md](gdb.md) and
+`man dbg2elf`. dbg2elf is in package um80 0.4.0 and later.
 
 ### udb80 - Debugger
 
-Debugs a program that runs in `cpmemu --gdb` (cpmemu 4.11.0 and later) by
-source line: `break`, `step`, `next`, `finish`, `bt` and `print` of
-variables. Reads `prog.dbg` from `ul80 --debug-info`. udb80 is in um80
-0.4.0 and later. See [udb80.md](udb80.md) and `man udb80`.
+udb80 debugs a program that runs in `cpmemu --gdb` (cpmemu 4.11.0 and
+later). udb80 works by source line. The commands are `break`, `step`, `next`,
+`finish`, `bt` and `print` of variables. udb80 reads `prog.dbg` from
+`ul80 --debug-info`. udb80 is in package um80 0.4.0 and later. See
+[udb80.md](udb80.md) and `man udb80`.
 
 ### ud80 - Disassembler
 
-8080/Z80 disassembler that:
+ud80 is an 8080/Z80 disassembler. ud80 has these functions:
 
-- Disassembles CP/M .COM files to .MAC source
-- Produces output compatible with um80
-- Supports both 8080 and Z80 instruction sets
-- Allows marking data ranges and entry points
-- Generates re-assemblable source code
+- Disassembles CP/M COM files (.COM) to .MAC source files
+- Writes output that is compatible with um80
+- Works with both the 8080 and the Z80 instruction sets
+- Lets you mark data ranges and entry points
+- Writes source code that you can assemble again
 
-See `man ud80` for full documentation (no Microsoft equivalent exists).
+For full documentation, read `man ud80`. No Microsoft equivalent exists.
 
 ### ux80 - 8080 to Z80 Translator
 
-Source-to-source translator that converts Intel 8080 assembly to Zilog Z80 assembly:
+ux80 is a source-to-source translator. ux80 translates Intel 8080 assembly
+to Zilog Z80 assembly. ux80 has
+these functions:
 
 - Translates all 8080 instructions to equivalent Z80 mnemonics
-- Preserves all comments, labels, and formatting
-- Produces byte-identical output when assembled
-- Automatically adds `.Z80` directive to output
-- Handles all assembler directives (passes them through unchanged)
+- Keeps all comments, labels and the format of the text
+- Writes output that is byte-identical when assembled
+- Adds the `.Z80` directive to the output automatically
+- Writes all assembler directives to the output unchanged
 
 **Translation examples:**
 
@@ -235,16 +255,16 @@ Source-to-source translator that converts Intel 8080 assembly to Zilog Z80 assem
 | `PSW` | `AF` |
 | `M` (memory) | `(HL)` |
 
-See `man ux80` for full documentation.
+For full documentation, read `man ux80`.
 
 ## File Formats
 
 | Extension | Description |
 |-----------|-------------|
 | .MAC | Assembly source (MACRO-80 format) |
-| .REL | Relocatable object file |
-| .COM | CP/M executable |
-| .PRL | MP/M Page Relocatable executable |
+| .REL | REL file (relocatable) |
+| .COM | COM file (CP/M executable) |
+| .PRL | PRL file (MP/M page relocatable executable) |
 | .LIB | Library archive |
 | .PRN | Assembly listing |
 | .SYM | Symbol file |
@@ -253,25 +273,31 @@ See `man ux80` for full documentation.
 
 ## Installing Man Pages
 
-From um80 0.4.1, `pip install um80` installs the man pages. pip puts them
-in `share/man/man1` beside the `bin` directory of the commands: the
-`share/man/man1` folder of a virtual environment, or of the user base with
-`pip install --user`. `man` finds the pages when that `bin` directory is on
-`PATH`:
+From package um80 0.4.1, `pip install um80` installs the man pages. pip puts
+the man pages in the `share/man/man1` directory, next to the `bin`
+directory of the commands. The `share/man/man1` directory is in one of these
+places:
+
+- The `share/man/man1` directory of a virtual environment.
+- The `share/man/man1` directory of the user base, when you use
+  `pip install --user`.
+
+The command `man` finds the man pages when that `bin` directory is on `PATH`:
 
 ```bash
 man udb80
 man -w udb80        # show where the page is
 ```
 
-An older release has no man pages in the package. To install them from a
-checkout of this repository:
+An older release has no man pages in the package. To install the man pages
+from a checkout of this repository, run this command:
 
 ```bash
 sudo cp docs/man/*.1 /usr/local/share/man/man1/
 ```
 
-Or view them directly, from the repository root:
+You can also read a man page directly. Run this command from the repository
+root:
 
 ```bash
 man docs/man/um80.1

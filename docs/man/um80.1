@@ -15,144 +15,258 @@ um80 \- Microsoft MACRO-80 compatible assembler for 8080/Z80
 .I input.mac
 .SH DESCRIPTION
 .B um80
-is a Microsoft MACRO-80 compatible assembler that translates 8080/Z80 assembly
-source files (.MAC) into relocatable object files (.REL). The output is compatible
-with the
+is an assembler that follows Microsoft MACRO-80 (M80).
+um80 assembles 8080/Z80 source files (.MAC) and writes REL files (.REL).
+The REL files are compatible with the
 .BR ul80 (1)
 linker.
 .PP
-The assembler supports both Intel 8080 and Zilog Z80 instruction sets, macros,
-conditional assembly, and the full set of MACRO-80 directives.
+um80 accepts the instruction sets of both the Intel 8080 and the Zilog Z80.
+um80 also accepts macros, conditional assembly and the full set of the
+directives of M80.
 .SH OPTIONS
 .TP
 .B \-v\fR, \fB\-\-version
 Display version information and exit.
 .TP
 .BI \-o " output.rel"
-Specify the output file name. Default is the input file name with a .rel extension.
+Specify the name of the output file.
+The default is the name of the input file with a .rel extension.
 .TP
 .BI \-l " listing.prn"
-Generate an assembly listing file showing source, generated code, and symbol table.
-A field the linker has yet to finish shows the bytes the .REL carries (the
-offset of a relocatable word; 0 for a field the linker computes or fills from
-an external) and is marked after its last byte as MACRO-80 marks it:
-\fB'\fR program relative, \fB"\fR data relative, \fB!\fR COMMON,
-\fB*\fR external.
+Write a listing file.
+The listing file shows the source, the code that um80 writes, and the
+symbol table.
+.RS
+.PP
+The linker has yet to finish some fields.
+The listing file shows a field of this kind with the bytes that the REL file
+carries:
+.IP \(bu 2
+For a relocatable word, the bytes are the offset of the word.
+.IP \(bu 2
+For a field that the linker computes or fills from an external symbol,
+the bytes are 0.
+.PP
+um80 marks the field after its last byte, as M80 marks it:
+.IP \(bu 2
+\fB'\fR program relative
+.IP \(bu 2
+\fB"\fR data relative
+.IP \(bu 2
+\fB!\fR COMMON
+.IP \(bu 2
+\fB*\fR external
+.RE
 .TP
 .B \-g\fR, \fB\-\-globals
-Export all defined symbols as PUBLIC. This is useful for generating complete symbol
-files for debugging. The linker can then output all symbols with their final
-relocated addresses using the \fB\-S\fR option.
+Export all defined symbols as PUBLIC.
+The option is useful to write complete symbol files for debugging.
+The linker can then write all symbols with their final relocated addresses
+if you use the option \fB\-S\fR.
 .TP
 .B \-t\fR, \fB\-\-truncate
-Cut every PUBLIC, EXTRN, ## external and module name in the .REL file to 6 characters, as
-MACRO-80 does. Use it for an object that is to be linked with objects that
-M80 assembled, when a PUBLIC, EXTRN or ## name is longer than 6 characters.
+Cut every PUBLIC, EXTRN, ## external and module name in the REL file to
+6 characters, as M80 does.
+.RS
+.PP
+Use the option when both conditions are true:
+.IP \(bu 2
+The linker links the REL file with REL files that M80 assembled.
+.IP \(bu 2
+A PUBLIC, EXTRN or ## name is longer than 6 characters.
+.RE
 .TP
 .B \-\-aseg
-Start the file in ASEG, so that an ORG is an absolute address, as in
-Digital Research's MAC, which has no relocatable segments.
+Start the file in ASEG, so that an ORG is an absolute address.
+The rule is as in MAC, the assembler of Digital Research (DRI).
+MAC has no relocatable segments.
 .TP
 .B \-\-dri
-Read the source as Digital Research's MAC and RMAC read it where they differ
-from MACRO-80: a \fB$\fR inside a name is ignored, so NMB$LST and NMBLST are
-one symbol, and \fBPUBLIC A$BC\fR writes ABC.  A \fB$\fR that starts a word
-(the location counter), one in a quoted string or a comment, and one in the
-arguments of a macro call or the list of an IRP or IRPC, which MAC reads as
-text, are kept.
-A macro body is matched to its parameters with MAC's names, which end at a
-\fB$\fR, \fB_\fR or \fB.\fR, and with RMAC's rules for an \fB&\fR in a
-string; only an argument that starts with \fB%\fR is a value, a
-\fB<\fR or \fB>\fR in it is an operator, and a \fB%\fR with nothing
-after it is an error (MACRO-80 passes 0); an item of
-an IRP list ends at a comma, a blank or a tab is skipped at the start of
-an item, and one anywhere else, or a \fB;\fR, in the list is an error, as
-MAC and RMAC read it otherwise or flag it
-(MACRO-80 ends an item at a comma, a \fB;\fR, a blank or a tab); the list
-of an IRP and the string of an IRPC are read as a macro argument, a group's
-brackets going wherever they are (\fBIRP X,<1,2>3\fR is 1 and 23, where
-MACRO-80 ends the list at the \fB>\fR), and text after the list is an
-error; the
-arguments of a macro call end at a blank after one, and text after it
-other than a comma is an error (MACRO-80 reads the blank as a comma); a
-\fB"\fR in a macro call's arguments or an IRP list is text, not a quote; an IF that
-a macro expansion, or one repetition of a REPT, IRP or IRPC, leaves open ends
-with it; a label on the ENDM that ends a body is defined where the body ends;
-and an IRPC with an empty string goes round once.
-Without \fB\-\-dri\fR a \fB$\fR is part of the name, and a macro body is
-read, as in MACRO-80.
+Read the source as MAC and RMAC read it where they differ from M80:
+.RS
+.IP \(bu 2
+um80 ignores a \fB$\fR inside a name, so NMB$LST and NMBLST are one symbol.
+\fBPUBLIC A$BC\fR writes ABC.
+Without \fB\-\-dri\fR, a \fB$\fR is part of the name, as in M80.
+.IP \(bu 2
+um80 keeps a \fB$\fR in these places:
+.RS
+.IP \(bu 2
+a \fB$\fR that starts a word (the location counter)
+.IP \(bu 2
+a \fB$\fR in a quoted string
+.IP \(bu 2
+a \fB$\fR in a comment
+.IP \(bu 2
+a \fB$\fR in the arguments of a macro call
+.IP \(bu 2
+a \fB$\fR in the list of an IRP or IRPC
+.RE
+.PP
+MAC reads these arguments and lists as text.
+.IP \(bu 2
+um80 matches a macro body to its parameters with the names of MAC.
+A name of MAC ends at a \fB.\fR, a \fB_\fR or a \fB$\fR.
+For an \fB&\fR in a string, um80 uses the rules of RMAC.
+Without \fB\-\-dri\fR, um80 reads a macro body as M80 does.
+.IP \(bu 2
+Only an argument that starts with \fB%\fR is a value.
+A \fB<\fR or \fB>\fR in such an argument is an operator.
+A \fB%\fR with nothing after it is an error.
+M80 passes 0 in this case.
+.IP \(bu 2
+An item of an IRP list ends at a comma.
+um80 skips a blank or a tab at the start of an item.
+A blank or a tab anywhere else in the list is an error, and so is a \fB;\fR.
+The rule for the list is as MAC and RMAC read it otherwise or flag it.
+M80 ends an item at a comma, a \fB;\fR, a blank or a tab.
+.IP \(bu 2
+um80 reads the list of an IRP and the string of an IRPC as a macro argument.
+The brackets of a group work wherever they are in the argument.
+\fBIRP X,<1,2>3\fR is 1 and 23.
+M80 ends the list at the \fB>\fR.
+With \fB\-\-dri\fR, text after the list is an error.
+.IP \(bu 2
+The arguments of a macro call end at a blank after an argument.
+Text after the blank, other than a comma, is an error.
+M80 reads the blank as a comma.
+.IP \(bu 2
+A \fB"\fR in the arguments of a macro call or in an IRP list is text.
+The character is not a quote.
+.IP \(bu 2
+An IF that a macro expansion leaves open ends with the macro expansion.
+An IF that one repetition of a REPT, IRP or IRPC leaves open ends with
+the repetition.
+.IP \(bu 2
+um80 defines a label on the ENDM that ends a body where the body ends.
+.IP \(bu 2
+An IRPC with an empty string repeats once.
+.IP \(bu 2
 The first word of a statement that is not an instruction, directive or
-macro is a label, colon or not, in any column (\fBOBP DS 1\fR); a line
-number in front of a statement, a line that starts with \fB*\fR and MAC's
-assembly controls (\fB$\-MACRO\fR) are ignored.  Without \fB\-\-dri\fR a
-label needs its colon, as in MACRO-80.
+macro is a label, colon or not, in any column (\fBOBP DS 1\fR).
+Without \fB\-\-dri\fR, a label needs its colon, as in M80.
+.IP \(bu 2
+um80 ignores a line number in front of a statement, a line that starts
+with \fB*\fR and the assembly controls of MAC (\fB$\-MACRO\fR).
+.IP \(bu 2
 A \fB!\fR ends a comment and starts the next statement
-(\fBNOP ;c! DB 1\fR is 00 01), and an ENDM after a \fB!\fR ends the
-body being defined.  After a macro call the next statement is the one after
-the first \fB!\fR after its arguments that follows a character other than a
-blank, as in MAC: \fBMM ;c! DB 1\fR assembles the DB, and \fBMM A;c! DB
-1\fR, \fBMM A ! DB 1\fR and \fBMM ;c ! DB 1\fR leave it out, with a
-warning.  Without \fB\-\-dri\fR a comment
-runs to the end of the line, as in MACRO-80.
-An 8AH (a line feed with bit 7 set) inside a line is a line feed, the byte
-0AH in a string and text in a macro call's arguments, and an 8DH a carriage
-return that ends the statement, after
-which the next item is taken for its line feed, as MAC reads them; MACRO-80
-leaves out an 8AH and ends the line at an 8DH.
-\fBPUSH A\fR and \fBPOP A\fR are PUSH PSW and POP PSW, \fBMOV M,M\fR is
-76H, and an expression may have two register names in it; MACRO-80 flags
-each, and so does um80 without \fB\-\-dri\fR.
-MAC's relational operators \fB=\fR, \fB<\fR, \fB<=\fR, \fB>\fR, \fB>=\fR and
-\fB<>\fR are EQ, LT, LE, GT, GE and NE, and HIGH and LOW apply to all that
-follows them (\fBHIGH(X)+1\fR is HIGH(X+1)), as in MAC; MACRO-80 has no such
-operator, and applies HIGH and LOW to the term after them.
-A label on an ORG is the location the ORG sets, as in MAC (MACRO-80: the
-location before it); on an ORG of a symbol defined further down it is an
-error, as MAC flags it P.
-END of a symbol that is not defined, as in \fBEND START\fR with START
-below it, takes no start address and is no error, as in MAC (MACRO-80: U).
-\fBMACLIB\fR \fIname\fR reads \fIname\fR.LIB, as in MAC and RMAC, and
-then \fIname\fR.MAC; MACRO-80 reads \fIname\fR.MAC.
-An END in a MACLIB library ends the library, as in MAC and RMAC; MACRO-80
-reads a MACLIB file as an INCLUDE file, whose END ends the source.
-\fB\-\-dri\fR does not imply \fB\-\-aseg\fR (MAC's absolute sources) or
-\fB\-t\fR (RMAC's six-character names).
-A string is quoted with \fB'\fR only, as in MAC: \fBDB "A"\fR is an error
-(MACRO-80 reads a string).
+(\fBNOP ;c! DB 1\fR is 00 01).
+An ENDM after a \fB!\fR ends the macro body that um80 defines.
+Without \fB\-\-dri\fR, a comment continues to the end of the line, as in M80.
+.IP \(bu 2
+After a macro call, the next statement starts after a \fB!\fR.
+The \fB!\fR is the first \fB!\fR after the arguments that follows a
+character other than a blank.
+The rule is as in MAC.
+\fBMM ;c! DB 1\fR assembles the DB.
+\fBMM A;c! DB 1\fR, \fBMM A ! DB 1\fR and \fBMM ;c ! DB 1\fR omit
+the DB, with a warning.
+.IP \(bu 2
+An 8AH (a line feed with bit 7 set) inside a line is a line feed.
+In a string, the 8AH is the byte 0AH.
+In the arguments of a macro call, the 8AH is text.
+An 8DH is a carriage return that ends the statement.
+um80 reads the next item as the line feed of the carriage return.
+MAC reads an 8AH and an 8DH in this way.
+M80 ignores an 8AH and ends the line at an 8DH.
+.IP \(bu 2
+\fBPUSH A\fR and \fBPOP A\fR are PUSH PSW and POP PSW.
+\fBMOV M,M\fR is 76H.
+An expression can have two register names in it.
+M80 flags each of \fBPUSH A\fR, \fBPOP A\fR, \fBMOV M,M\fR and an
+expression with two register names.
+um80 without \fB\-\-dri\fR also flags each of \fBPUSH A\fR, \fBPOP A\fR,
+\fBMOV M,M\fR and an expression with two register names.
+.IP \(bu 2
+The relational operators \fB=\fR, \fB<\fR, \fB<=\fR, \fB>\fR, \fB>=\fR and
+\fB<>\fR of MAC are EQ, LT, LE, GT, GE and NE.
+M80 has no such operator.
+.IP \(bu 2
+HIGH and LOW apply to all that follows them (\fBHIGH(X)+1\fR is HIGH(X+1)),
+as in MAC.
+M80 applies HIGH and LOW to the term after them.
+.IP \(bu 2
+A label on an ORG is the location that the ORG sets, as in MAC.
+M80 uses the location before the ORG.
+The operand of the ORG can be a symbol that the source defines further down.
+Then the label is an error, as MAC flags it P.
+.IP \(bu 2
+An END of a symbol that is not defined takes no start address and is no
+error, as in MAC.
+Example: \fBEND START\fR with START below the END.
+M80 flags the END U.
+.IP \(bu 2
+\fBMACLIB\fR \fIname\fR reads \fIname\fR.LIB and then \fIname\fR.MAC,
+as in MAC and RMAC.
+M80 reads \fIname\fR.MAC.
+.IP \(bu 2
+An END in a MACLIB library ends the library, as in MAC and RMAC.
+M80 reads a MACLIB file as an INCLUDE file.
+The END of an INCLUDE file ends the source.
+.IP \(bu 2
+\fB\-\-dri\fR does not imply \fB\-\-aseg\fR (the absolute sources of MAC) or
+\fB\-t\fR (the six-character names of RMAC).
+.IP \(bu 2
+um80 accepts \fB'\fR only as the quote of a string, as in MAC.
+\fBDB "A"\fR is an error.
+M80 reads a string there.
+.IP \(bu 2
 A two-character string used as a value has its first character in the low
-byte, as in MAC: \fB'AB'\fR is 4241H, and \fBDW 'AB'\fR is 41 42 (MACRO-80:
-4142H, 42 41).
-An IF is true when bit 0 of its value is set, as in MAC: \fBIF 2\fR and
-\fBIF NOT 1\fR are false (MACRO-80 takes any value but 0 as true); IFT,
-IFE, IFDEF and the other IFs MAC does not have keep MACRO-80's meaning.
-A MACLIB library is read in pass 1 only, as in MAC: none of its code or
-data is assembled, and a symbol it defines keeps its value of pass 1; the
-size of each segment and COMMON block is the most pass 1 reached in it,
-which counts the library's code and data.
+byte, as in MAC.
+\fB'AB'\fR is 4241H, and \fBDW 'AB'\fR is 41 42.
+M80 gives 4142H and 42 41.
+.IP \(bu 2
+An IF is true when bit 0 of its value is set, as in MAC.
+\fBIF 2\fR and \fBIF NOT 1\fR are false.
+M80 takes any value but 0 as true.
+IFT, IFE, IFDEF and the other IFs that MAC does not have keep the meaning
+of M80.
+.IP \(bu 2
+um80 reads a MACLIB library in pass 1 only, as MAC does.
+um80 assembles none of the code or data of the library.
+A symbol that the library defines keeps its value of pass 1.
+The size of each segment and COMMON block is the most that pass 1 reached
+in it.
+The size counts the code and data of the library.
+.RE
 .TP
 .BI \-D " SYMBOL" [= VALUE ]
-Define a symbol before assembly begins. If no value is given, the symbol is
-defined with value 1. Can be specified multiple times.
+Define a symbol before assembly begins.
+If you give no value, the symbol has the value 1.
+You can give the option more than once.
 .TP
 .BI \-I " PATH"
-Add a directory to the include file search path. Can be specified multiple times.
+Add a directory to the include file search path.
+You can give the option more than once.
 .SH SOURCE FORMAT
-Assembly source files consist of lines containing:
+A source file has lines that contain:
 .IP \(bu 2
-Labels (optional) followed by a colon.  A name is letters, digits and
-\fB$ . ? @ _\fR, and a digit does not start one: a name may begin with a dot
-(\fB.FOO:\fR, \fB..BAR\fR), as in MACRO-80.  A dot-directive (\fB.Z80\fR,
-\fB.PHASE\fR, ...) with a colon at once after it is a label
-(\fB.Z80:\fR changes no mode).  The first word of a statement is
-its operation, in column 1 or not (\fBNOP\fR in column 1 is an instruction),
-except the name in front of an EQU, SET, DEFL, ASET or MACRO.  As in
-MACRO-80, a statement whose first word is no instruction, directive or macro
-is assembled as DB, with a warning (\fBLAB: 5,6\fR), so a label without a
-colon is an error (see \fB\-\-dri\fR)
+Labels (optional) followed by a colon.
+.RS
+.IP \(bu 2
+A name is letters, digits and \fB$ . ? @ _\fR.
+A digit does not start a name.
+.IP \(bu 2
+A name may begin with a dot (\fB.FOO:\fR, \fB..BAR\fR), as in M80.
+.IP \(bu 2
+A directive that starts with a dot (for example \fB.Z80\fR and
+\fB.PHASE\fR), with a colon at once after the directive, is a label
+(\fB.Z80:\fR changes no mode).
+.IP \(bu 2
+The first word of a statement is the name of an instruction, a directive or
+a macro, in column 1 or not (\fBNOP\fR in column 1 is an instruction).
+The exception is the name in front of an EQU, SET, DEFL, ASET or MACRO.
+.IP \(bu 2
+The first word of a statement can be no instruction, directive or macro
+(\fBLAB: 5,6\fR).
+Then um80 assembles the statement as DB, with a warning, as M80 does.
+Thus a label without a colon is an error (see \fB\-\-dri\fR).
+.RE
 .IP \(bu 2
 Instructions or directives
 .IP \(bu 2
-Comments starting with semicolon (;)
+Comments that start with a semicolon (;)
 .PP
 Example:
 .PP
@@ -174,48 +288,60 @@ BUFFER: DS      100
 Set the location counter to \fIaddress\fR.
 .TP
 .B END \fR[\fIaddress\fR]
-End of source. Optional \fIaddress\fR specifies the entry point.
+End of source. The optional \fIaddress\fR specifies the entry point.
 .SS Data Definition
 .TP
 .B DB \fIvalue\fR[,\fIvalue\fR]...
-Define bytes. Values can be numbers or quoted strings.
+Define bytes. A value can be a number or a quoted string.
 .TP
 .B DW \fIvalue\fR[,\fIvalue\fR]...
 Define 16-bit words (low byte first).
-An empty operand of a DB or a DW is 0, as in MACRO-80 (\fBDB 1,\fR is 01 00,
-\fBDW\fR 00 00), with a warning; with \fB\-\-dri\fR it is an error, as
-MAC flags it.
+.RS
+.PP
+An empty operand of a DB or a DW is 0, as in M80, with a warning.
+\fBDB 1,\fR is 01 00.
+\fBDW\fR with no operand is 00 00.
+With \fB\-\-dri\fR, an empty operand is an error, as MAC flags it.
+.RE
 .TP
 .B DS \fIcount\fR
 Define storage (reserve \fIcount\fR bytes).
 .SS Symbol Definition
 .TP
 .B EQU \fIvalue\fR
-Define a constant symbol (cannot be redefined).
+Define a constant symbol.
+You cannot redefine the symbol.
 .TP
 .B SET \fIvalue\fR
-Define a variable symbol (can be redefined with SET or DEFL).
+Define a variable symbol.
+You can redefine the symbol with SET or DEFL.
 .TP
 .B DEFL \fIvalue\fR
 Same as SET.
 .SS Segments
 .TP
 .B CSEG
-Select code segment (program-relative).
+Select the code segment (program relative).
 .TP
 .B DSEG
-Select data segment (data-relative).
+Select the data segment (data relative).
 .TP
 .B ASEG
-Select absolute segment.
+Select the absolute segment.
 .PP
-As in MACRO-80, a segment directive goes on at the most of the locations set
-in the segment (by ORG, or the end of a DS) and of those it was left at: after
-an ORG back below an earlier ORG, not where the segment was left.
+As in M80, a segment directive continues at the highest of these locations:
+.IP \(bu 2
+The locations that are set in the segment (by an ORG, or by the end of a DS).
+.IP \(bu 2
+The locations where the segment was left.
+.PP
+After an ORG back below an earlier ORG, the segment directive does not
+continue where the segment was left.
 .TP
 .B COMMON \fR/\fIname\fR/
-Select or define a COMMON block. Each COMMON statement starts at the beginning
-of its block, as in MACRO-80 (FORTRAN's rule).
+Select or define a COMMON block.
+Each COMMON statement starts at the beginning of its block, as in M80
+(the rule of FORTRAN).
 .SS External Linkage
 .TP
 .B PUBLIC \fIsymbol\fR[,\fIsymbol\fR]...
@@ -226,29 +352,39 @@ Declare symbols defined in other modules.
 .SS Macros
 .TP
 \fIname\fB MACRO \fR[\fIparam\fR[,\fIparam\fR]...]
-Begin macro definition.
+Start a macro definition.
 .TP
 .B ENDM
-End macro definition.
+End the macro definition.
 .TP
 .B LOCAL \fIsymbol\fR[,\fIsymbol\fR]...
-Declare local symbols within a macro.  A LOCAL after a \fB!\fR declares them
-too (\fBNOP! LOCAL QQ\fR, \fBLOCAL QQ! NOP\fR), as in MAC, for the
-statements after it and the lines after it: in \fBLXI H,QQ! LOCAL QQ\fR the
-LXI reads the QQ outside the macro.
+Declare local symbols in a macro.
+.RS
+.PP
+A LOCAL after a \fB!\fR declares local symbols too, as in MAC
+(\fBNOP! LOCAL QQ\fR, \fBLOCAL QQ! NOP\fR).
+The symbols are local for the statements after the LOCAL and for the lines
+after the LOCAL.
+In \fBLXI H,QQ! LOCAL QQ\fR, the LXI reads the QQ outside the macro.
+.RE
 .TP
 .B EXITM
-Exit macro expansion early.
+Stop the macro expansion before the end of the macro.
 .TP
 .B <\fItext\fB>
 In a macro argument or an IRP item: \fItext\fR as it is, its commas and
-semicolons too.  The brackets go wherever they are in the argument
-(\fBMM 1<2>3\fR passes 123, \fBMM <1,2>3\fR 1,23), and only the outer ones
-(\fB<<A>>\fR is <A>), as in MACRO-80, MAC and RMAC.
+semicolons too.
+.RS
+.PP
+The brackets work wherever they are in the argument (\fBMM 1<2>3\fR passes
+123, \fBMM <1,2>3\fR passes 1,23).
+Only the outer brackets work (\fB<<A>>\fR is <A>).
+The rules are as in M80, MAC and RMAC.
+.RE
 .TP
 .B %\fIexpression\fR
 As a macro argument: the value of the expression when the macro is called,
-as digits in the current radix, written as MACRO-80 writes them (with
+as digits in the current radix, written as M80 writes them (with
 .B .RADIX 16,
 26 is 1A and 160 is 0A0).
 With
@@ -257,36 +393,36 @@ only an argument that starts with % is a value, as in MAC.
 .SS Repeat Blocks
 .TP
 .B REPT \fIcount\fR
-Repeat block \fIcount\fR times.
+Repeat the block \fIcount\fR times.
 .TP
 .B IRP \fIparam\fR,<\fIvalue\fR[,\fIvalue\fR]...>
-Repeat block for each value.
+Repeat the block for each value.
 .TP
 .B IRPC \fIparam\fR,\fIstring\fR
-Repeat block for each character in string.
+Repeat the block for each character of the string.
 .SS Conditional Assembly
 .TP
 .B IF \fIexpression\fR
-Assemble following code if expression is non-zero.
+Assemble the code that follows when the expression is not zero.
 .TP
 .B ELSE
-Assemble following code if IF was false.
+Assemble the code that follows when the IF was false.
 .TP
 .B ENDIF
-End conditional block.
+End the conditional block.
 .TP
 .B IFDEF \fIsymbol\fR
-Assemble if symbol is defined.
+Assemble the code that follows when the symbol is defined.
 .TP
 .B IFNDEF \fIsymbol\fR
-Assemble if symbol is not defined.
+Assemble the code that follows when the symbol is not defined.
 .SS Listing Control
 .TP
 .B TITLE \fItext\fR
-Set listing title.
+Set the listing title.
 .TP
 .B PAGE
-Start new listing page.
+Start a new listing page.
 .TP
 .B .LIST
 Enable listing output.
@@ -295,30 +431,46 @@ Enable listing output.
 Disable listing output.
 .TP
 .B .CREF\fR, \fB.XCREF
-Cross-reference listing on and off, as in MACRO-80; um80 writes no
-cross-reference file, and assembles nothing for them.
+Cross-reference listing on and off, as in M80.
+um80 writes no cross-reference file and assembles nothing for them.
 .SS Processor Mode
 .TP
 .B .Z80
-Enable Z80 instruction set.
+Enable the Z80 instruction set.
 .TP
 .B .8080
-Restrict to 8080 instruction set (default).
+Accept only the 8080 instruction set (default).
 .SS Include Files
 .TP
 .B INCLUDE \fIfilename\fR
-Include another source file: \fIfilename\fR.MAC if the name has no
-extension.
+Include another source file.
+If the name has no extension, um80 reads \fIfilename\fR.MAC.
 .TP
 .B MACLIB \fIname\fR
-Read a macro library: \fIname\fR.MAC, as in MACRO-80, which reads it as an
-INCLUDE file.  With \fB\-\-dri\fR \fIname\fR.LIB, as in MAC and RMAC,
-and then \fIname\fR.MAC.  A name with an extension is read from that file.
+Read a macro library.
+.RS
+.IP \(bu 2
+Without \fB\-\-dri\fR, um80 reads \fIname\fR.MAC, as M80 does.
+M80 reads the file as an INCLUDE file.
+.IP \(bu 2
+With \fB\-\-dri\fR, um80 reads \fIname\fR.LIB and then \fIname\fR.MAC,
+as MAC and RMAC do.
+.IP \(bu 2
+If the name has an extension, um80 reads that file.
+.RE
 .PP
-A file is looked for where the source is, then in the current directory,
-then in each \fB\-I\fR directory, by its name as written and then in upper
-and in lower case, as a CP/M file name has no case (DRI's sources say
-\fBmaclib diskdef\fR of DISKDEF.LIB).
+um80 searches for a file in this order:
+.IP 1. 3
+The directory of the source file.
+.IP 2. 3
+The current directory.
+.IP 3. 3
+Each \fB\-I\fR directory.
+.PP
+The search uses the name as written, and then the name in upper and in
+lower case.
+A CP/M file name has no letter case.
+For example, the sources of DRI say \fBmaclib diskdef\fR for DISKDEF.LIB.
 .SH EXPRESSIONS
 Expressions can include:
 .IP \(bu 2
@@ -338,19 +490,40 @@ Current location counter ($)
 .PP
 Operators: + \- * / MOD AND OR XOR NOT SHL SHR HIGH LOW
 .PP
-A unary minus or plus applies to the term after it, before * / MOD SHL
-SHR, as in MACRO-80 3.44 (\fB\-1 SHR 8\fR is 00FFH), and / and MOD divide
-signed (\fB8000H/2\fR is 0C000H; the remainder has the sign of the
-quotient).  With \fB\-\-dri\fR the sign applies to all of them and
-division is unsigned, as in MAC (0 and 4000H).  \fIx\fR MOD 0 is \fIx\fR;
-\fIx\fR/0 is an error, and with \fB\-\-dri\fR 0FFFFH, as in MAC.
+Without \fB\-\-dri\fR, as in M80 3.44:
+.IP \(bu 2
+A unary minus or plus applies to the term after it, before * / MOD SHL SHR.
+\fB\-1 SHR 8\fR is 00FFH.
+.IP \(bu 2
+/ and MOD divide signed.
+\fB8000H/2\fR is 0C000H.
+The remainder has the sign of the quotient.
 .PP
-An expression whose value depends on where the linker places a segment or on
-an external symbol, and that is not simply an address plus a constant (for
-example HIGH or LOW of a relocatable label, or any relocatable or external
-value in a one-byte field), is passed to the linker as REL extension link
-items, as MACRO-80 3.44 does. AND, OR, XOR, SHL, SHR and the comparisons have
-no linker operator and are errors on such a value in an instruction, DB or DW.
+With \fB\-\-dri\fR, as in MAC:
+.IP \(bu 2
+The sign applies to all of these operators.
+\fB\-1 SHR 8\fR is 0.
+.IP \(bu 2
+Division is unsigned.
+\fB8000H/2\fR is 4000H.
+.PP
+With and without \fB\-\-dri\fR, \fIx\fR MOD 0 is \fIx\fR.
+Without \fB\-\-dri\fR, \fIx\fR/0 is an error.
+With \fB\-\-dri\fR, \fIx\fR/0 is 0FFFFH, as in MAC.
+.PP
+um80 passes some expressions to the linker as REL extension link items,
+as M80 3.44 does.
+An expression is of this kind when both conditions are true:
+.IP \(bu 2
+The value of the expression depends on where the linker places a segment,
+or on an external symbol.
+.IP \(bu 2
+The expression is not simply an address plus a constant.
+Examples are HIGH or LOW of a relocatable label, and any relocatable or
+external value in a one-byte field.
+.PP
+AND, OR, XOR, SHL, SHR and the comparisons have no linker operator.
+On such a value in an instruction, DB or DW, they are errors.
 .SH EXAMPLES
 .TP
 Assemble with default output:
@@ -359,13 +532,13 @@ Assemble with default output:
 Specify output file:
 .B um80 \-o code.rel program.mac
 .TP
-Generate listing:
+Write a listing file:
 .B um80 \-l program.prn program.mac
 .TP
-Define symbol:
+Define a symbol:
 .B um80 \-D DEBUG=1 program.mac
 .TP
-Add include path:
+Add an include path:
 .B um80 \-I /usr/share/include program.mac
 .TP
 Export all symbols for debugging:
@@ -373,20 +546,20 @@ Export all symbols for debugging:
 .SH EXIT STATUS
 .TP
 .B 0
-Successful assembly (may include warnings).
+Successful assembly (the assembly can have warnings).
 .TP
 .B 1
 Assembly failed due to errors.
 .SH FILES
 .TP
 .I input.mac
-Assembly source file.
+Source file.
 .TP
 .I output.rel
-Relocatable object file.
+REL file.
 .TP
 .I output.prn
-Assembly listing (if requested).
+Listing file (if you ask for it).
 .SH SEE ALSO
 .BR ul80 (1),
 .BR ulib80 (1),
@@ -397,17 +570,23 @@ The original Microsoft MACRO-80 manual is in the retro_docs archive,
 https://github.com/avwohl/retro_docs/blob/main/um80_and_friends/m80.pdf
 .SH COMPATIBILITY
 .B um80
-is compatible with Microsoft MACRO-80 (M80) with the following notes:
+is compatible with Microsoft MACRO-80 (M80). These notes apply:
 .IP \(bu 2
-Source files can use Unix (LF) or DOS (CR/LF) line endings.
+A source file can have Unix (LF) or DOS (CR/LF) line endings.
 .IP \(bu 2
-Symbol names are converted to uppercase.
+um80 converts symbol names to uppercase.
 .IP \(bu 2
-The .REL file format is binary-compatible with the original: LINK-80 3.44
-loads um80's objects. LINK-80 refuses a symbol of more than 7 characters
-(more than 6 for an external inside a link-time expression), which um80
-writes in an extended form only ul80 reads. M80 itself writes the first 6
-characters of a PUBLIC or external name in the .REL, as
+The REL format of um80 is binary-compatible with the REL format of M80.
+LINK-80 (L80) 3.44 loads the REL files of um80.
+.IP \(bu 2
+L80 refuses a symbol of more than 7 characters.
+For an external symbol inside a link-time expression, the limit is
+6 characters.
+um80 writes such a symbol in an extended form, and only ul80 reads the
+extended form.
+.IP \(bu 2
+M80 itself writes the first 6 characters of a PUBLIC or external name in
+the REL file, as
 .B \-t
 does.
 .SH AUTHOR

@@ -16,73 +16,87 @@ ud80 \- 8080/Z80 disassembler for CP/M .COM files
 .I input.com
 .SH DESCRIPTION
 .B ud80
-is a disassembler for 8080 and Z80 binary files, designed to produce output
-compatible with the
+is a disassembler for 8080 and Z80 binary files.
+It writes output that is compatible with the
 .BR um80 (1)
-assembler. It converts CP/M .COM executable files (or raw binary files) back
-into assembly source code that can be modified and reassembled.
+assembler.
+It converts CP/M .COM executable files (or raw binary files) back
+into assembly source code.
+You can modify the source code and assemble it again.
 .PP
-The disassembler performs flow analysis starting from entry points to distinguish
-code from data. Unvisited bytes are output as DB directives. The output is
-designed to reassemble to an identical binary with um80.
+ud80 does a flow analysis from the entry points.
+The flow analysis distinguishes code from data.
+ud80 writes unvisited bytes as DB directives.
+The design goal is that um80 assembles the output to an identical binary.
 .SH OPTIONS
 .TP
 .B \-v\fR, \fB\-\-version
-Display version information and exit.
+Print version information and exit.
 .TP
 .BR \-z ", " \-\-z80
 Enable Z80 mode. In this mode:
 .RS
 .IP \(bu 2
-Z80 extended instructions are decoded (CB, DD, ED, FD prefixes)
+ud80 decodes the Z80 extended instructions (prefixes CB, DD, ED and FD)
 .IP \(bu 2
-Undocumented Z80 instructions are recognized
+ud80 recognizes the undocumented Z80 instructions
 .IP \(bu 2
-Zilog mnemonics are used in the output
+ud80 uses Zilog mnemonics in the output
 .RE
 .IP
-Without this flag, only 8080 instructions are decoded using Intel mnemonics.
+Without this option, ud80 decodes only 8080 instructions.
+ud80 then uses Intel mnemonics.
 .TP
 .BI \-o " output.mac"
-Specify the output file name. Default is the input file name with a .mac extension.
+Set the name of the output file.
+The default is the name of the input file with a .mac extension.
 .TP
 .BI \-e " address" "\fR[\fB,\fIlabel\fR]"
-Add an entry point at the specified hexadecimal address. Flow analysis will
-trace execution from this address. Can be specified multiple times.
+Add an entry point at the specified hexadecimal address.
+Flow analysis traces the execution from this address.
+You can repeat this option.
 .IP
-Optionally, specify a label name after a comma (e.g., \fB\-e 297a,ends\fR).
-The label will be used in the output instead of an auto-generated one.
+Optionally, write a label name after a comma, for example
+\fB\-e 297a,ends\fR.
+ud80 uses this label in the output in place of a generated label.
 .IP
-By default, the disassembler starts at the origin address (typically 0100h for
-CP/M programs). Use \-e to add additional entry points for code that isn't
-reached by normal flow (interrupt handlers, jump tables, etc.).
+By default, ud80 starts at the origin address.
+For CP/M programs, the origin address is typically 0100h.
+To add entry points for code that normal flow does not reach, use \-e.
+Examples of such code are interrupt handlers and jump tables.
 .TP
 .BI \-l " address" "\fR[\fB,\fIlabel\fR]"
-Add a label at the specified address without tracing it as code. Can be
-specified multiple times.
+Add a label at the specified address.
+ud80 does not trace the address as code.
+You can repeat this option.
 .IP
-Optionally, specify a label name after a comma (e.g., \fB\-l 4406,buffer\fR).
-If no label name is given, an auto-generated label (L\fIxxxx\fR) is used.
+Optionally, write a label name after a comma, for example
+\fB\-l 4406,buffer\fR.
+If you give no label name, ud80 uses a generated label (L\fIxxxx\fR).
 .IP
-Use this for data labels or for code that you want to label but not trace
-(e.g., when you know it's already reached by other means).
+Use this option for data labels.
+Use this option also for code that you want to label but not trace,
+for example when you know that other means already reach the code.
 .TP
 .BI \-d " start\-end"
-Force a range of addresses to be treated as data, not code. Both \fIstart\fR
-and \fIend\fR are hexadecimal addresses. The range is inclusive.
-Can be specified multiple times.
+Force a range of addresses to be data and not code.
+\fIstart\fR and \fIend\fR are hexadecimal addresses.
+The range is inclusive.
+You can repeat this option.
 .IP
-Use this for embedded data tables that might otherwise be incorrectly
-disassembled as instructions.
+Use this option for embedded data tables.
+Otherwise, ud80 can disassemble such tables incorrectly as instructions.
 .TP
 .BI \-t " start\-end"
-Mark a range of addresses as an address table. The range will be output as
-DW (define word) directives with labels where possible, instead of individual
-DB bytes. Both \fIstart\fR and \fIend\fR are hexadecimal addresses.
-Can be specified multiple times.
+Mark a range of addresses as an address table.
+ud80 writes the range as DW (define word) directives with labels where
+possible, not as individual DB bytes.
+\fIstart\fR and \fIend\fR are hexadecimal addresses.
+You can repeat this option.
 .IP
-Use this for jump tables or dispatch tables containing 16-bit addresses.
-The table entries will be output as:
+Use this option for jump tables or dispatch tables that contain 16-bit
+addresses.
+ud80 writes the table entries as follows:
 .RS
 .nf
 DW      L1234
@@ -92,26 +106,30 @@ DW      L5678
 .RE
 .TP
 .BI \-dc " start\-end"
-Mark a range as containing high-bit terminated strings. These are strings where
-the last character has bit 7 set (OR 80H). Common in keyword tables.
-Both \fIstart\fR and \fIend\fR are hexadecimal addresses.
-Can be specified multiple times.
+Mark a range as high-bit terminated strings.
+In these strings, the last character has bit 7 set (OR 80H).
+Keyword tables often have such strings.
+\fIstart\fR and \fIend\fR are hexadecimal addresses.
+You can repeat this option.
 .IP
-The output uses the DC directive which sets the high bit on the last character:
+The output uses the DC directive.
+The DC directive sets the high bit on the last character:
 .RS
 .nf
 DC      'ABC'
 .fi
 .RE
 .IP
-Note: Each \-dc marks one string region. Token bytes or other data between
-strings should not be included in the range.
+Each \-dc option marks one string region.
+Do not include token bytes or other data between strings in the range.
 .TP
 .BI \-da " start\-end" "\fR[,\fIlength\fR]"
-Mark a range as containing ASCII strings. Without a length parameter, strings
-end at a null byte (00H) or any non-printable character. With a length, strings
-are fixed-length. Both \fIstart\fR and \fIend\fR are hexadecimal addresses.
-Can be specified multiple times.
+Mark a range as ASCII strings.
+If you give no length parameter, strings end at a null byte (00H) or at any
+non-printable character.
+If you give a length, the strings have a fixed length.
+\fIstart\fR and \fIend\fR are hexadecimal addresses.
+You can repeat this option.
 .IP
 Examples:
 .RS
@@ -123,50 +141,57 @@ Examples:
 .IP
 Output format: \fBDB 'HELLO'\fR
 .br
-Any null terminator is output as a separate \fBDB 00H\fR directive.
+ud80 writes any null terminator as a separate \fBDB 00H\fR directive.
 .TP
 .BI \-\-org " address"
-Set the origin address (where the binary is loaded in memory). Default is 0100h,
-the standard CP/M transient program area. The address is in hexadecimal.
+Set the origin address (where the binary is loaded in memory).
+The default is 0100h, the standard CP/M transient program area.
+The address is in hexadecimal.
 .SH FLOW ANALYSIS
 .B ud80
-performs recursive descent disassembly starting from entry points:
+does a recursive descent disassembly from the entry points.
+The steps are:
 .IP 1. 3
-Begin at each entry point
+Begin with each entry point.
 .IP 2.
-Decode instructions, following sequential execution
+Decode the instructions and follow the sequential execution.
 .IP 3.
-When encountering branches (JMP, JNZ, CALL, etc.), queue branch targets
+When ud80 encounters a branch (for example JMP, JNZ or CALL), queue the
+branch target.
 .IP 4.
-Stop tracing at unconditional jumps, returns, and halts
+Stop the trace at an unconditional jump, a return or a halt.
 .IP 5.
-Continue until all reachable code is traced
+Continue until the trace covers all reachable code.
 .PP
 .B Post-jump gap detection:
-After an unconditional jump (JMP, RET, HLT), the bytes immediately following
-are typically data, not code. The disassembler automatically detects these
-"post-jump gaps" and marks them as data, preventing false code traces that
-might otherwise occur if stale addresses happen to point into these regions.
+After an unconditional jump (JMP, RET, HLT), the bytes that immediately follow
+are typically data and not code.
+ud80 automatically detects these "post-jump gaps" and marks them as data.
+The marking prevents false code traces.
+Such traces might otherwise occur if stale addresses happen to point into
+these regions.
 .PP
 .B Automatic jump table detection:
-The disassembler automatically detects address tables (jump/dispatch tables)
-using two methods:
+ud80 automatically detects address tables (jump tables and dispatch tables)
+with two methods:
 .IP \(bu 2
 .B Post-entry tables:
-After the initial JMP at an entry point, if the following bytes form a
-sequence of valid addresses (3 or more consecutive 16-bit values pointing
-within the code range), they are treated as an address table.
+Consider the bytes after the initial JMP at an entry point.
+If these bytes form a sequence of valid addresses, ud80 treats the bytes as an
+address table.
+A sequence has 3 or more consecutive 16-bit values that point within the code
+range.
 .IP \(bu 2
 .B Dispatch pattern detection:
-Code sequences like "LXI H,addr / DAD B" indicate a table lookup. The
-disassembler recognizes this pattern and marks the referenced address as
-a table base.
+A code sequence like "LXI H,addr / DAD B" indicates a table lookup.
+ud80 recognizes the pattern and marks the referenced address as a table base.
 .PP
-Automatically detected tables are output as DW directives with labels,
-making the disassembly more readable.
+ud80 writes automatically detected tables as DW directives with labels.
+The labels make the disassembly more readable.
 .PP
-This approach correctly identifies code vs. data in most cases, but may miss
-code only reached through computed jumps or interrupt vectors.
+This approach correctly distinguishes code from data in most cases.
+The approach can miss code that only a computed jump or an interrupt vector
+reaches.
 .SH OUTPUT FORMAT
 The output is a valid
 .BR um80 (1)
@@ -190,21 +215,23 @@ L0150:  MVI     A,0         ; Main entry
 .PP
 Features of the output:
 .IP \(bu 2
-Labels are generated for all branch targets (L\fIxxxx\fR format)
+ud80 writes labels for all branch targets (L\fIxxxx\fR format)
 .IP \(bu 2
-Unreachable bytes are output as DB directives
+ud80 writes unreachable bytes as DB directives
 .IP \(bu 2
-String-like data is shown as DB with ASCII strings where possible
+ud80 shows string-like data as DB with ASCII strings where possible
 .PP
 .B Note:
-The END directive is output without an entry point label. In CP/M, execution
-always begins at the load address (typically 0100H), so the entry point is
-implicit. The first linked module determines where execution starts. An
-END with an explicit label would only be useful for non-CP/M targets (such as
-ROM-based systems) where a startup JMP would be inserted at the load address.
+ud80 writes the END directive without a start address label.
+In CP/M, execution always begins at the load address (typically 0100H).
+Thus the start address is implicit.
+The first linked module determines where execution starts.
+An END with an explicit label would only be useful for non-CP/M targets
+(such as ROM-based systems).
+On these targets, a startup JMP would be inserted at the load address.
 .SH 8080 vs Z80 MODE
 .SS 8080 Mode (default)
-Uses Intel 8080 mnemonics:
+ud80 uses Intel 8080 mnemonics:
 .IP \(bu 2
 MOV, MVI, LXI for data movement
 .IP \(bu 2
@@ -216,7 +243,7 @@ JMP, JNZ, JZ, CALL, RET for control flow
 .IP \(bu 2
 Registers: A, B, C, D, E, H, L, M, SP, PSW
 .SS Z80 Mode (\-z)
-Uses Zilog Z80 mnemonics:
+ud80 uses Zilog Z80 mnemonics:
 .IP \(bu 2
 LD for most data movement
 .IP \(bu 2
@@ -228,10 +255,11 @@ JP, JR, CALL, RET, DJNZ for control flow
 .IP \(bu 2
 Additional registers: IX, IY, I, R
 .IP \(bu 2
-Extended instructions: LDIR, CPIR, bit operations, etc.
+Extended instructions: for example LDIR, CPIR and bit operations
 .PP
-Z80 mode also decodes the CB, DD, ED, and FD prefix instructions, including
-undocumented opcodes for the IXH, IXL, IYH, IYL registers.
+Z80 mode also decodes the instructions with the prefixes CB, DD, ED and FD.
+The decoded instructions include undocumented opcodes for the registers IXH,
+IXL, IYH and IYL.
 .SH EXAMPLES
 .TP
 Basic disassembly:
@@ -261,13 +289,14 @@ Non-CP/M binary at 0000h:
 Combine options:
 .B ud80 \-z \-e 0200 \-d 0300\-03FF \-t 0103\-0120 \-o source.mac game.com
 .SH ROUND-TRIP VERIFICATION
-To verify disassembly quality, reassemble and compare:
+To verify the quality of the disassembly, assemble the output again and compare
+the files:
 .PP
 .RS
 .nf
 ud80 program.com
-um80 program.mac
-ul80 program.rel
+um80 \-\-aseg program.mac
+ul80 \-o program.new program.rel
 cmp program.com program.new
 .fi
 .RE
@@ -276,9 +305,9 @@ If the files match, the disassembly is accurate.
 .SH TIPS
 .SS Finding Entry Points
 .IP \(bu 2
-Look for interrupt vectors at fixed addresses (RST handlers, etc.)
+Find the interrupt vectors at fixed addresses, for example RST handlers
 .IP \(bu 2
-Search for jump table patterns
+Find the jump table patterns
 .IP \(bu 2
 Examine call targets that flow analysis missed
 .SS Identifying Data
@@ -287,27 +316,27 @@ Strings of ASCII characters
 .IP \(bu 2
 Tables of addresses (pairs of bytes)
 .IP \(bu 2
-Sequences that don't decode as valid instructions
+Sequences that do not decode as valid instructions
 .IP \(bu 2
-Areas following unconditional jumps that aren't targeted by branches
+Areas after unconditional jumps that no branch targets
 .SS Iterative Refinement
 .IP 1. 3
-Run initial disassembly
+Run the first disassembly.
 .IP 2.
-Examine output for incorrectly decoded data
+Examine the output for data that ud80 decoded incorrectly.
 .IP 3.
-Add \-d flags for data regions
+Add \-d options for data regions.
 .IP 4.
-Add \-e flags for missed code
+Add \-e options for missed code.
 .IP 5.
-Re-disassemble and verify
+Disassemble again and verify the result.
 .SH EXIT STATUS
 .TP
 .B 0
 Disassembly successful.
 .TP
 .B 1
-Error occurred (file not found, invalid address, etc.).
+An error occurred, for example file not found or invalid address.
 .SH FILES
 .TP
 .I input.com
@@ -317,13 +346,14 @@ Input binary file (CP/M executable or raw binary).
 Output assembly source file.
 .SH LIMITATIONS
 .IP \(bu 2
-Self-modifying code cannot be correctly disassembled.
+ud80 cannot disassemble self-modifying code correctly.
 .IP \(bu 2
-Computed jumps (JP (HL), etc.) don't contribute to flow analysis.
+Computed jumps, for example JP (HL), do not contribute to flow analysis.
 .IP \(bu 2
-Overlay areas or banked memory cannot be handled automatically.
+ud80 cannot process overlay areas or banked memory automatically.
 .IP \(bu 2
-CP/M system calls are not annotated (would require additional analysis).
+ud80 does not annotate CP/M system calls.
+An annotation would require additional analysis.
 .SH SEE ALSO
 .BR um80 (1),
 .BR ul80 (1),
@@ -331,9 +361,9 @@ CP/M system calls are not annotated (would require additional analysis).
 .BR ucref80 (1)
 .SH HISTORY
 .B ud80
-was created as a companion tool for the um80 assembler toolchain. Unlike the
-other tools which are implementations of Microsoft originals, ud80 is a new
-tool designed to complement the toolchain by enabling disassembly of existing
-CP/M programs.
+was created as a companion tool for the um80 assembler toolchain.
+Unlike ud80, the other tools are implementations of Microsoft originals.
+ud80 is a new tool that the designers made to complement the toolchain.
+ud80 disassembles existing CP/M programs.
 .SH AUTHOR
 um80 project contributors.

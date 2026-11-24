@@ -2,26 +2,31 @@
 
 A complete Unix/Linux implementation of Microsoft's classic CP/M development tools from the 1980s:
 
-- **um80** - MACRO-80 compatible assembler for 8080/Z80
-- **ul80** - LINK-80 compatible linker
+- **um80** - MACRO-80 (M80) compatible assembler for 8080/Z80
+- **ul80** - LINK-80 (L80) compatible linker
 - **ulib80** - LIB-80 compatible library manager
-- **ucref80** - Cross-reference utility
-- **ud80** - 8080/Z80 disassembler for CP/M .COM files
-- **ux80** - 8080 to Z80 assembly source translator
+- **ucref80** - cross-reference program
+- **ud80** - 8080/Z80 disassembler for CP/M COM files
+- **ux80** - translator from 8080 source files to Z80 source files
 - **udb80** - source-level debugger for programs that run in cpmemu (0.4.0 and later)
 - **dbg2elf** - writes an ELF file with DWARF from `prog.dbg`, for GDB (0.4.0 and later)
 
-These tools can assemble, link, and manage 8080/Z80 assembly code to produce CP/M-compatible .COM executables on modern Linux systems.
+These tools can assemble, link, and manage 8080/Z80 assembly code.
+With these tools, you can assemble, link, and manage 8080/Z80 assembly code to make CP/M-compatible .COM executables on modern Linux systems.
 
 ## Installation
 
 ### From PyPI (recommended)
+
+Install the um80 package from PyPI:
 
 ```bash
 pip install um80
 ```
 
 ### From source
+
+Clone the repository and install the package from the clone:
 
 ```bash
 git clone https://github.com/avwohl/um80_and_friends.git
@@ -30,6 +35,8 @@ pip install -e .
 ```
 
 ## Quick Start
+
+Assemble the source files, make a library, link the program, and run the program:
 
 ```bash
 # Assemble source files
@@ -43,23 +50,24 @@ ulib80 -c mylib.lib helper.rel support.rel
 ul80 -o program.com main.rel util.rel mylib.lib
 
 # Run in CP/M emulator
-cpm program.com
+cpmemu program.com
 ```
 
-Each tool has many more options. [docs/tools.md](https://github.com/avwohl/um80_and_friends/blob/main/docs/tools.md) has a command summary for each tool.
+Each tool has many more options.
+[docs/tools.md](https://github.com/avwohl/um80_and_friends/blob/main/docs/tools.md) has a command summary for each tool.
 
 ## Documentation
 
-- [docs/tools.md](https://github.com/avwohl/um80_and_friends/blob/main/docs/tools.md): command summary, tools reference, file formats, installing the man pages
-- [docs/compatibility.md](https://github.com/avwohl/um80_and_friends/blob/main/docs/compatibility.md): compatibility notes, extended symbol names, DRI syntax extensions (summary)
-- [docs/EXTENSIONS.md](https://github.com/avwohl/um80_and_friends/blob/main/docs/EXTENSIONS.md): extensions beyond M80/L80, in full detail
+- [docs/tools.md](https://github.com/avwohl/um80_and_friends/blob/main/docs/tools.md): command summary, tools reference, file formats, how to install the man pages
+- [docs/compatibility.md](https://github.com/avwohl/um80_and_friends/blob/main/docs/compatibility.md): compatibility notes, extended symbol names, Digital Research (DRI) syntax extensions (summary)
+- [docs/EXTENSIONS.md](https://github.com/avwohl/um80_and_friends/blob/main/docs/EXTENSIONS.md): extensions beyond M80 and L80, in full detail
 - [docs/ul80_rom.md](https://github.com/avwohl/um80_and_friends/blob/main/docs/ul80_rom.md): ul80 options for ROM images (data origin, ROM data copy, raw binary, size checks)
 - [docs/debug_info.md](https://github.com/avwohl/um80_and_friends/blob/main/docs/debug_info.md): debug information (`--debug-info`): the `;#` markers, the `.dbm` and `.dbg` files
-- [docs/udb80.md](https://github.com/avwohl/um80_and_friends/blob/main/docs/udb80.md): udb80, the source-level debugger for cpmemu: `break`, `step`, `next`, `bt`, `print` of C variables, `addr2line`, `sizes`
-- [docs/gdb.md](https://github.com/avwohl/um80_and_friends/blob/main/docs/gdb.md): GDB for Z80 programs: build GDB 18.1, `dbg2elf` (prog.dbg to an ELF file with DWARF), the Python unwinder, variables
-- [docs/frame_records.md](https://github.com/avwohl/um80_and_friends/blob/main/docs/frame_records.md): backtrace from the frame records of `prog.dbg` (no shadow call stack needed), `udb80 bt-dump`
+- [docs/udb80.md](https://github.com/avwohl/um80_and_friends/blob/main/docs/udb80.md): udb80, the source-level debugger for cpmemu. Topics: `break`, `step`, `next`, `bt`, `print` of C variables, `addr2line`, `sizes`
+- [docs/gdb.md](https://github.com/avwohl/um80_and_friends/blob/main/docs/gdb.md): GDB for Z80 programs. Topics: build GDB 18.1, `dbg2elf` (`prog.dbg` to an ELF file with DWARF), the Python unwinder, variables
+- [docs/frame_records.md](https://github.com/avwohl/um80_and_friends/blob/main/docs/frame_records.md): the backtrace from the frame records of `prog.dbg` (the backtrace needs no shadow call stack), and `udb80 bt-dump`
 - [docs/testing.md](https://github.com/avwohl/um80_and_friends/blob/main/docs/testing.md): the test suite, the M80 compatibility tests, the mbasic2025 byte-for-byte test
-- [docs/mbasic2025.md](https://github.com/avwohl/um80_and_friends/blob/main/docs/mbasic2025.md): mbasic2025 built with um80/ul80 and with the genuine M80/L80
+- [docs/mbasic2025.md](https://github.com/avwohl/um80_and_friends/blob/main/docs/mbasic2025.md): mbasic2025 built with um80 and ul80, and built with M80 and L80
 - [docs/index.md](https://github.com/avwohl/um80_and_friends/blob/main/docs/index.md): quick reference, examples, troubleshooting
 - [docs/ISSUES.md](https://github.com/avwohl/um80_and_friends/blob/main/docs/ISSUES.md): open issues
 - [CHANGELOG.md](https://github.com/avwohl/um80_and_friends/blob/main/CHANGELOG.md): release history

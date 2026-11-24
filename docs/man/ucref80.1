@@ -9,9 +9,9 @@ ucref80 \- cross-reference utility for MACRO-80 assembly files
 [\fIfile.mac\fR]...
 .SH DESCRIPTION
 .B ucref80
-generates a cross-reference listing for MACRO-80 assembly source files. The
-listing shows where each symbol is defined and referenced, making it easier
-to understand and maintain assembly code.
+writes a cross-reference listing for MACRO-80 (M80) assembly source files.
+The listing shows where each symbol is defined and referenced.
+The listing helps the reader to understand and maintain assembly code.
 .PP
 The cross-reference output includes:
 .IP \(bu 2
@@ -28,14 +28,16 @@ Symbol attributes (PUBLIC, EXTERNAL, MACRO)
 Display version information and exit.
 .TP
 .BI \-o " output.txt"
-Write the cross-reference listing to the specified file instead of standard output.
+Write the cross-reference listing to the specified file
+instead of standard output.
 .SH ARGUMENTS
 .TP
 .I file.mac
-One or more assembly source files to analyze. Multiple files are processed
-together, so cross-file references are tracked.
+One or more assembly source files to analyze.
+ucref80 processes multiple files together.
+ucref80 tracks references across files.
 .SH OUTPUT FORMAT
-The output consists of one entry per symbol:
+The output has one entry for each symbol:
 .PP
 .RS
 .nf
@@ -45,17 +47,17 @@ SYMBOL_NAME
 .fi
 .RE
 .PP
-Special attributes are noted after the symbol name:
+A special attribute follows the symbol name:
 .IP \(bu 2
-(PUBLIC) \- Symbol declared PUBLIC
+(PUBLIC) \- The symbol has a PUBLIC declaration
 .IP \(bu 2
-(EXTERNAL) \- Symbol declared EXTRN
+(EXTERNAL) \- The symbol has an EXTRN declaration
 .IP \(bu 2
-(MACRO) \- Symbol is a macro name
+(MACRO) \- The symbol is a macro name
 .SH SYMBOLS TRACKED
 The cross-reference tracks:
 .IP \(bu 2
-Labels (lines ending with colon)
+Labels (lines that end with a colon)
 .IP \(bu 2
 EQU/SET/DEFL definitions
 .IP \(bu 2
@@ -67,11 +69,19 @@ Macro names
 .IP \(bu 2
 All symbol references in instructions and expressions
 .PP
-Reserved words (instructions, directives, registers) are excluded from the listing.
-A name is read as MACRO-80 reads it: letters, digits and \fB$ . ? @ _\fR, and a digit
-does not start one.  A dot may begin a name or be inside it (\fB.FOO\fR, \fBX.1\fR).
-A dot-directive (\fB.Z80\fR, ...) is reserved, but with a colon at once after it
-the word is a label.  A number, a string and a comment give no symbol.
+The listing excludes reserved words (instructions, directives and registers).
+.PP
+ucref80 reads a name as M80 reads a name:
+.IP \(bu 2
+A name has letters, digits and \fB$ . ? @ _\fR.
+.IP \(bu 2
+A digit does not start a name.
+.IP \(bu 2
+A dot can begin a name or be inside a name (\fB.FOO\fR, \fBX.1\fR).
+.PP
+A dot-directive (\fB.Z80\fR, ...) is a reserved word.
+If a colon follows the dot-directive at once, the word is a label.
+A number, a string and a comment give no symbol.
 .SH EXAMPLES
 .TP
 Analyze a single file:
@@ -80,7 +90,7 @@ Analyze a single file:
 Analyze multiple files:
 .B ucref80 main.mac io.mac util.mac
 .TP
-Save to file:
+Write the listing to a file:
 .B ucref80 \-o xref.txt *.mac
 .TP
 Analyze all .mac files:
@@ -91,20 +101,20 @@ Analyze all .mac files:
 Analysis successful.
 .TP
 .B 1
-Error occurred (file not found, etc.).
+An error occurred (for example, a file is not found).
 .SH USE CASES
 .IP \(bu 2
 .B Finding unused symbols:
-Symbols with no references may be dead code.
+A symbol with no references may be dead code.
 .IP \(bu 2
 .B Impact analysis:
-Before modifying a symbol, see everywhere it's used.
+Before you change a symbol, find every place where the program uses the symbol.
 .IP \(bu 2
 .B Code documentation:
 The cross-reference serves as a symbol index.
 .IP \(bu 2
 .B Debugging:
-Verify symbols are defined and referenced correctly.
+Make sure that the program defines and references the symbols correctly.
 .SH SEE ALSO
 .BR um80 (1),
 .BR ul80 (1),
@@ -115,11 +125,14 @@ The original Microsoft CREF manual is in the retro_docs archive,
 https://github.com/avwohl/retro_docs/blob/main/um80_and_friends/cref_lib.pdf
 .SH LIMITATIONS
 .IP \(bu 2
-Only processes .MAC source files (not .REL object files).
+ucref80 processes only .MAC source files.
+ucref80 does not process .REL object files.
 .IP \(bu 2
-Macro expansion is not performed; references inside macros are to the
-parameter names, not the expanded values.
+ucref80 does not expand macros.
+A reference inside a macro is a reference to a parameter name.
+A reference inside a macro is not a reference to the expanded value.
 .IP \(bu 2
-Conditional assembly is not evaluated; all branches are scanned.
+ucref80 does not evaluate conditional assembly.
+ucref80 scans all branches.
 .SH AUTHOR
 um80 project contributors.

@@ -8,22 +8,24 @@ ux80 \- translate Intel 8080 assembly to Zilog Z80 assembly
 .I input.mac
 .SH DESCRIPTION
 .B ux80
-is a source-to-source translator that converts Intel 8080 assembly language
-to Zilog Z80 assembly language. The translated code assembles to an identical
-binary as the original 8080 source when processed by an assembler that
-supports both instruction sets.
+is a source-to-source translator.
+.B ux80
+translates Intel 8080 assembly language to Zilog Z80 assembly language.
+An assembler that accepts both instruction sets assembles the translated code
+to a binary that is identical to the binary of the original 8080 source.
 .PP
-The translator:
+.B ux80
+does these actions:
 .IP \(bu 2
-Converts all 8080 mnemonics to their Z80 equivalents
+Translates all 8080 mnemonics to their Z80 equivalents
 .IP \(bu 2
-Preserves all comments, labels, macros, and formatting
+Keeps all comments, labels, macros, and formatting
 .IP \(bu 2
-Passes through assembler directives unchanged
+Writes assembler directives to the output without change
 .IP \(bu 2
 Automatically adds a \fB.Z80\fR directive at the start of the output
 .IP \(bu 2
-Handles both single-colon (:) and double-colon (::) label syntax
+Handles labels with a single colon (:) and labels with a double colon (::)
 .PP
 The output is designed to be assembled with
 .BR um80 (1)
@@ -31,15 +33,16 @@ or any compatible Z80 assembler.
 .SH OPTIONS
 .TP
 .B \-v\fR, \fB\-\-version
-Display version information and exit.
+Write the version information and exit.
 .TP
 .BI \-o " output.mac"
-Specify the output file name. If not specified, the output file is named
-by appending \fB_z80\fR before the extension of the input file
-(e.g., \fIprogram.mac\fR becomes \fIprogram_z80.mac\fR).
+Set the name of the output file.
+If you do not give this option, ux80 uses the name of the input file
+with \fB_z80\fR before the extension.
+For example, \fIprogram.mac\fR becomes \fIprogram_z80.mac\fR.
 .TP
 .B \-h\fR, \fB\-\-help
-Show usage information and exit.
+Show the usage information and exit.
 .SH INSTRUCTION TRANSLATION
 .SS Data Movement
 .TS
@@ -176,7 +179,8 @@ D	DE	D register pair (also D alone)
 H	HL	H register pair (also H alone)
 .TE
 .SH DIRECTIVES
-Assembler directives are passed through unchanged. This includes:
+ux80 does not change assembler directives.
+The directives include:
 .IP \(bu 2
 ORG, END, EQU, SET, DEFL
 .IP \(bu 2
@@ -192,18 +196,18 @@ MACRO, ENDM, LOCAL, REPT, IRP, IRPC
 .IP \(bu 2
 INCLUDE, INCBIN
 .IP \(bu 2
-TITLE, SUBTTL, PAGE, .SALL, .LALL, .XALL
+TITLE, SUBTTL, PAGE, \&.SALL, \&.LALL, \&.XALL
 .IP \(bu 2
-.Z80, .8080 (mode directives)
+\&.Z80, \&.8080 (mode directives)
 .PP
-A \fB.Z80\fR directive is automatically added at the beginning of the output
-file if not already present in the input.
+ux80 adds a \fB.Z80\fR directive at the beginning of the output file.
+ux80 does this only if the input does not already have the directive.
 .SH EXAMPLES
 .TP
 Basic translation:
 .B ux80 program.mac
 .IP
-Creates \fIprogram_z80.mac\fR with Z80 mnemonics.
+ux80 writes \fIprogram_z80.mac\fR with Z80 mnemonics.
 .TP
 Custom output file:
 .B ux80 \-o z80_version.mac program.mac
@@ -215,7 +219,7 @@ Translate and assemble:
 .B ul80 program_z80.rel
 .fi
 .SH ROUND-TRIP VERIFICATION
-To verify that the translation produces identical binaries:
+To verify that the translation gives identical binaries, do these steps:
 .PP
 .RS
 .nf
@@ -235,32 +239,39 @@ cmp orig.com z80.com && echo "Identical!"
 .SH NOTES
 .SS Why Translate?
 .IP \(bu 2
-Z80 mnemonics are often considered more readable and consistent
+People often consider Z80 mnemonics more readable and more consistent.
 .IP \(bu 2
-Enables use of Z80-specific tools and assemblers
+You can use tools and assemblers that are specific to the Z80.
 .IP \(bu 2
-Facilitates mixing translated code with new Z80-native code
+You can mix translated code with new Z80-native code.
 .IP \(bu 2
-Some assemblers only support Z80 syntax
+Some assemblers accept only Z80 syntax.
 .SS Limitations
 .IP \(bu 2
-Z80-only instructions (IX, IY, block moves, etc.) must be added manually
+You must add Z80-only instructions manually.
+Examples include the instructions for IX and IY, and block moves.
 .IP \(bu 2
-The translator does not optimize for Z80-specific features
+ux80 does not optimize for features that are specific to the Z80.
 .IP \(bu 2
-Code that was specifically written for 8080 timing may need adjustment
+Code that the programmer wrote specifically for 8080 timing can need
+adjustment.
 .SS SET Directive
-The 8080 \fBSET\fR assembler directive (reassignable equate) is preserved
-in the output. In Z80 mode, the assembler distinguishes between the \fBSET\fR
-directive (which has a label) and the Z80 \fBSET\fR instruction (which sets
-a bit in a register and has no label).
+ux80 keeps the 8080 \fBSET\fR assembler directive (reassignable equate)
+in the output.
+In Z80 mode, the assembler distinguishes between two items:
+.IP \(bu 2
+The \fBSET\fR directive has a label.
+.IP \(bu 2
+The Z80 \fBSET\fR instruction sets a bit in a register.
+The Z80 \fBSET\fR instruction has no label.
 .SH EXIT STATUS
 .TP
 .B 0
 Translation successful.
 .TP
 .B 1
-Error occurred (file not found, syntax error, etc.).
+An error occurred.
+Examples include file not found and syntax error.
 .SH FILES
 .TP
 .I input.mac
@@ -276,8 +287,10 @@ Output Z80 assembly source file.
 .BR ucref80 (1)
 .SH HISTORY
 .B ux80
-was created as part of the um80 toolchain to facilitate working with legacy
-8080 assembly code in Z80-based projects. The 8080 and Z80 processors share
-the same basic instruction set, but use different assembly language syntax.
+was created as part of the um80 toolchain.
+Its purpose is to help you work with legacy 8080 assembly code in Z80-based
+projects.
+The 8080 and Z80 processors have the same basic instruction set.
+The two processors use different assembly language syntax.
 .SH AUTHOR
 um80 project contributors.
