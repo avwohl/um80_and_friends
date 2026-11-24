@@ -2199,83 +2199,87 @@ def main():
     parser = argparse.ArgumentParser(description='ul80 - LINK-80 compatible linker')
     parser.add_argument('-v', '--version', action='version', version=f'%(prog)s {__version__}')
     parser.add_argument('inputs', nargs='+', help='Input .REL and .LIB files')
-    parser.add_argument('-o', '--output', help='Output file (default: first input with .com)')
-    parser.add_argument('-x', '--hex', action='store_true', help='Output Intel HEX format')
+    parser.add_argument('-o', '--output', help='Output file (default: the first input file, with the extension .com)')
+    parser.add_argument('-x', '--hex', action='store_true', help='Write a HEX file (Intel HEX format)')
     parser.add_argument('--prl', action='store_true',
-                       help='Output MP/M .PRL (Page Relocatable) transient, linked at 100H')
+                       help='Write an MP/M PRL file (Page Relocatable) for a transient program, linked at 100H')
     parser.add_argument('--spr', action='store_true',
-                       help='Output MP/M .SPR/.RSP (System Page Relocatable), linked at 0')
+                       help='Write an MP/M SPR file (System Page Relocatable, extension .SPR or .RSP), linked at 0')
     parser.add_argument('--extra', metavar='HEX', default='0',
                        type=lambda x: int(x, 16) if not x.startswith(('0x', '0X')) else int(x, 0),
-                       help='Extra memory (hex) a .PRL asks MP/M for beyond its '
-                            'image, for storage placed at .MEMORY (GENMOD\'s third argument)')
+                       help='Extra memory (in hexadecimal) that a PRL file asks MP/M for '
+                            'beyond its image, for storage placed at .MEMORY '
+                            '(the third argument of GENMOD)')
     parser.add_argument('--allow-overlap', action='store_true',
                        help='Link absolute code that loads over other code (a '
-                            'patch or overlay module), with a warning, as '
-                            'LINK-80 does: the byte loaded last is the one in '
-                            'the image (default: an error)')
+                            'patch module or an overlay module), with a '
+                            'warning, as LINK-80 does: the byte loaded last '
+                            'is the one in the image (default: an error)')
     parser.add_argument('--fatal-mult-def', action='store_true',
-                       help='A global that more than one module defines is an '
-                            'error: no output, exit status 1 (default: '
-                            'LINK-80\'s %%Mult. Def. Global warning; the first '
-                            'definition is used and the output written)')
+                       help='A public symbol that more than one module defines '
+                            'is an error: no output, exit status 1 (default: '
+                            'a warning, as in LINK-80 ("%%Mult. Def. '
+                            'Global"). ul80 uses the first definition and '
+                            'writes the output)')
     parser.add_argument('--no-ds-zeros', action='store_true',
-                       help='Do not emit zeros for DS (reserve space) directives (default: emit zeros)')
-    parser.add_argument('-s', '--sym', action='store_true', help='Generate .SYM symbol file')
-    parser.add_argument('-S', '--sym-file', metavar='FILE', help='Generate .SYM symbol file with specified name')
+                       help='Do not write zeros for DS (reserve space) directives (default: write zeros)')
+    parser.add_argument('-s', '--sym', action='store_true', help='Write a .SYM symbol file')
+    parser.add_argument('-S', '--sym-file', metavar='FILE', help='Write a .SYM symbol file with the specified name')
     parser.add_argument('-p', '--origin', type=lambda x: int(x, 16) if not x.startswith(('0x', '0X', '0o', '0O', '0b', '0B')) else int(x, 0), default=None,
-                       help='Program origin as hex (e.g., E000, 0xE000; default: 0 for SPR, 100 for PRL and COM)')
+                       help='Program origin in hexadecimal (for example E000 or 0xE000, default: 0 for SPR, 100 for PRL and COM)')
 
     parser.add_argument('--equ-file', metavar='FILE', default=None,
-                        help='Write every global as NAME EQU 0xxxxH, for a '
+                        help='Write every public symbol as NAME EQU 0xxxxH, for a '
                              'module of another image (a bank) to INCLUDE')
     parser.add_argument('-d', '--data-origin', metavar='ADDR', type=_hex_arg,
                         default=None,
-                        help='Address (hex) where DSEG is placed, COMMON '
-                             'after it (LINK-80 /D:; default: after the '
-                             'code)')
+                        help='Address (in hexadecimal) where DSEG is placed, '
+                             'COMMON after it (LINK-80 /D:, default: after '
+                             'the code)')
     parser.add_argument('--common-origin', metavar='ADDR', type=_hex_arg,
                         default=None,
-                        help='Address (hex) where COMMON (BSS) is placed '
+                        help='Address (in hexadecimal) where COMMON (BSS) is placed '
                              '(default: after DSEG)')
     parser.add_argument('--rom-data', action='store_true',
                         help='ROM image: store the initial bytes of DSEG '
                              'after the code while its symbols are at '
-                             '--data-origin (RAM); defines __DATA_ROM, '
-                             '__DATA_RAM, __DATA_LEN, __DATA_END')
+                             '--data-origin (RAM). ul80 defines __DATA_ROM, '
+                             '__DATA_RAM, __DATA_LEN and __DATA_END')
     parser.add_argument('--bin', action='store_true',
-                        help='Raw binary output from the origin (-p): no '
-                             '128-byte padding, gaps are --fill')
+                        help='Write a BIN file: a raw image from the origin (-p), '
+                             'with no 128-byte padding. --fill gives the '
+                             'byte for the gaps')
     parser.add_argument('--fill', metavar='BYTE', type=_hex_arg,
                         default=0xFF,
-                        help='Fill byte (hex) of gaps and padding with '
+                        help='Fill byte (in hexadecimal) of gaps and padding with '
                              '--bin (default: FF)')
     parser.add_argument('--rom-size', metavar='N', type=_hex_arg,
                         default=None,
-                        help='ROM size (hex): --bin pads the image to N '
-                             'bytes; a larger image is an error')
+                        help='ROM size (in hexadecimal). --bin pads the image '
+                             'to N bytes. A larger image is an error')
     parser.add_argument('--ram-end', metavar='ADDR', type=_hex_arg,
                         default=None,
-                        help='First address (hex) past RAM (10000 for the '
-                             'top of memory): data and BSS past it are an '
-                             'error')
+                        help='First address (in hexadecimal) past RAM (10000 '
+                             'for the top of memory). Data and BSS past RAM '
+                             'are an error')
     parser.add_argument('--ram-size', metavar='N', type=_hex_arg,
                         default=None,
-                        help='Size of RAM (hex) from --data-origin: the '
+                        help='Size of RAM (in hexadecimal) from --data-origin: the '
                              'same check as --ram-end')
     parser.add_argument('--min-stack', metavar='N', type=_hex_arg, default=0,
-                        help='Bytes (hex) that must stay free after BSS for '
+                        help='Bytes (in hexadecimal) that must stay free after BSS for '
                              'the stack (with --ram-end or --ram-size)')
     parser.add_argument('--verbose', action='store_true',
-                        help='Print a one-line ROM and RAM usage summary')
+                        help='Write a one-line summary of ROM usage and RAM usage')
     parser.add_argument('--debug-info', action='store_true',
-                        help='Also write NAME.dbg beside the output file: the '
-                             'addresses of the source lines, the routines and '
-                             'all labels, from the .dbm file of each module '
-                             '(beside its .rel, or in the library), and the '
-                             'length and SHA-256 of the output file '
+                        help='Also write NAME.dbg in the same directory as the '
+                             'output file: the addresses of the source lines, '
+                             'the routines and all labels, from the .dbm file '
+                             'of each module (in the same directory as its '
+                             '.rel file, or in the library), and the length '
+                             'and SHA-256 of the output file '
                              '(docs/debug_info.md). The output file is the '
-                             'same with and without it')
+                             'same with and without this option')
     parser.add_argument('--debug-file', metavar='FILE', default=None,
                         help='Name of the file --debug-info writes')
 

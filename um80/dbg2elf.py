@@ -981,7 +981,8 @@ def main(argv=None):
     ap.add_argument('dbg', nargs='?', help='prog.dbg, written by ul80 --debug-info')
     ap.add_argument('program', nargs='?',
                     help='the program file (default: the file that prog.dbg names)')
-    ap.add_argument('-o', '--output', help='ELF file (default: prog.elf beside prog.dbg)')
+    ap.add_argument('-o', '--output', help='ELF file (default: prog.elf in the same directory as '
+                    'prog.dbg)')
     ap.add_argument('--comp-dir', help='directory that relative source paths '
                     'start from (default: the directory of prog.dbg)')
     ap.add_argument('--asm-lines', choices=('auto', 'always', 'never'), default='auto',
@@ -997,8 +998,8 @@ def main(argv=None):
     ap.add_argument('--ix-locals', choices=('off', 'fbreg'), default='fbreg',
                     help='variables at IX+N: fbreg (the default: DW_OP_fbreg '
                     'with the call frame CFA that udb80_unwind.py gives as '
-                    'the frame base) or off (no DWARF record; the GDB helper '
-                    'udb80_vars.py still reads them)')
+                    'the frame base) or off (no DWARF record, and the GDB helper '
+                    'udb80_vars.py still reads the variables)')
     ap.add_argument('--language', choices=('c', 'asm'), default='c')
     ap.add_argument('--unwinder-path', action='store_true',
                     help='print the path of the GDB Python unwinder and stop')

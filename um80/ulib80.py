@@ -512,8 +512,9 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""Examples:
   ulib80 -c mylib.lib foo.rel bar.rel    Create library from REL files
-                                         (a foo.dbm beside foo.rel is stored
-                                         with the module)
+                                         (a foo.dbm in the same directory
+                                         as foo.rel is stored with the
+                                         module)
   ulib80 -l mylib.lib                    List modules in library
   ulib80 -p mylib.lib                    List public symbols
   ulib80 -x mylib.lib                    Extract all modules

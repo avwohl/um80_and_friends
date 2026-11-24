@@ -6951,46 +6951,49 @@ class PreAction(argparse.Action):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='um80 - MACRO-80 compatible assembler')
+    parser = argparse.ArgumentParser(description='um80 - an assembler that follows MACRO-80 (M80)')
     parser.add_argument('-v', '--version', action='version', version=f'%(prog)s {__version__}')
-    parser.add_argument('input', help='Input .MAC file')
-    parser.add_argument('-o', '--output', help='Output .REL file')
-    parser.add_argument('-l', '--listing', help='Listing .PRN file')
+    parser.add_argument('input', help='Source file (.MAC)')
+    parser.add_argument('-o', '--output', help='Output REL file')
+    parser.add_argument('-l', '--listing', help='Listing file (.PRN)')
     parser.add_argument('-D', '--define', action='append', metavar='SYMBOL[=VALUE]',
                         help='Define symbol (can be used multiple times)')
     parser.add_argument('-I', '--include', action='append', metavar='PATH',
                         help='Add include search path (can be used multiple times)')
     parser.add_argument('-e', '--execute', action=PreAction, metavar='CODE',
-                        help='Execute assembly code before source (can be repeated, use ! for multiple statements)')
+                        help='Assemble CODE before the source file (can be repeated, '
+                             'use ! for more than one statement)')
     parser.add_argument('--pre', action=PreAction, metavar='FILE',
-                        help='Include file before source (can be repeated)')
+                        help='Include a file before the source file (can be repeated)')
     parser.add_argument('-g', '--globals', action='store_true',
                         help='Export all symbols as PUBLIC (for debug symbol files)')
     parser.add_argument('--debug-info', action='store_true',
-                        help='Also write NAME.dbm beside the .rel file: for each '
-                             'instruction and data statement its bytes, its '
-                             'source line and the ;# markers in force, and all '
-                             'labels (docs/debug_info.md). The .rel is the same '
-                             'with and without it')
+                        help='Also write the DBM file NAME.dbm in the same '
+                             'directory as the REL file. The DBM file has, for '
+                             'each instruction and data statement, its bytes, '
+                             'its source line and the active ;# markers, and '
+                             'all labels (docs/debug_info.md). The REL file is '
+                             'the same with and without this option')
     parser.add_argument('-t', '--truncate', action='store_true',
                         help='Cut PUBLIC, EXTRN, ## external and module names '
-                             'to 6 characters in the .REL, as M80 does')
+                             'to 6 characters in the REL file, as M80 does')
     parser.add_argument('--aseg', action='store_true',
-                       help='Assemble as absolute code, the way DRI\'s MAC does: '
+                       help='Assemble as absolute code, as MAC does: '
                             'the file starts in ASEG, so ORG is an absolute address')
     parser.add_argument('--dri', action='store_true',
-                        help='Read the source as DRI\'s MAC and RMAC do where they '
-                             'differ from M80: a $ inside a name is ignored '
-                             '(NMB$LST is NMBLST), a macro body is read with '
-                             'MAC\'s names, an IF a macro body leaves open '
-                             'ends with it, a label needs no colon, PUSH A is '
-                             'PUSH PSW, = < <= > >= <> are relations, a ! '
-                             'ends a comment and starts a statement, \'AB\' is '
-                             '4241H, IF is true when bit 0 is set, / is '
-                             'unsigned, and MACLIB NAME reads NAME.LIB in pass 1 '
-                             'only')
+                        help='Read the source as MAC and RMAC read it where they '
+                             'differ from M80. A $ inside a name is ignored '
+                             '(NMB$LST is NMBLST). A macro body is read with the '
+                             'names of MAC. An IF that a macro body leaves open '
+                             'ends with the body. A label needs no colon. PUSH A '
+                             'is PUSH PSW. = < <= > >= <> are relational '
+                             'operators. A ! ends a comment and starts a '
+                             'statement. \'AB\' is 4241H. IF is true when bit 0 '
+                             'is set. / is unsigned. MACLIB NAME reads NAME.LIB '
+                             'in pass 1 only. man um80 gives the full list')
     parser.add_argument('-s', '--strict', action='store_true',
-                        help='Strict mode: error on out-of-range JR/DJNZ instead of promoting to JP')
+                        help='Strict mode: an out-of-range JR or DJNZ is an error '
+                             '(without this option, um80 promotes it to JP)')
 
     args = parser.parse_args()
 

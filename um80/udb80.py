@@ -2119,7 +2119,7 @@ def debug_main(argv):
                     'udb80 sizes PROG.dbg, udb80 bt-dump PROG.dbg MEMORY.BIN SP PC.')
     ap.add_argument('dbg', help='the prog.dbg file that ul80 --debug-info wrote')
     ap.add_argument('--run', metavar='CMD',
-                    help="start cpmemu: --run 'cpmemu prog.com'; udb80 adds "
+                    help="start cpmemu: --run 'cpmemu prog.com'. udb80 adds "
                          "--gdb=0 and --gdb-port-file")
     ap.add_argument('--connect', metavar='HOST:PORT',
                     help='connect to a stub that already runs')
@@ -2135,7 +2135,8 @@ def debug_main(argv):
     ap.add_argument('--program', help='the program file for the image check')
     ap.add_argument('-d', '--directory', action='append', default=[],
                     help='a directory to look for source files')
-    ap.add_argument('--asm', action='store_true', help='start in assembler level')
+    ap.add_argument('--asm', action='store_true',
+                    help='start at the assembler level')
     ap.add_argument('--8080', dest='cpu8080', action='store_true',
                     help='disassemble as 8080')
     args = ap.parse_args(argv)

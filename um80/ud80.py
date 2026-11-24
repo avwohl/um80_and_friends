@@ -1453,24 +1453,27 @@ def main():
     parser.add_argument('input', help='Input .COM file')
     parser.add_argument('-o', '--output', help='Output .MAC file')
     parser.add_argument('-e', '--entry', action='append', metavar='ADDR[,LABEL]',
-                       help='Additional entry point. Format: hex address, optionally with label name '
-                            '(e.g., -e 2024 or -e 2024,myloop)')
+                       help='Additional entry point. Format: hexadecimal address, optionally '
+                            'with a label name (for example -e 2024 or -e 2024,myloop)')
     parser.add_argument('-l', '--label', action='append', metavar='ADDR[,LABEL]',
-                       help='Add a label at address without tracing as code. Format: hex address, '
-                            'optionally with label name (e.g., -l 1A00 or -l 1A00,buffer)')
+                       help='Add a label at an address. ud80 does not trace the address as code. '
+                            'Format: hexadecimal address, optionally with a label name '
+                            '(for example -l 1A00 or -l 1A00,buffer)')
     parser.add_argument('-d', '--data', action='append', metavar='RANGE',
-                       help='Force address range to be data, not code (e.g., -d 1A00-1A7F). '
-                            'Can be repeated for multiple ranges.')
+                       help='Force an address range to be data, not code (for example -d 1A00-1A7F). '
+                            'You can repeat the option for more than one range.')
     parser.add_argument('-t', '--table', action='append', metavar='RANGE',
-                       help='Address table range, output as DW with labels (e.g., -t 0103-0120). '
-                            'Can be repeated for multiple ranges.')
+                       help='Address table range, output as DW with labels (for example -t 0103-0120). '
+                            'You can repeat the option for more than one range.')
     parser.add_argument('-dc', '--dcstring', action='append', metavar='RANGE',
-                       help='High-bit terminated string table (e.g., -dc 0200-02FF). '
-                            'Strings end with last char OR 80H. Can be repeated.')
+                       help='High-bit terminated string table (for example -dc 0200-02FF). '
+                            'The last character of each string has bit 7 set (OR 80H). '
+                            'You can repeat the option.')
     parser.add_argument('-da', '--dastring', action='append', metavar='RANGE[,LEN]',
                        help='ASCII string region. Format: RANGE or RANGE,LEN. '
-                            'Without LEN: strings end at null (00H) or non-printable. '
-                            'With LEN: fixed-length strings. Can be repeated.')
+                            'Without LEN: strings end at a null byte (00H) or at a non-printable '
+                            'character. With LEN: fixed-length strings. '
+                            'You can repeat the option.')
     parser.add_argument('--org', default='0100',
                        help='Origin address (default: 0100 for CP/M)')
     parser.add_argument('-z', '--z80', action='store_true',

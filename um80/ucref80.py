@@ -384,7 +384,7 @@ class CrossReference:
 
 def main():
     parser = argparse.ArgumentParser(
-        description='ucref80 - Generate cross-reference listing for MACRO-80 assembly files')
+        description='ucref80 - Write a cross-reference listing for MACRO-80 assembly files')
     parser.add_argument('-v', '--version', action='version', version=f'%(prog)s {__version__}')
     parser.add_argument('inputs', nargs='+', help='Input .MAC files')
     parser.add_argument('-o', '--output', help='Output file (default: stdout)')
