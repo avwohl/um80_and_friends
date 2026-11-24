@@ -2,6 +2,32 @@
 
 This file lists all notable changes to the um80 toolchain.
 
+## [Unreleased]
+
+### Docs
+
+- All documents are now written in the style of ASD-STE100 Simplified
+  Technical English: README.md, this file, docs/*.md, the man pages and the
+  `--help` text. Long paragraphs are now short paragraphs, lists and tables.
+  docs/EXTENSIONS.md compares M80, MAC, RMAC and um80 in tables. Apart from
+  the fixes below, the facts did not change.
+- docs/writing.md gives the rules for new text. docs/glossary.md gives one
+  name for each item. `tests/test_docs_style.py` finds semicolons,
+  contractions, Latin abbreviations, long paragraphs and long sentences in
+  the documents, mandoc errors in the man pages, and `--help` text that does
+  not print.
+- Fixes found in the review:
+  - The README and docs/index.md started the emulator as `cpm`. The command
+    is `cpmemu`.
+  - The ud80 man page gave a round trip that wrote the new COM file over the
+    old one and then compared a file that did not exist. The commands are now
+    `um80 --aseg program.mac` and `ul80 -o program.new program.rel`.
+  - In the ux80 man page, a line that started with `.Z80` was read as an
+    unknown troff macro, so the line did not show. The line now shows.
+  - docs/compatibility.md said "file names" where it meant symbol names.
+  - docs/index.md wrote LIB80 and CREF80 for the Microsoft programs LIB-80
+    and CREF.
+
 ## [0.4.3] - 2026-11-20
 
 ### X## names an external by its whole name (issue #6)
